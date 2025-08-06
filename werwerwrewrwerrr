@@ -72,3 +72,11 @@ frontend@0.0.0 C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend
 └─┬ react-pdf@10.0.1 overridden
   └── pdfjs-dist@3.11.174 deduped
 
+
+LessonDetailPage.tsx:217 
+ Warning: UnknownErrorException: The API version "5.3.31" does not match the Worker version "3.11.174".
+LessonDetailPage.tsx:220 
+ ❌ Error loading PDF: 
+UnknownErrorException {message: 'The API version "5.3.31" does not match the Worker version "3.11.174".', name: 'UnknownErrorException', details: 'Error: The API version "5.3.31" does not match the Worker version "3.11.174".', stack: 'Error\n    at BaseExceptionClosure (http://localhos…_modules/.vite/deps/react-pdf.js?v=b756636b:433:2'}
+﻿
+
