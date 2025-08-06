@@ -78,5 +78,31 @@ LessonDetailPage.tsx:217
 LessonDetailPage.tsx:220 
  ❌ Error loading PDF: 
 UnknownErrorException {message: 'The API version "5.3.31" does not match the Worker version "3.11.174".', name: 'UnknownErrorException', details: 'Error: The API version "5.3.31" does not match the Worker version "3.11.174".', stack: 'Error\n    at BaseExceptionClosure (http://localhos…_modules/.vite/deps/react-pdf.js?v=b756636b:433:2'}
-﻿
+﻿warning.js:34  Warning: TextLayer styles not found. Read more: https://github.com/wojtekmaj/react-pdf#support-for-text-layer
+printWarning2 @ warning.js:34
+2warning.js:34  Warning: AnnotationLayer styles not found. Read more: https://github.com/wojtekmaj/react-pdf#support-for-annotations
+printWarning2 @ warning.js:34
+2warning.js:34  Warning: TextLayer styles not found. Read more: https://github.com/wojtekmaj/react-pdf#support-for-text-layer
+printWarning2 @ warning.js:34
+2warning.js:34  Warning: AnnotationLayer styles not found. Read more: https://github.com/wojtekmaj/react-pdf#support-for-annotations
+printWarning2 @ warning.js:34
+2warning.js:34  Warning: TextLayer styles not found. Read more: https://github.com/wojtekmaj/react-pdf#support-for-text-layer
+printWarning2 @ warning.js:34
+2warning.js:34  Warning: AnnotationLayer styles not found. Read more: https://github.com/wojtekmaj/react-pdf#support-for-annotations
+printWarning2 @ warning.js:34
+TextLayer.js:126  Uncaught TypeError: pdfjs3.TextLayer is not a constructor
+    at renderTextLayer (TextLayer.js:126:29)
+    at Object.react_stack_bottom_frame (react-dom-client.development.js:23953:20)
+    at runWithFiberInDEV (react-dom-client.development.js:1519:30)
+    at commitHookEffectListMount (react-dom-client.development.js:11905:29)
+    at commitHookLayoutEffects (react-dom-client.development.js:11855:11)
+    at commitLayoutEffectOnFiber (react-dom-client.development.js:12613:13)
+    at recursivelyTraverseLayoutEffects (react-dom-client.development.js:13590:11)
+    at commitLayoutEffectOnFiber (react-dom-client.development.js:12791:11)
+    at recursivelyTraverseLayoutEffects (react-dom-client.development.js:13590:11)
+    at commitLayoutEffectOnFiber (react-dom-client.development.js:12727:11)
+react-dom-client.development.js:8283  An error occurred in the <TextLayer2> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
 
