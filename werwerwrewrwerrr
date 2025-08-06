@@ -63,3 +63,12 @@ frontend@0.0.0 C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend
 └─┬ react-pdf@10.0.1
   └── pdfjs-dist@5.3.31
 
+
+C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend>npm list pdfjs-dist react-pdf
+frontend@0.0.0 C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend
+├─┬ @react-pdf-viewer/core@3.12.0
+│ └── pdfjs-dist@3.11.174 deduped
+├── pdfjs-dist@3.11.174 overridden
+└─┬ react-pdf@10.0.1 overridden
+  └── pdfjs-dist@3.11.174 deduped
+
