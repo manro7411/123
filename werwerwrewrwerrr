@@ -1,97 +1,65 @@
-Access to script at 'https://speedcf.cloudflareaccess.com/cdn-cgi/access/login/fallback-core-origin.speedcdnjs.com?kid=5bf8efc97d78564ad5710e878c66913f9a11dd374ea9a4a28ed5ba59bc6b60ad&redirect_url=%2Fajax%2Flibs%2Fpdf.js%2F5.3.31%2Fpdf.worker.min.js&meta=eyJraWQiOiJiNzg3MjI1M2IxNjljNTliNGRmYTM4YjZjMzJmNGFmY2NkNjYwZDBiY2IxNDUyOWVlMzkzNjdjMTVjOWU2ZGMwIiwiYWxnIjoiUlMyNTYiLCJ0eXAiOiJKV1QifQ.eyJzZXJ2aWNlX3Rva2VuX3N0YXR1cyI6dHJ1ZSwiaWF0IjoxNzU0NDY3NTkxLCJzZXJ2aWNlX3Rva2VuX2lkIjoiM2U1NWVjMTAtMmI5ZC00OTMzLWI1NjktZjkzNDQ1NmIyYWU5IiwiYXVkIjoiNWJmOGVmYzk3ZDc4NTY0YWQ1NzEwZTg3OGM2NjkxM2Y5YTExZGQzNzRlYTlhNGEyOGVkNWJhNTliYzZiNjBhZCIsImhvc3RuYW1lIjoiZmFsbGJhY2stY29yZS1vcmlnaW4uc3BlZWRjZG5qcy5jb20iLCJhcHBfc2Vzc2lvbl9oYXNoIjoiYTA5OTY4NzhiMDlkZDQ1MDZkMGQ2NWRlMDcwZmVmZGQ0Y2M1NDA5ODRiMjQyNDI1OGQ0M2U4Y2QyZDFlZTliOSIsIm5iZiI6MTc1NDQ2NzU5MSwiaXNfd2FycCI6ZmFsc2UsImlzX2dhdGV3YXkiOmZhbHNlLCJ0eXBlIjoibWV0YSIsInJlZGlyZWN0X3VybCI6IlwvYWpheFwvbGlic1wvcGRmLmpzXC81LjMuMzFcL3BkZi53b3JrZXIubWluLmpzIiwibXRsc19hdXRoIjp7ImNlcnRfaXNzdWVyX3NraSI6IiIsImNlcnRfcHJlc2VudGVkIjpmYWxzZSwiY2VydF9zZXJpYWwiOiIiLCJjZXJ0X2lzc3Vlcl9kbiI6IiIsImF1dGhfc3RhdHVzIjoiIn0sImF1dGhfc3RhdHVzIjoiIn0.jPh4F0ZxqXiOxGku0nTR7Nto5qLkM6etCOMzAGtujZVWMP237tfsv38t_1Nvp7t8-uQcBa4xgzhXJYL_M792BqvQevrrMS3dImxK_njn5Rd5sNcUEuzLpzrDBDxq9gS_-r1wZAIVMcLbfhtZK1PAPLjrH0p8bDe6xjGpWXiyLoZHUk-jdDKAWzCPNFNjUW3kz-03Nn5AyyyKJ5TO1b5mLk5hki_0vjon3-hEJdYUSySIC8AzezSA92hw2Xy_GEc9-OB4yC6BAKAbA1NhQsSEdYcgk4gd3xXQneI5kIrarwYxieokmS6YlZLcEKdAgdxT7mb6Kk4aOx9FQKSC70UW7Q' (redirected from 'http://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/pdf.worker.min.js') from origin 'http://localhost:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
-12787111e1a8435284d78:1  Access to script at 'https://speedcf.cloudflareaccess.com/cdn-cgi/access/login/fallback-core-origin.speedcdnjs.com?kid=5bf8efc97d78564ad5710e878c66913f9a11dd374ea9a4a28ed5ba59bc6b60ad&redirect_url=%2Fajax%2Flibs%2Fpdf.js%2F5.3.31%2Fpdf.worker.min.js&meta=eyJraWQiOiJiNzg3MjI1M2IxNjljNTliNGRmYTM4YjZjMzJmNGFmY2NkNjYwZDBiY2IxNDUyOWVlMzkzNjdjMTVjOWU2ZGMwIiwiYWxnIjoiUlMyNTYiLCJ0eXAiOiJKV1QifQ.eyJzZXJ2aWNlX3Rva2VuX3N0YXR1cyI6dHJ1ZSwiaWF0IjoxNzU0NDY3NTkxLCJzZXJ2aWNlX3Rva2VuX2lkIjoiM2U1NWVjMTAtMmI5ZC00OTMzLWI1NjktZjkzNDQ1NmIyYWU5IiwiYXVkIjoiNWJmOGVmYzk3ZDc4NTY0YWQ1NzEwZTg3OGM2NjkxM2Y5YTExZGQzNzRlYTlhNGEyOGVkNWJhNTliYzZiNjBhZCIsImhvc3RuYW1lIjoiZmFsbGJhY2stY29yZS1vcmlnaW4uc3BlZWRjZG5qcy5jb20iLCJhcHBfc2Vzc2lvbl9oYXNoIjoiYTA5OTY4NzhiMDlkZDQ1MDZkMGQ2NWRlMDcwZmVmZGQ0Y2M1NDA5ODRiMjQyNDI1OGQ0M2U4Y2QyZDFlZTliOSIsIm5iZiI6MTc1NDQ2NzU5MSwiaXNfd2FycCI6ZmFsc2UsImlzX2dhdGV3YXkiOmZhbHNlLCJ0eXBlIjoibWV0YSIsInJlZGlyZWN0X3VybCI6IlwvYWpheFwvbGlic1wvcGRmLmpzXC81LjMuMzFcL3BkZi53b3JrZXIubWluLmpzIiwibXRsc19hdXRoIjp7ImNlcnRfaXNzdWVyX3NraSI6IiIsImNlcnRfcHJlc2VudGVkIjpmYWxzZSwiY2VydF9zZXJpYWwiOiIiLCJjZXJ0X2lzc3Vlcl9kbiI6IiIsImF1dGhfc3RhdHVzIjoiIn0sImF1dGhfc3RhdHVzIjoiIn0.jPh4F0ZxqXiOxGku0nTR7Nto5qLkM6etCOMzAGtujZVWMP237tfsv38t_1Nvp7t8-uQcBa4xgzhXJYL_M792BqvQevrrMS3dImxK_njn5Rd5sNcUEuzLpzrDBDxq9gS_-r1wZAIVMcLbfhtZK1PAPLjrH0p8bDe6xjGpWXiyLoZHUk-jdDKAWzCPNFNjUW3kz-03Nn5AyyyKJ5TO1b5mLk5hki_0vjon3-hEJdYUSySIC8AzezSA92hw2Xy_GEc9-OB4yC6BAKAbA1NhQsSEdYcgk4gd3xXQneI5kIrarwYxieokmS6YlZLcEKdAgdxT7mb6Kk4aOx9FQKSC70UW7Q' (redirected from 'http://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/pdf.worker.min.js') from origin 'http://localhost:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
-util.js:384 Warning: Setting up fake worker.
-12787111e1a8435284d78:1  Access to script at 'https://speedcf.cloudflareaccess.com/cdn-cgi/access/login/fallback-core-origin.speedcdnjs.com?kid=5bf8efc97d78564ad5710e878c66913f9a11dd374ea9a4a28ed5ba59bc6b60ad&redirect_url=%2Fajax%2Flibs%2Fpdf.js%2F5.3.31%2Fpdf.worker.min.js&meta=eyJraWQiOiJiNzg3MjI1M2IxNjljNTliNGRmYTM4YjZjMzJmNGFmY2NkNjYwZDBiY2IxNDUyOWVlMzkzNjdjMTVjOWU2ZGMwIiwiYWxnIjoiUlMyNTYiLCJ0eXAiOiJKV1QifQ.eyJzZXJ2aWNlX3Rva2VuX3N0YXR1cyI6dHJ1ZSwiaWF0IjoxNzU0NDY3NTkyLCJzZXJ2aWNlX3Rva2VuX2lkIjoiM2U1NWVjMTAtMmI5ZC00OTMzLWI1NjktZjkzNDQ1NmIyYWU5IiwiYXVkIjoiNWJmOGVmYzk3ZDc4NTY0YWQ1NzEwZTg3OGM2NjkxM2Y5YTExZGQzNzRlYTlhNGEyOGVkNWJhNTliYzZiNjBhZCIsImhvc3RuYW1lIjoiZmFsbGJhY2stY29yZS1vcmlnaW4uc3BlZWRjZG5qcy5jb20iLCJhcHBfc2Vzc2lvbl9oYXNoIjoiYjVjYWZlZmRjOTBjMjNkZGZmZjE2MTJmZDBlOWUzZDUwMDE5OWRjOWJiMGYzNGE1N2M1YWVlYWI5ZmJkMDJhZiIsIm5iZiI6MTc1NDQ2NzU5MiwiaXNfd2FycCI6ZmFsc2UsImlzX2dhdGV3YXkiOmZhbHNlLCJ0eXBlIjoibWV0YSIsInJlZGlyZWN0X3VybCI6IlwvYWpheFwvbGlic1wvcGRmLmpzXC81LjMuMzFcL3BkZi53b3JrZXIubWluLmpzIiwibXRsc19hdXRoIjp7ImNlcnRfaXNzdWVyX3NraSI6IiIsImNlcnRfcHJlc2VudGVkIjpmYWxzZSwiY2VydF9zZXJpYWwiOiIiLCJjZXJ0X2lzc3Vlcl9kbiI6IiIsImF1dGhfc3RhdHVzIjoiIn0sImF1dGhfc3RhdHVzIjoiIn0.DfmOb8VOjQNLa8NrXyqfISUaUrbHRS-e7gud-B6TcVg2aNOLJfkQT5ghNfpajWpIOrj2BeunaTdFIQIu7ZhAXKM_fm8w6osw4Lg8rOWHxSMUKVKkU4AuUdy6wSvmO2WBzPNg6LkLwaVUBrW_LvagUEwFQCY3qf8YTXSOA36z1GDX7J8nfUXEwBc63HtAY_uni9YXzc3ZQTCewNLo3Ww6s9gcWDp3K97FoKFxcQXYXDDZuxiqb_H6AeflMKn9E9vHe3xhALvaAihfjbopVb2ZpcI7eeE-yZg0doeD3KH6VZ0kpY8otxeFe32tjqcqfWYtPheLV5rvSFp1RbuPn0Zh_g' (redirected from 'http://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/pdf.worker.min.js?import') from origin 'http://localhost:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
-api.js:2285   GET https://speedcf.cloudflareaccess.com/cdn-cgi/access/login/fallback-core-origin.speedcdnjs.com?kid=5bf8efc97d78564ad5710e878c66913f9a11dd374ea9a4a28ed5ba59bc6b60ad&redirect_url=%2Fajax%2Flibs%2Fpdf.js%2F5.3.31%2Fpdf.worker.min.js&meta=eyJraWQiOiJiNzg3MjI1M2IxNjljNTliNGRmYTM4YjZjMzJmNGFmY2NkNjYwZDBiY2IxNDUyOWVlMzkzNjdjMTVjOWU2ZGMwIiwiYWxnIjoiUlMyNTYiLCJ0eXAiOiJKV1QifQ.eyJzZXJ2aWNlX3Rva2VuX3N0YXR1cyI6dHJ1ZSwiaWF0IjoxNzU0NDY3NTkyLCJzZXJ2aWNlX3Rva2VuX2lkIjoiM2U1NWVjMTAtMmI5ZC00OTMzLWI1NjktZjkzNDQ1NmIyYWU5IiwiYXVkIjoiNWJmOGVmYzk3ZDc4NTY0YWQ1NzEwZTg3OGM2NjkxM2Y5YTExZGQzNzRlYTlhNGEyOGVkNWJhNTliYzZiNjBhZCIsImhvc3RuYW1lIjoiZmFsbGJhY2stY29yZS1vcmlnaW4uc3BlZWRjZG5qcy5jb20iLCJhcHBfc2Vzc2lvbl9oYXNoIjoiYjVjYWZlZmRjOTBjMjNkZGZmZjE2MTJmZDBlOWUzZDUwMDE5OWRjOWJiMGYzNGE1N2M1YWVlYWI5ZmJkMDJhZiIsIm5iZiI6MTc1NDQ2NzU5MiwiaXNfd2FycCI6ZmFsc2UsImlzX2dhdGV3YXkiOmZhbHNlLCJ0eXBlIjoibWV0YSIsInJlZGlyZWN0X3VybCI6IlwvYWpheFwvbGlic1wvcGRmLmpzXC81LjMuMzFcL3BkZi53b3JrZXIubWluLmpzIiwibXRsc19hdXRoIjp7ImNlcnRfaXNzdWVyX3NraSI6IiIsImNlcnRfcHJlc2VudGVkIjpmYWxzZSwiY2VydF9zZXJpYWwiOiIiLCJjZXJ0X2lzc3Vlcl9kbiI6IiIsImF1dGhfc3RhdHVzIjoiIn0sImF1dGhfc3RhdHVzIjoiIn0.DfmOb8VOjQNLa8NrXyqfISUaUrbHRS-e7gud-B6TcVg2aNOLJfkQT5ghNfpajWpIOrj2BeunaTdFIQIu7ZhAXKM_fm8w6osw4Lg8rOWHxSMUKVKkU4AuUdy6wSvmO2WBzPNg6LkLwaVUBrW_LvagUEwFQCY3qf8YTXSOA36z1GDX7J8nfUXEwBc63HtAY_uni9YXzc3ZQTCewNLo3Ww6s9gcWDp3K97FoKFxcQXYXDDZuxiqb_H6AeflMKn9E9vHe3xhALvaAihfjbopVb2ZpcI7eeE-yZg0doeD3KH6VZ0kpY8otxeFe32tjqcqfWYtPheLV5rvSFp1RbuPn0Zh_g net::ERR_FAILED 200 (OK)
-loader @ api.js:2285
-get _setupFakeWorkerGlobal @ api.js:2289
-setupFakeWorker_fn @ api.js:2194
-terminateEarly @ api.js:2125
-worker.addEventListener.signal @ api.js:2136
-LessonDetailPage.tsx:216  Warning: Error: Setting up fake worker failed: "Failed to fetch dynamically imported module: http://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/pdf.worker.min.js?import".
-printWarning2 @ warning.js:34
-warning9 @ warning.js:57
-onLoadError @ Document.js:213
-(anonymous) @ Document.js:257
-react-stack-bottom-frame @ react-dom-client.development.js:23949
-runWithFiberInDEV @ react-dom-client.development.js:1519
-commitHookEffectListMount @ react-dom-client.development.js:11905
-commitHookPassiveMountEffects @ react-dom-client.development.js:12026
-commitPassiveMountOnFiber @ react-dom-client.development.js:13841
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13834
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13834
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13834
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13834
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13834
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13834
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13834
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13957
-recursivelyTraversePassiveMountEffects @ react-dom-client.development.js:13815
-commitPassiveMountOnFiber @ react-dom-client.development.js:13853
-flushPassiveEffects @ react-dom-client.development.js:15737
-(anonymous) @ react-dom-client.development.js:15379
-performWorkUntilDeadline @ scheduler.development.js:45
-<ForwardRef(Document2)>
-exports.jsxDEV @ react-jsx-dev-runtime.development.js:346
-renderContent @ LessonDetailPage.tsx:216
-LessonDetailPage @ LessonDetailPage.tsx:273
-react-stack-bottom-frame @ react-dom-client.development.js:23863
-renderWithHooksAgain @ react-dom-client.development.js:5629
-renderWithHooks @ react-dom-client.development.js:5541
-updateFunctionComponent @ react-dom-client.development.js:8897
-beginWork @ react-dom-client.development.js:10522
-runWithFiberInDEV @ react-dom-client.development.js:1519
-performUnitOfWork @ react-dom-client.development.js:15132
-workLoopSync @ react-dom-client.development.js:14956
-renderRootSync @ react-dom-client.development.js:14936
-performWorkOnRoot @ react-dom-client.development.js:14419
-performWorkOnRootViaSchedulerTask @ react-dom-client.development.js:16216
-performWorkUntilDeadline @ scheduler.development.js:45
-<LessonDetailPage>
-exports.jsxDEV @ react-jsx-dev-runtime.development.js:346
-UserRoutes @ UserRoutes.tsx:23
-App @ App.tsx:23
-react-stack-bottom-frame @ react-dom-client.development.js:23863
-renderWithHooksAgain @ react-dom-client.development.js:5629
-renderWithHooks @ react-dom-client.development.js:5541
-updateFunctionComponent @ react-dom-client.development.js:8897
-beginWork @ react-dom-client.development.js:10522
-runWithFiberInDEV @ react-dom-client.development.js:1519
-performUnitOfWork @ react-dom-client.development.js:15132
-workLoopSync @ react-dom-client.development.js:14956
-renderRootSync @ react-dom-client.development.js:14936
-performWorkOnRoot @ react-dom-client.development.js:14419
-performWorkOnRootViaSchedulerTask @ react-dom-client.development.js:16216
-performWorkUntilDeadline @ scheduler.development.js:45
-<App>
-exports.jsxDEV @ react-jsx-dev-runtime.development.js:346
-(anonymous) @ main.tsx:8
-LessonDetailPage.tsx:219  ❌ Error loading PDF: Error: Setting up fake worker failed: "Failed to fetch dynamically imported module: http://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/pdf.worker.min.js?import".
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fullcalendar/daygrid": "^6.1.17",
+    "@fullcalendar/react": "^6.1.17",
+    "@headlessui/react": "^2.2.4",
+    "@react-pdf-viewer/core": "^3.12.0",
+    "@react-pdf-viewer/default-layout": "^3.12.0",
+    "axios": "^1.10.0",
+    "file-saver": "^2.0.5",
+    "framer-motion": "^12.18.1",
+    "jwt-decode": "^4.0.0",
+    "lucide-react": "^0.515.0",
+    "papaparse": "^5.5.3",
+    "pdfjs-dist": "^3.11.174",
+    "phaser": "^3.90.0",
+    "plyr": "^3.7.8",
+    "react": "^19.1.0",
+    "react-calendar": "^6.0.0",
+    "react-datepicker": "^8.4.0",
+    "react-dom": "^19.1.0",
+    "react-icons": "^5.5.0",
+    "react-pdf": "^10.0.1",
+    "react-router-dom": "^7.6.2",
+    "recharts": "^2.15.3",
+    "tailwind-scrollbar-hide": "^4.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.25.0",
+    "@types/file-saver": "^2.0.7",
+    "@types/papaparse": "^5.3.16",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.25.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.19",
+    "globals": "^16.0.0",
+    "postcss": "^8.5.5",
+    "tailwindcss": "^3.4.1",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "^8.30.1",
+    "vite": "^6.3.5"
+  }
+}
+
+
+C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend>npm ls pdfjs-dist
+frontend@0.0.0 C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend
+├─┬ @react-pdf-viewer/core@3.12.0
+│ └── pdfjs-dist@3.11.174 deduped
+├── pdfjs-dist@3.11.174
+└─┬ react-pdf@10.0.1
+  └── pdfjs-dist@5.3.31
+
