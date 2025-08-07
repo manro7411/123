@@ -1,3 +1,66 @@
+Tests paused
+2025-08-07 15:48:50,960 ERROR [org.jbo.res.rea.ser.cor.mul.MultiPartParserDefinition] (executor-thread-2) Cannot remove uploaded file C:\Users\S_TRAT~1\AppData\Local\Temp\uploads\resteasy-reactive662157833082799336upload: java.nio.file.FileSystemException: C:\Users\S_TRAT~1\AppData\Local\Temp\uploads\resteasy-reactive662157833082799336upload: The process cannot access the file because it is being used by another process
+        at java.base/sun.nio.fs.WindowsException.translateToIOException(WindowsException.java:92)
+        at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:103)
+        at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:108)
+        at java.base/sun.nio.fs.WindowsFileSystemProvider.implDelete(WindowsFileSystemProvider.java:269)
+        at java.base/sun.nio.fs.AbstractFileSystemProvider.delete(AbstractFileSystemProvider.java:105)
+        at java.base/java.nio.file.Files.delete(Files.java:1049)
+        at org.jboss.resteasy.reactive.server.core.multipart.MultiPartParserDefinition$MultiPartUploadHandler$1.run(MultiPartParserDefinition.java:407)
+        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)
+        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)
+        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)
+        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1586)
+        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
+        at java.base/java.lang.Thread.run(Thread.java:1447)
+
+@POST
+    @Transactional
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    public Response create(@Valid PostCreateRequest req) {
+        String email = identity.getPrincipal().getName();
+        String displayName = Optional.ofNullable(req.authorName).filter(s -> !s.isBlank()).orElse(email);
+
+        User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                .setParameter("email", email)
+                .getSingleResult();
+
+        PostEntity post = new PostEntity();
+        post.setAuthorName(displayName);
+        post.setAuthorEmail(email);
+        post.setTitle(req.title);
+        post.setMessage(req.message);
+        post.setForumCategory(req.forumCategory);
+
+        if (user.getAvatar() != null) {
+            post.setAvatarUrl(user.getAvatar());
+        }
+        if(req.picture != null){
+            try {
+                String originalName = req.pictureFileName != null ? req.pictureFileName : "picture.jpeg";
+                String filename = post.getId() + ".mp4";
+                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/picture");
+                java.nio.file.Files.createDirectories(dir);
+                java.nio.file.Path picturePath = dir.resolve(filename);
+                java.nio.file.Files.copy(req.picture, picturePath, StandardCopyOption.REPLACE_EXISTING);
+
+                System.out.println("Video path : " + picturePath.toString());
+                System.out.println("Original file name: " + originalName);
+                post.setPictureUrl("uploads/picture/" + filename);
+            } catch (Exception e) {
+                throw new InternalServerErrorException("Failed to save photo.");
+            }
+        }
+
+        post.persist();
+
+        return Response.created(URI.create("/posts/" + post.getId()))
+                .entity(post)
+                .build();
+    }
+}
 package Forum;
 import jakarta.ws.rs.FormParam;
 import java.io.InputStream;
@@ -26,186 +89,4 @@ public class PostCreateRequest {
 
     @FormParam("picture")
     public String pictureFileName; // Optional: to get original file name
-}
- @POST
-    @Transactional
-    @Consumes(MediaType.MULTIPART_FORM_DATA)
-    public Response create(@Valid PostCreateRequest req) {
-        String email = identity.getPrincipal().getName();
-        String displayName = Optional.ofNullable(req.authorName).filter(s -> !s.isBlank()).orElse(email);
-
-        User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
-                .setParameter("email", email)
-                .getSingleResult();
-
-        PostEntity post = new PostEntity();
-        post.setAuthorName(displayName);
-        post.setAuthorEmail(email);
-        post.setTitle(req.title);
-        post.setMessage(req.message);
-        post.setForumCategory(req.forumCategory);
-
-        if (user.getAvatar() != null) {
-            post.setAvatarUrl(user.getAvatar());
-        }
-        if(req.picture != null){
-            try {
-                String originalName = req.picturlUrl != null ? req.picturlUrl.fileName() : "picture.jpeg";
-                String filename = lessonId + ".mp4";
-                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/picture");
-                java.nio.file.Files.createDirectories(dir);
-                java.nio.file.Path videoPath = dir.resolve(filename);
-                java.nio.file.Files.copy(req.picturlUrl, videoPath, StandardCopyOption.REPLACE_EXISTING);
-
-                System.out.println("Video path : " + videoPath.toString());
-                System.out.println("Original file name: " + originalName);
-                post.setVideoUrl("uploads/video/" + filename);
-            } catch (Exception e) {
-                throw new InternalServerErrorException("Failed to save photo.");
-            }
-        }
-
-        post.persist();
-
-        return Response.created(URI.create("/posts/" + post.getId()))
-                .entity(post)
-                .build();
-    }
-package Forum;
-
-import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
-import jakarta.persistence.*;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
-import model.CommentEntity;
-
-import java.time.LocalDateTime;
-import java.util.HashSet;
-import java.util.Set;
-
-@Entity
-@Table(name = "posts")
-public class PostEntity extends PanacheEntityBase {
-    @Id
-    @Column(length = 21, nullable = false, updatable = false)
-    private String id;
-
-    @NotBlank
-    @Size(max = 100)
-    @Column(name = "author_name", nullable = false, length = 100)
-    private String authorName;
-
-    @NotBlank
-    @Column(name = "author_email", nullable = false, length = 150)
-    private String authorEmail;
-
-    @NotBlank
-    @Size(max = 255)
-    private String title;
-
-    @NotBlank
-    @Column(nullable = false, columnDefinition = "TEXT")
-    private String message;
-
-    @Column(nullable = false)
-    private long likes = 0;
-
-    @Column(nullable = false)
-    private long views = 0;
-
-    @Column(name = "forum_category")
-    private String forumCategory;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
-
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
-
-    @Column(length = 512,name = "avatarurl")
-    private String avatarUrl;
-
-    @Transient
-    private boolean likedByUser;
-
-    @ElementCollection
-    @CollectionTable(name = "post_likes", joinColumns = @JoinColumn(name = "post_id"))
-    @Column(name = "user_email")
-    private Set<String> likedBy = new HashSet<>();
-
-    @Column(name = "pictureUrl")
-    private String pictureUrl;
-
-
-    @PrePersist
-    void prePersist() {
-        if (id == null || id.isBlank()) id = NanoIdUtils.randomNanoId();
-        createdAt  = LocalDateTime.now();
-        updatedAt  = createdAt;
-    }
-
-    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
-    private java.util.List<CommentEntity> comments = new java.util.ArrayList<>();
-
-
-    @PreUpdate
-    void preUpdate() { updatedAt = LocalDateTime.now(); }
-
-    public String getId()            { return id; }
-    public String getAuthorName()    { return authorName; }
-    public String getAuthorEmail()   { return authorEmail; }
-    public String getTitle()         { return title; }
-    public String getMessage()       { return message; }
-    public long   getLikes()         { return likes; }
-    public long   getViews()         { return views; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public Set<String> getLikedBy() { return likedBy; }
-
-    public void setAuthorName(String n)     { this.authorName = n; }
-    public void setAuthorEmail(String e)    { this.authorEmail = e; }
-    public void setTitle(String t)          { this.title = t; }
-    public void setMessage(String m)        { this.message = m; }
-    public void setLikes(long l)            { this.likes = l; }
-    public void setViews(long v)            { this.views = v; }
-
-    public String getAvatarUrl() {
-        return avatarUrl;
-    }
-
-    public void setAvatarUrl(String avatarUrl) {
-        this.avatarUrl = avatarUrl;
-    }
-    public void addLike(String email) {
-        likedBy.add(email);
-        this.likes = likedBy.size();
-    }
-
-    public void removeLike(String email) {
-        likedBy.remove(email);
-        this.likes = likedBy.size();
-    }
-
-    public boolean isLikedByUser() {
-        return likedByUser;
-    }
-
-    public void setLikedByUser(boolean likedByUser) {
-        this.likedByUser = likedByUser;
-    }
-
-    public String getForumCategory() {
-        return forumCategory;
-    }
-
-    public void setForumCategory(String forumCategory) {
-        this.forumCategory = forumCategory;
-    }
-    public String getPictureUrl() {
-        return pictureUrl;
-    }
-    public void setPictureUrl(String pictureUrl) {
-        this.pictureUrl = pictureUrl;
-    }
 }
