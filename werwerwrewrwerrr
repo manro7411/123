@@ -1,549 +1,277 @@
-
-http://localhost:5173/api/posts
-Request Method
-POST
-Status Code
-401 Unauthorized
-Remote Address
-[::1]:5173
-Referrer Policy
-strict-origin-when-cross-origin
-access-control-allow-credentials
-true
-access-control-allow-headers
-accept,authorization,content-type,x-requested-with
-access-control-allow-methods
-GET,POST,PUT,DELETE,OPTIONS
-access-control-allow-origin
-http://localhost:5173
-connection
-close
-content-length
-0
-date
-Thu, 07 Aug 2025 09:12:36 GMT
-vary
-Origin
-www-authenticate
-Bearer
-accept
-*/*
-accept-encoding
-gzip, deflate, br, zstd
-accept-language
-en-US,en;q=0.9,th;q=0.8
-authorization
-Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJyb2xlIjoidXNlciIsInVwbiI6InJhdGNoYW5vbkBnbWFpbC5jb20iLCJlbWFpbCI6InJhdGNoYW5vbkBnbWFpbC5jb20iLCJuYW1lIjoiUmF0Y2hhbm9uIFRyYWl0aXByYXQiLCJpc3MiOiJodHRwczovL2V4YW1wbGUuY29tL2lzc3VlciIsInN1YiI6InJhdGNoYW5vbkBnbWFpbC5jb20iLCJncm91cHMiOlsidXNlciJdLCJpYXQiOjE3NTQ1NTA2NDEsImV4cCI6MTc1NDU1Nzg0MSwianRpIjoiNzU2NmM1MDctMGJlNi00NWViLWFmNjUtYmMxMzljOTRiZWNlIn0.PElaIP8iFYzoB9cf3m8DdhOA8YG6pySNYHvskwuDkipHZc1q1DoWYaBrlqMPJ1k4r2vA3g2TwB_hL-3j10oeuOU9ce4adqBTXrcwKy7_gjrjWUXXDWq0N6iSFGF_TMQpg-ldZebsmjxPwAsBUu0vzatDAurUGYOTQ4G8YtNuVY90pSyi_AtSKcQIdMX-MfX59Atf5Hj4sEFD0hToH_nYt3WX_KlD5ARL12KexUnNWnimvK-tfnUh07cKE6LidlBsVUHh529YQiHQf_GzPtWFOB0Q6ctioDPq6QDFBP2YXOH_N-6dC-cD7szmB-uWBO3XwHgF2Qm02GOenfJ8IHKisw
-connection
-keep-alive
-content-length
-293166
-content-type
-multipart/form-data; boundary=----WebKitFormBoundaryYKD2iukAvx9CFFFv
-host
-localhost:5173
-origin
-http://localhost:5173
-referer
-http://localhost:5173/forum
-sec-ch-ua
-"Not)A;Brand";v="8", "Chromium";v="138", "Microsoft Edge";v="138"
-sec-ch-ua-mobile
-?1
-sec-ch-ua-platform
-"Android"
-sec-fetch-dest
-empty
-sec-fetch-mode
-cors
-sec-fetch-site
-same-origin
-user-agent
-Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36 E
-@POST
-    @Transactional
-    @RolesAllowed("user")
-    @Consumes(MediaType.MULTIPART_FORM_DATA)
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response create(@Valid PostCreateRequest req) {
-        String email = identity.getPrincipal().getName();
-        String displayName = Optional.ofNullable(req.authorName).filter(s -> !s.isBlank()).orElse(email);
-
-        User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
-                .setParameter("email", email)
-                .getSingleResult();
-
-        PostEntity post = new PostEntity();
-        post.setAuthorName(displayName);
-        post.setAuthorEmail(email);
-        post.setTitle(req.title);
-        post.setMessage(req.message);
-        post.setForumCategory(req.forumCategory);
-
-        if (user.getAvatar() != null) {
-            post.setAvatarUrl(user.getAvatar());
-        }
-        post.persist();
-        String filename = post.getId() + ".jpg";
-        if(req.picture != null){
-            try {
-                String originalName = req.pictureFileName != null ? req.pictureFileName : "picture.jpeg";
-                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/picture");
-                java.nio.file.Files.createDirectories(dir);
-                java.nio.file.Path picturePath = dir.resolve(filename);
-                java.nio.file.Files.copy(req.picture, picturePath, StandardCopyOption.REPLACE_EXISTING);
-
-                System.out.println("Picture path : " + picturePath.toString());
-                System.out.println("Original file name: " + originalName);
-                post.setPictureUrl("uploads/picture/" + filename);
-            } catch (Exception e) {
-                throw new InternalServerErrorException("Failed to save photo.");
-            }
-        }
-        return Response.created(URI.create("/posts/" + post.getId()))
-                .entity(post)
-                .build();
-    }
-package Forum;
-import jakarta.ws.rs.FormParam;
-import org.jboss.resteasy.reactive.PartType;
-
-import java.io.InputStream;
-
-public class PostCreateRequest {
-
-    @FormParam("title")
-
-    public String title;
-
-    @FormParam("message")
-
-    public String message;
-
-    @FormParam("authorName")
-
-    public String authorName;
-
-    @FormParam("forumCategory")
-
-    public String forumCategory;
-
-    @FormParam("picture")
-    @PartType("application/octet-stream")
-
-    public InputStream picture;
-
-    @FormParam("pictureFileName")
-    public String pictureFileName;
-}
-package Forum;
-
-import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
-import jakarta.persistence.*;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
-import model.CommentEntity;
-
-import java.time.LocalDateTime;
-import java.util.HashSet;
-import java.util.Set;
-
-@Entity
-@Table(name = "posts")
-public class PostEntity extends PanacheEntityBase {
-    @Id
-    @Column(length = 21, nullable = false, updatable = false)
-    private String id;
-
-    @NotBlank
-    @Size(max = 100)
-    @Column(name = "author_name", nullable = false, length = 100)
-    private String authorName;
-
-    @NotBlank
-    @Column(name = "author_email", nullable = false, length = 150)
-    private String authorEmail;
-
-    @NotBlank
-    @Size(max = 255)
-    private String title;
-
-    @NotBlank
-    @Column(nullable = false, columnDefinition = "TEXT")
-    private String message;
-
-    @Column(nullable = false)
-    private long likes = 0;
-
-    @Column(nullable = false)
-    private long views = 0;
-
-    @Column(name = "forum_category")
-    private String forumCategory;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
-
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
-
-    @Column(length = 512,name = "avatarurl")
-    private String avatarUrl;
-
-    @Transient
-    private boolean likedByUser;
-
-    @ElementCollection
-    @CollectionTable(name = "post_likes", joinColumns = @JoinColumn(name = "post_id"))
-    @Column(name = "user_email")
-    private Set<String> likedBy = new HashSet<>();
-
-    @Column(name = "pictureUrl")
-    private String pictureUrl;
-
-
-    @PrePersist
-    void prePersist() {
-        if (id == null || id.isBlank()) id = NanoIdUtils.randomNanoId();
-        createdAt  = LocalDateTime.now();
-        updatedAt  = createdAt;
-    }
-
-    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
-    private java.util.List<CommentEntity> comments = new java.util.ArrayList<>();
-
-
-    @PreUpdate
-    void preUpdate() { updatedAt = LocalDateTime.now(); }
-
-    public String getId()            { return id; }
-    public String getAuthorName()    { return authorName; }
-    public String getAuthorEmail()   { return authorEmail; }
-    public String getTitle()         { return title; }
-    public String getMessage()       { return message; }
-    public long   getLikes()         { return likes; }
-    public long   getViews()         { return views; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public Set<String> getLikedBy() { return likedBy; }
-
-    public void setAuthorName(String n)     { this.authorName = n; }
-    public void setAuthorEmail(String e)    { this.authorEmail = e; }
-    public void setTitle(String t)          { this.title = t; }
-    public void setMessage(String m)        { this.message = m; }
-    public void setLikes(long l)            { this.likes = l; }
-    public void setViews(long v)            { this.views = v; }
-
-    public String getAvatarUrl() {
-        return avatarUrl;
-    }
-
-    public void setAvatarUrl(String avatarUrl) {
-        this.avatarUrl = avatarUrl;
-    }
-    public void addLike(String email) {
-        likedBy.add(email);
-        this.likes = likedBy.size();
-    }
-
-    public void removeLike(String email) {
-        likedBy.remove(email);
-        this.likes = likedBy.size();
-    }
-
-    public boolean isLikedByUser() {
-        return likedByUser;
-    }
-
-    public void setLikedByUser(boolean likedByUser) {
-        this.likedByUser = likedByUser;
-    }
-
-    public String getForumCategory() {
-        return forumCategory;
-    }
-
-    public void setForumCategory(String forumCategory) {
-        this.forumCategory = forumCategory;
-    }
-    public String getPictureUrl() {
-        return pictureUrl;
-    }
-    public void setPictureUrl(String pictureUrl) {
-        this.pictureUrl = pictureUrl;
-    }
-}
-------
-import { useState, useContext } from "react";
+import { useContext, useEffect, useState } from "react";
+import type { Post, Comment } from "./KnowledgeForumLayout.tsx";
 import { AuthContext } from "../../Authentication/AuthContext.tsx";
+import {
+  // FaEye,
+  FaCommentDots,
+  FaHeart,
+  FaRegHeart,
+} from "react-icons/fa";
 
-const categories = ["พูดคุยทั่วไป","ข่าวสาร IT","IT & งานระบบ"];
+type Props = {
+  post: Post;
+};
 
-const AddPostWidget = ({ onCreated }: { onCreated?: () => void }) => {
-    const { user, token } = useContext(AuthContext);
+const PostCardWidget = ({ post }: Props) => {
+  const { token, user } = useContext(AuthContext);
+  const [showComments, setShowComments] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [comments, setComments] = useState<Comment[]>(post.comments);
 
-    const [open, setOpen]       = useState(false);
-    const [title, setTitle]     = useState("");
-    const [message, setMessage] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [errorMsg, setErrorMsg] = useState("");
-    const [forumCategory,setforumCategory] = useState("")
-    const [picture,setPicture] = useState<File | null>(null)
-   
+  const [likes, setLikes] = useState(post.likes);
+  const [liked, setLiked] = useState(post.likedByUser ?? false);
+  const [liking, setLiking] = useState(false);
 
+  const [userProfile, setUserProfile] = useState<{
+    name: string;
+    email: string;
+    avatarUrl?: string;
+  } | null>(null);
 
-    const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+  const userEmail = user?.email || user?.upn;
 
-   const handleSubmit = async () => {
-    if (!title.trim() || !message.trim()) {
-        setErrorMsg("Please fill in both title and message.");
-        return;
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch(`/api/profile`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error("Failed to fetch user profile");
+        const data = await res.json();
+        setUserProfile(data);
+        // console.log("✅ User profile data:", data);
+      } catch (err) {
+        console.error("❌ Failed to fetch user profile:", err);
+      }
+    };
+    fetchUserProfile();
+  }, [token]);
+
+  const fetchComments = async () => {
+    try {
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("Failed to fetch comments");
+      const data = await res.json();
+      setComments(data);
+    } catch (err) {
+      console.error("❌ Failed to load comments:", err);
     }
-    if (!forumCategory) {
-        setErrorMsg("Please select a category");
-        return;
-    }
+  };
 
-    setLoading(true);
-    setErrorMsg("");
+  const handleCommentSubmit = async () => {
+    const trimmed = commentText.trim();
+    if (!trimmed) return;
 
     try {
-        await delay(1000);
+      const payload = {
+        message: trimmed,
+        authorName: user?.name || "Anonymous",
+        authorEmail: userEmail || "unknown@example.com",
+        avatarUrl: userProfile?.avatarUrl || "",
+      };
 
-        const formData = new FormData();
-        formData.append("title", title);
-        formData.append("message", message);
-        formData.append("authorName", user?.name ?? "Unknown");
-        formData.append("forumCategory", forumCategory);
-        if (picture) {
-            formData.append("picture", picture);
-            formData.append("pictureFileName",picture.name)
-        }
+      console.log(payload)
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
 
-        console.log("FormData payload:");
-        formData.forEach((value, key) => {
-            if (value instanceof File) {
-                console.log(`${key}: [File] name=${value.name}, size=${value.size}, type=${value.type}`);
-            } else {
-                console.log(`${key}: ${value}`);
-            }
-        });
-        const res = await fetch("/api/posts", {
-            method: "POST",
-            headers: {Authorization: `Bearer ${token}` },
+      if (!res.ok) throw new Error("Failed to submit comment");
 
-            body: formData,
-        });
-
-        if (res.ok) {
-            setOpen(false);
-            setTitle("");
-            setMessage("");
-            setforumCategory("");
-            setPicture(null);
-            onCreated?.();
-        } else {
-            const err = await res.json().catch(() => ({}));
-            setErrorMsg(err.message ?? "Failed to create post");
-        }
+      setCommentText("");
+      await fetchComments();
     } catch (err) {
-        setErrorMsg("Something went wrong. Please try again.");
-    } finally {
-        setLoading(false);
+      console.error("❌ Failed to submit comment:", err);
     }
+  };
+
+  const handleToggleComments = async () => {
+    const willShow = !showComments;
+    setShowComments(willShow);
+    if (willShow && comments.length === 0) {
+      await fetchComments();
+    }
+  };
+
+  const handleToggleLike = async () => {
+    if (!userEmail || liking) return;
+
+    setLiking(true);
+    const endpoint = liked ? "unlike" : "like";
+    const nextLiked = !liked;
+    const optimisticLikes = liked ? likes - 1 : likes + 1;
+
+    setLiked(nextLiked);
+    setLikes(optimisticLikes);
+
+    try {
+      const res = await fetch(`/api/posts/${post.id}/${endpoint}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) throw new Error("Failed to toggle like");
+
+      const data = await res.json();
+      if (typeof data.likes === "number") setLikes(data.likes);
+       if (typeof data.likedByUser === "boolean") setLiked(data.likedByUser ?? false);
+      console.log("data :",data)
+    } catch (err) {
+      console.error("❌ Failed to toggle like:", err);
+      setLiked(!nextLiked);
+      setLikes(likes);
+
+      
+    } finally {
+      setLiking(false);
+    }
+  };
+
+ const linkify = (text: string): string => {
+  const urlRegex = /(\bhttps?:\/\/[^\s]+)/g;
+  return text.replace(urlRegex, (url) => {
+    const safeUrl = url.replace(/"/g, "&quot;");
+    return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">${url}</a>`;
+  });
 };
 
 
+  const renderAvatar = () => {
+    if (post.avatarUrl) {
+      const isFullUrl = post.avatarUrl.startsWith("http") ;
+      const filename = post.avatarUrl.split("/").pop();
+      const avatarUrl = isFullUrl
+        ? `/api/profile/avatars/${filename}`
+        : "";
 
+      return (
+        <img
+          src={avatarUrl}
+          alt="Avatar"
+          className="w-10 h-10 rounded-full object-cover border"
+          onError={(e) => (e.currentTarget.style.display = "none")}
+        />
+      );
+    }
     return (
-        <>
-            <button
-                className="fixed bottom-6 right-6 z-50 bg-blue-600 text-white rounded-full px-4 py-2 shadow-lg hover:bg-blue-700"
-                onClick={() => setOpen(true)}
-                aria-label="Create new post"
-            >
-                + New Post
-            </button>
-            {open && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
-                        <h2 className="text-lg font-semibold mb-4">Create new post</h2>
-
-                        <p className="text-sm mb-2 text-gray-600">
-                            Author: <b>{user?.name ?? "Unknown"}</b>
-                        </p>
-
-                        <input
-                            className="w-full border rounded px-3 py-2 mb-2"
-                            placeholder="Title"
-                            maxLength={255}
-                            value={title}
-                            onChange={(e) => setTitle(e.target.value)}
-                        />
-                        <select
-                            className="w-full border rounded px-3 py-2 mb-2"
-                            value={forumCategory}
-                            onChange={(e) => setforumCategory(e.target.value)}
-                        >
-                            <option value="" disabled>Select a category</option>
-                            {categories.map((cat) => (
-                                <option key={cat} value={cat}>
-                                    {cat}
-                                </option>
-                            ))}
-                        </select>
-                        <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => {
-                                const file = e.target.files?.[0]
-                                if (file) {
-                                    setPicture(file)                
-                                }
-                            }}
-                        />
-                        <textarea
-                            className="w-full border rounded px-3 py-2 h-28 mb-4"
-                            placeholder="Message"
-                            value={message}
-                            onChange={(e) => setMessage(e.target.value)}
-                        />
-
-                        {errorMsg && (
-                            <div className="text-red-600 text-sm mb-3">{errorMsg}</div>
-                        )}
-
-                        <div className="flex justify-end gap-2">
-                            <button
-                                onClick={() => setOpen(false)}
-                                className="px-4 py-2 border rounded hover:bg-gray-100"
-                            >
-                                Cancel
-                            </button>
-
-                            <button
-                                onClick={handleSubmit}
-                                disabled={loading}
-                                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-                            >
-                                {loading ? (
-                                    <>
-                                        <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
-                                        Posting…
-                                    </>
-                                ) : (
-                                    "Post"
-                                )}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-        </>
+      <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold text-sm">
+        {post.authorName?.charAt(0)?.toUpperCase() || "?"}
+      </div>
     );
+  };
+
+  
+
+  return (
+    <article className="bg-white rounded-lg shadow p-4">
+      {/* Header */}
+      <header className="flex items-center gap-3 mb-3">
+        {renderAvatar()}
+        <div>
+          <p className="text-sm font-semibold text-gray-800">
+            {post.authorName}
+          </p>
+          <p className="text-xs text-gray-500">{post.authorEmail}</p>
+          <p className="text-xs text-gray-400">
+            {new Date(post.createdAt).toLocaleString()}
+          </p>
+        </div>
+      </header>
+
+      <h2 className="text-base font-semibold text-gray-800">{post.title}</h2>
+      <p className="text-sm text-gray-700 mt-1 whitespace-pre-line" dangerouslySetInnerHTML={{__html:linkify(post.message)}} />
+        {/* {post.message}
+      </p> */}
+
+      <div className="flex gap-4 text-xs text-gray-500 mt-3 items-center">
+        {/* <span className="flex items-center gap-1">
+          <FaEye /> {post.views}
+        </span> */}
+
+        <button
+          type="button"
+          onClick={handleToggleComments}
+          className="hover:underline flex items-center gap-1"
+        >
+          <FaCommentDots /> {comments.length}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleToggleLike}
+          disabled={liking}
+          className={`hover:underline flex items-center gap-1 ${
+            liked ? "text-red-600 font-bold" : ""
+          }`}
+        >
+          {liked ? <FaHeart /> : <FaRegHeart />} {likes}
+        </button>
+      </div>
+
+      {showComments && (
+        <section className="mt-4 space-y-2 border-t pt-4">
+          {comments.length === 0 ? (
+            <p className="text-xs text-gray-400">No comments yet.</p>
+          ) : (
+            comments.map((c) => (
+
+                          
+              <div key={c.id} className="flex items-start gap-2 text-xs">
+                {c.avatarUrl ? (
+                  <img
+                    src={`/api/profile/avatars/${c.avatarUrl.split("/").pop()}`}
+                    alt="User avatar"
+                    className="w-6 h-6 rounded-full object-cover border"
+                  />
+
+                ) : (
+                  <div className="w-6 h-6 bg-gray-400 text-white rounded-full flex items-center justify-center text-[10px] font-bold">
+                    {c.authorName?.charAt(0)?.toUpperCase() || "?"}
+                  </div>
+                )}
+                <div>
+                  <p className="font-medium">{c.authorName}</p>
+                  <p className="text-gray-700 whitespace-pre-line">{c.message}</p>
+                  <p className="text-[10px] text-gray-400">
+                    {new Date(c.createdAt).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            )
+          
+          )
+          )}
+
+          <div className="mt-3">
+            <textarea
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              className="w-full border border-gray-300 rounded p-2 text-xs focus:outline-none focus:ring focus:ring-blue-200"
+              rows={3}
+              placeholder="Add a comment..."
+            />
+            <div className="flex justify-end mt-2">
+              <button
+                type="button"
+                onClick={handleCommentSubmit}
+                disabled={!commentText.trim()}
+                className="bg-blue-600 text-white px-4 py-1 rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
+              >
+                Submit
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+    </article>
+  );
 };
 
-export default AddPostWidget;
-
-poQuestion.tsx
-check.png?import
-wrong.png?import
-QuestionWidget.tsx
-notificationServices.ts
-file-saver.js?v=4c0497eb
-papaparse.js?v=97801ea3
-CreateTeamModal.tsx
-TeamCardWidget.tsx
-SupervisorSideBar.tsx?t=1754541726471
-UserListWidget.tsx?t=1754540213923
-AdministratorBar.tsx?t=1754550125586
-CalendarWidget.css
-backgroundcourse.png?import
-instructiondashboard.png?import
-Imagelogo.png
-posts
-posts
-Othervite.svg
-comments
-comments
-comments
-comments
-comments
-comments
-comments
-comments
-comments
-comments
-comments
-comments
-Imageavatar_QPAPTi3NYI6pEReqnSHAm.jpg
-avatar_mLD5qww-rFHMFB45O1zsC.jpg
-posts
-134 requests
-2.0 MB transferred
-10.8 MB resources
-Finish: 12.86 s
-DOMContentLoaded: 663 ms
-Request URL
-http://localhost:5173/api/posts
-Request Method
-POST
-Status Code
-401 Unauthorized
-Remote Address
-[::1]:5173
-Referrer Policy
-strict-origin-when-cross-origin
-access-control-allow-credentials
-true
-access-control-allow-headers
-accept,authorization,content-type,x-requested-with
-access-control-allow-methods
-GET,POST,PUT,DELETE,OPTIONS
-access-control-allow-origin
-http://localhost:5173
-connection
-close
-content-length
-0
-date
-Thu, 07 Aug 2025 09:28:14 GMT
-vary
-Origin
-www-authenticate
-Bearer
-accept
-*/*
-accept-encoding
-gzip, deflate, br, zstd
-accept-language
-en-US,en;q=0.9,th;q=0.8
-authorization
-Bearer null
-connection
-keep-alive
-content-length
-293149
-content-type
-multipart/form-data; boundary=----WebKitFormBoundarydFjL1g8Mf8ZrtakC
-host
-localhost:5173
-origin
-http://localhost:5173
-referer
-http://localhost:5173/forum
-sec-ch-ua
-"Not)A;Brand";v="8", "Chromium";v="138", "Microsoft Edge";v="138"
-sec-ch-ua-mobile
-?1
-sec-ch-ua-platform
-"Android"
-sec-fetch-dest
-empty
-sec-fetch-mode
-cors
-sec-fetch-site
-same-origin
-user-agent
-Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36 Edg/138.0.0.0
+export default PostCardWidget;
