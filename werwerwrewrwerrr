@@ -1,277 +1,331 @@
-import { useContext, useEffect, useState } from "react";
-import type { Post, Comment } from "./KnowledgeForumLayout.tsx";
-import { AuthContext } from "../../Authentication/AuthContext.tsx";
-import {
-  // FaEye,
-  FaCommentDots,
-  FaHeart,
-  FaRegHeart,
-} from "react-icons/fa";
+ @POST
+    @Transactional
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    public Response create(@Valid PostCreateRequest req) {
+        String email = identity.getPrincipal().getName();
+        String displayName = Optional.ofNullable(req.authorName).filter(s -> !s.isBlank()).orElse(email);
 
-type Props = {
-  post: Post;
-};
+        User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                .setParameter("email", email)
+                .getSingleResult();
 
-const PostCardWidget = ({ post }: Props) => {
-  const { token, user } = useContext(AuthContext);
-  const [showComments, setShowComments] = useState(false);
-  const [commentText, setCommentText] = useState("");
-  const [comments, setComments] = useState<Comment[]>(post.comments);
+        PostEntity post = new PostEntity();
+        post.setAuthorName(displayName);
+        post.setAuthorEmail(email);
+        post.setTitle(req.title);
+        post.setMessage(req.message);
+        post.setForumCategory(req.forumCategory);
 
-  const [likes, setLikes] = useState(post.likes);
-  const [liked, setLiked] = useState(post.likedByUser ?? false);
-  const [liking, setLiking] = useState(false);
+        if (user.getAvatar() != null) {
+            post.setAvatarUrl(user.getAvatar());
+        }
+        if(req.picturlUrl != null){
+            try {
+                String originalName = req.picturlUrl != null ? req.picturlUrl.fileName() : "picture.jpeg";
+                String filename = lessonId + ".mp4";
+                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/picture");
+                java.nio.file.Files.createDirectories(dir);
+                java.nio.file.Path videoPath = dir.resolve(filename);
+                java.nio.file.Files.copy(req.picturlUrl, videoPath, StandardCopyOption.REPLACE_EXISTING);
 
-  const [userProfile, setUserProfile] = useState<{
-    name: string;
-    email: string;
-    avatarUrl?: string;
-  } | null>(null);
+                System.out.println("Video path : " + videoPath.toString());
+                System.out.println("Original file name: " + originalName);
+                post.setVideoUrl("uploads/video/" + filename);
+            } catch (Exception e) {
+                throw new InternalServerErrorException("Failed to save photo.");
+            }
+        }
 
-  const userEmail = user?.email || user?.upn;
+        post.persist();
 
-  useEffect(() => {
-    const fetchUserProfile = async () => {
-      if (!token) return;
-      try {
-        const res = await fetch(`/api/profile`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error("Failed to fetch user profile");
-        const data = await res.json();
-        setUserProfile(data);
-        // console.log("✅ User profile data:", data);
-      } catch (err) {
-        console.error("❌ Failed to fetch user profile:", err);
-      }
-    };
-    fetchUserProfile();
-  }, [token]);
-
-  const fetchComments = async () => {
-    try {
-      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error("Failed to fetch comments");
-      const data = await res.json();
-      setComments(data);
-    } catch (err) {
-      console.error("❌ Failed to load comments:", err);
+        return Response.created(URI.create("/posts/" + post.getId()))
+                .entity(post)
+                .build();
     }
-  };
 
-  const handleCommentSubmit = async () => {
-    const trimmed = commentText.trim();
-    if (!trimmed) return;
+package Forum;
 
-    try {
-      const payload = {
-        message: trimmed,
-        authorName: user?.name || "Anonymous",
-        authorEmail: userEmail || "unknown@example.com",
-        avatarUrl: userProfile?.avatarUrl || "",
-      };
+import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
+import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
+import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import model.CommentEntity;
 
-      console.log(payload)
-      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      });
+import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 
-      if (!res.ok) throw new Error("Failed to submit comment");
+@Entity
+@Table(name = "posts")
+public class PostEntity extends PanacheEntityBase {
+    @Id
+    @Column(length = 21, nullable = false, updatable = false)
+    private String id;
 
-      setCommentText("");
-      await fetchComments();
-    } catch (err) {
-      console.error("❌ Failed to submit comment:", err);
+    @NotBlank
+    @Size(max = 100)
+    @Column(name = "author_name", nullable = false, length = 100)
+    private String authorName;
+
+    @NotBlank
+    @Column(name = "author_email", nullable = false, length = 150)
+    private String authorEmail;
+
+    @NotBlank
+    @Size(max = 255)
+    private String title;
+
+    @NotBlank
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String message;
+
+    @Column(nullable = false)
+    private long likes = 0;
+
+    @Column(nullable = false)
+    private long views = 0;
+
+    @Column(name = "forum_category")
+    private String forumCategory;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @Column(length = 512,name = "avatarurl")
+    private String avatarUrl;
+
+    @Transient
+    private boolean likedByUser;
+
+    @ElementCollection
+    @CollectionTable(name = "post_likes", joinColumns = @JoinColumn(name = "post_id"))
+    @Column(name = "user_email")
+    private Set<String> likedBy = new HashSet<>();
+
+    @Column(name = "pictureUrl")
+    private String pictureUrl;
+
+
+    @PrePersist
+    void prePersist() {
+        if (id == null || id.isBlank()) id = NanoIdUtils.randomNanoId();
+        createdAt  = LocalDateTime.now();
+        updatedAt  = createdAt;
     }
-  };
 
-  const handleToggleComments = async () => {
-    const willShow = !showComments;
-    setShowComments(willShow);
-    if (willShow && comments.length === 0) {
-      await fetchComments();
+    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
+    private java.util.List<CommentEntity> comments = new java.util.ArrayList<>();
+
+
+    @PreUpdate
+    void preUpdate() { updatedAt = LocalDateTime.now(); }
+
+    public String getId()            { return id; }
+    public String getAuthorName()    { return authorName; }
+    public String getAuthorEmail()   { return authorEmail; }
+    public String getTitle()         { return title; }
+    public String getMessage()       { return message; }
+    public long   getLikes()         { return likes; }
+    public long   getViews()         { return views; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public Set<String> getLikedBy() { return likedBy; }
+
+    public void setAuthorName(String n)     { this.authorName = n; }
+    public void setAuthorEmail(String e)    { this.authorEmail = e; }
+    public void setTitle(String t)          { this.title = t; }
+    public void setMessage(String m)        { this.message = m; }
+    public void setLikes(long l)            { this.likes = l; }
+    public void setViews(long v)            { this.views = v; }
+
+    public String getAvatarUrl() {
+        return avatarUrl;
     }
-  };
 
-  const handleToggleLike = async () => {
-    if (!userEmail || liking) return;
-
-    setLiking(true);
-    const endpoint = liked ? "unlike" : "like";
-    const nextLiked = !liked;
-    const optimisticLikes = liked ? likes - 1 : likes + 1;
-
-    setLiked(nextLiked);
-    setLikes(optimisticLikes);
-
-    try {
-      const res = await fetch(`/api/posts/${post.id}/${endpoint}`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      if (!res.ok) throw new Error("Failed to toggle like");
-
-      const data = await res.json();
-      if (typeof data.likes === "number") setLikes(data.likes);
-       if (typeof data.likedByUser === "boolean") setLiked(data.likedByUser ?? false);
-      console.log("data :",data)
-    } catch (err) {
-      console.error("❌ Failed to toggle like:", err);
-      setLiked(!nextLiked);
-      setLikes(likes);
-
-      
-    } finally {
-      setLiking(false);
+    public void setAvatarUrl(String avatarUrl) {
+        this.avatarUrl = avatarUrl;
     }
-  };
-
- const linkify = (text: string): string => {
-  const urlRegex = /(\bhttps?:\/\/[^\s]+)/g;
-  return text.replace(urlRegex, (url) => {
-    const safeUrl = url.replace(/"/g, "&quot;");
-    return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">${url}</a>`;
-  });
-};
-
-
-  const renderAvatar = () => {
-    if (post.avatarUrl) {
-      const isFullUrl = post.avatarUrl.startsWith("http") ;
-      const filename = post.avatarUrl.split("/").pop();
-      const avatarUrl = isFullUrl
-        ? `/api/profile/avatars/${filename}`
-        : "";
-
-      return (
-        <img
-          src={avatarUrl}
-          alt="Avatar"
-          className="w-10 h-10 rounded-full object-cover border"
-          onError={(e) => (e.currentTarget.style.display = "none")}
-        />
-      );
+    public void addLike(String email) {
+        likedBy.add(email);
+        this.likes = likedBy.size();
     }
-    return (
-      <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold text-sm">
-        {post.authorName?.charAt(0)?.toUpperCase() || "?"}
-      </div>
-    );
-  };
 
-  
+    public void removeLike(String email) {
+        likedBy.remove(email);
+        this.likes = likedBy.size();
+    }
 
-  return (
-    <article className="bg-white rounded-lg shadow p-4">
-      {/* Header */}
-      <header className="flex items-center gap-3 mb-3">
-        {renderAvatar()}
-        <div>
-          <p className="text-sm font-semibold text-gray-800">
-            {post.authorName}
-          </p>
-          <p className="text-xs text-gray-500">{post.authorEmail}</p>
-          <p className="text-xs text-gray-400">
-            {new Date(post.createdAt).toLocaleString()}
-          </p>
-        </div>
-      </header>
+    public boolean isLikedByUser() {
+        return likedByUser;
+    }
 
-      <h2 className="text-base font-semibold text-gray-800">{post.title}</h2>
-      <p className="text-sm text-gray-700 mt-1 whitespace-pre-line" dangerouslySetInnerHTML={{__html:linkify(post.message)}}>
-        {post.message}
-      </p>
+    public void setLikedByUser(boolean likedByUser) {
+        this.likedByUser = likedByUser;
+    }
 
-      <div className="flex gap-4 text-xs text-gray-500 mt-3 items-center">
-        {/* <span className="flex items-center gap-1">
-          <FaEye /> {post.views}
-        </span> */}
+    public String getForumCategory() {
+        return forumCategory;
+    }
 
-        <button
-          type="button"
-          onClick={handleToggleComments}
-          className="hover:underline flex items-center gap-1"
-        >
-          <FaCommentDots /> {comments.length}
-        </button>
+    public void setForumCategory(String forumCategory) {
+        this.forumCategory = forumCategory;
+    }
+    public String getPictureUrl() {
+        return pictureUrl;
+    }
+    public void setPictureUrl(String pictureUrl) {
+        this.pictureUrl = pictureUrl;
+    }
+}
+package Forum;
+import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.validation.Valid;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.User;
+import java.io.IOException;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.*;
+@Path("/posts")
+@Consumes(MediaType.APPLICATION_JSON)
+@Produces(MediaType.APPLICATION_JSON)
+public class PostResource {
 
-        <button
-          type="button"
-          onClick={handleToggleLike}
-          disabled={liking}
-          className={`hover:underline flex items-center gap-1 ${
-            liked ? "text-red-600 font-bold" : ""
-          }`}
-        >
-          {liked ? <FaHeart /> : <FaRegHeart />} {likes}
-        </button>
-      </div>
+    @Inject
+    SecurityIdentity identity;
 
-      {showComments && (
-        <section className="mt-4 space-y-2 border-t pt-4">
-          {comments.length === 0 ? (
-            <p className="text-xs text-gray-400">No comments yet.</p>
-          ) : (
-            comments.map((c) => (
+    @Inject
+    EntityManager em;
 
-                          
-              <div key={c.id} className="flex items-start gap-2 text-xs">
-                {c.avatarUrl ? (
-                  <img
-                    src={`/api/profile/avatars/${c.avatarUrl.split("/").pop()}`}
-                    alt="User avatar"
-                    className="w-6 h-6 rounded-full object-cover border"
-                  />
+    @GET
+    public List<PostEntity> getAllPosts() {
+        List<PostEntity> posts = em.createQuery("SELECT p FROM PostEntity p ORDER BY p.createdAt DESC", PostEntity.class)
+                .getResultList();
 
-                ) : (
-                  <div className="w-6 h-6 bg-gray-400 text-white rounded-full flex items-center justify-center text-[10px] font-bold">
-                    {c.authorName?.charAt(0)?.toUpperCase() || "?"}
-                  </div>
-                )}
-                <div>
-                  <p className="font-medium">{c.authorName}</p>
-                  <p className="text-gray-700 whitespace-pre-line">{c.message}</p>
-                  <p className="text-[10px] text-gray-400">
-                    {new Date(c.createdAt).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-            )
-          
-          )
-          )}
+        String userEmail = identity.getPrincipal().getName();
 
-          <div className="mt-3">
-            <textarea
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              className="w-full border border-gray-300 rounded p-2 text-xs focus:outline-none focus:ring focus:ring-blue-200"
-              rows={3}
-              placeholder="Add a comment..."
-            />
-            <div className="flex justify-end mt-2">
-              <button
-                type="button"
-                onClick={handleCommentSubmit}
-                disabled={!commentText.trim()}
-                className="bg-blue-600 text-white px-4 py-1 rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
-              >
-                Submit
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
-    </article>
-  );
-};
+        for (PostEntity post : posts) {
+            String avatar = post.getAvatarUrl();
+            if (avatar != null && !avatar.startsWith("http")) {
+                String filename = Paths.get(avatar).getFileName().toString();
+                post.setAvatarUrl("http://localhost:8080/posts/avatars/" + filename);
+            }
+            post.setLikedByUser(post.getLikedBy().contains(userEmail));
+        }
 
-export default PostCardWidget;
+        return posts;
+    }
+    @GET
+    @Path("/{id}")
+    public PostEntity getOne(@PathParam("id") String id) {
+        PostEntity post = em.find(PostEntity.class, id);
+        if (post == null) throw new NotFoundException("Post not found");
+        String avatar = post.getAvatarUrl();
+        if (avatar != null && !avatar.startsWith("http")) {
+            String filename = Paths.get(avatar).getFileName().toString();
+            post.setAvatarUrl("http://localhost:8080/posts/avatars/" + filename);
+        }
+        String userEmail = identity.getPrincipal().getName();
+        post.setLikedByUser(post.getLikedBy().contains(userEmail));
+
+        return post;
+    }
+
+    @POST
+    @Path("/{id}/like")
+    @Transactional
+    public Response like(@PathParam("id") String id) {
+        String userEmail = identity.getPrincipal().getName();
+        PostEntity post = em.find(PostEntity.class, id);
+
+        if (post == null) {
+            return Response.status(Response.Status.NOT_FOUND).entity("Post not found").build();
+        }
+
+        if (!post.getLikedBy().contains(userEmail)) {
+            post.addLike(userEmail);
+            System.out.println("✅ User " + userEmail + " liked post " + id);
+        } else {
+            System.out.println("⚠️ User " + userEmail + " already liked post " + id);
+        }
+
+        return Response.ok().entity(Map.of("likes", post.getLikes(), "likedByUser", true)).build();
+    }
+
+    @POST
+    @Path("/{id}/unlike")
+    @Transactional
+    public Response unlike(@PathParam("id") String id) {
+        String userEmail = identity.getPrincipal().getName();
+        PostEntity post = em.find(PostEntity.class, id);
+
+        if (post == null) {
+            return Response.status(Response.Status.NOT_FOUND).entity("Post not found").build();
+        }
+
+        if (post.getLikedBy().contains(userEmail)) {
+            post.removeLike(userEmail);
+            System.out.println("✅ User " + userEmail + " unliked post " + id);
+        } else {
+            System.out.println("⚠️ User " + userEmail + " has not liked post " + id);
+        }
+
+        return Response.ok().entity(Map.of("likes", post.getLikes(), "likedByUser", false)).build();
+
+    }
+    @POST
+    @Transactional
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    public Response create(@Valid PostCreateRequest req) {
+        String email = identity.getPrincipal().getName();
+        String displayName = Optional.ofNullable(req.authorName).filter(s -> !s.isBlank()).orElse(email);
+
+        User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                .setParameter("email", email)
+                .getSingleResult();
+
+        PostEntity post = new PostEntity();
+        post.setAuthorName(displayName);
+        post.setAuthorEmail(email);
+        post.setTitle(req.title);
+        post.setMessage(req.message);
+        post.setForumCategory(req.forumCategory);
+
+        if (user.getAvatar() != null) {
+            post.setAvatarUrl(user.getAvatar());
+        }
+        if(req.picturlUrl != null){
+            try {
+                String originalName = req.picturlUrl != null ? req.picturlUrl.fileName() : "picture.jpeg";
+                String filename = lessonId + ".mp4";
+                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/picture");
+                java.nio.file.Files.createDirectories(dir);
+                java.nio.file.Path videoPath = dir.resolve(filename);
+                java.nio.file.Files.copy(req.picturlUrl, videoPath, StandardCopyOption.REPLACE_EXISTING);
+
+                System.out.println("Video path : " + videoPath.toString());
+                System.out.println("Original file name: " + originalName);
+                post.setVideoUrl("uploads/video/" + filename);
+            } catch (Exception e) {
+                throw new InternalServerErrorException("Failed to save photo.");
+            }
+        }
+
+        post.persist();
+
+        return Response.created(URI.create("/posts/" + post.getId()))
+                .entity(post)
+                .build();
+    }
+}
