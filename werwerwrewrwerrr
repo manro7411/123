@@ -1,2 +1,17 @@
 import 'react-pdf/dist/Page/TextLayer.css';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
+Uncaught TypeError: pdfjs3.TextLayer is not a constructor
+    at renderTextLayer (TextLayer.js:126:29)
+    at Object.react_stack_bottom_frame (react-dom-client.development.js:23953:20)
+    at runWithFiberInDEV (react-dom-client.development.js:1519:30)
+    at commitHookEffectListMount (react-dom-client.development.js:11905:29)
+    at commitHookLayoutEffects (react-dom-client.development.js:11855:11)
+    at commitLayoutEffectOnFiber (react-dom-client.development.js:12613:13)
+    at recursivelyTraverseLayoutEffects (react-dom-client.development.js:13590:11)
+    at commitLayoutEffectOnFiber (react-dom-client.development.js:12791:11)
+    at recursivelyTraverseLayoutEffects (react-dom-client.development.js:13590:11)
+    at commitLayoutEffectOnFiber (react-dom-client.development.js:12727:11)
+react-dom-client.development.js:8283  An error occurred in the <TextLayer2> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
