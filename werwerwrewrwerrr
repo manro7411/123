@@ -1,5 +1,68 @@
- @POST
+
+http://localhost:5173/api/posts
+Request Method
+POST
+Status Code
+401 Unauthorized
+Remote Address
+[::1]:5173
+Referrer Policy
+strict-origin-when-cross-origin
+access-control-allow-credentials
+true
+access-control-allow-headers
+accept,authorization,content-type,x-requested-with
+access-control-allow-methods
+GET,POST,PUT,DELETE,OPTIONS
+access-control-allow-origin
+http://localhost:5173
+connection
+close
+content-length
+0
+date
+Thu, 07 Aug 2025 09:12:36 GMT
+vary
+Origin
+www-authenticate
+Bearer
+accept
+*/*
+accept-encoding
+gzip, deflate, br, zstd
+accept-language
+en-US,en;q=0.9,th;q=0.8
+authorization
+Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJyb2xlIjoidXNlciIsInVwbiI6InJhdGNoYW5vbkBnbWFpbC5jb20iLCJlbWFpbCI6InJhdGNoYW5vbkBnbWFpbC5jb20iLCJuYW1lIjoiUmF0Y2hhbm9uIFRyYWl0aXByYXQiLCJpc3MiOiJodHRwczovL2V4YW1wbGUuY29tL2lzc3VlciIsInN1YiI6InJhdGNoYW5vbkBnbWFpbC5jb20iLCJncm91cHMiOlsidXNlciJdLCJpYXQiOjE3NTQ1NTA2NDEsImV4cCI6MTc1NDU1Nzg0MSwianRpIjoiNzU2NmM1MDctMGJlNi00NWViLWFmNjUtYmMxMzljOTRiZWNlIn0.PElaIP8iFYzoB9cf3m8DdhOA8YG6pySNYHvskwuDkipHZc1q1DoWYaBrlqMPJ1k4r2vA3g2TwB_hL-3j10oeuOU9ce4adqBTXrcwKy7_gjrjWUXXDWq0N6iSFGF_TMQpg-ldZebsmjxPwAsBUu0vzatDAurUGYOTQ4G8YtNuVY90pSyi_AtSKcQIdMX-MfX59Atf5Hj4sEFD0hToH_nYt3WX_KlD5ARL12KexUnNWnimvK-tfnUh07cKE6LidlBsVUHh529YQiHQf_GzPtWFOB0Q6ctioDPq6QDFBP2YXOH_N-6dC-cD7szmB-uWBO3XwHgF2Qm02GOenfJ8IHKisw
+connection
+keep-alive
+content-length
+293166
+content-type
+multipart/form-data; boundary=----WebKitFormBoundaryYKD2iukAvx9CFFFv
+host
+localhost:5173
+origin
+http://localhost:5173
+referer
+http://localhost:5173/forum
+sec-ch-ua
+"Not)A;Brand";v="8", "Chromium";v="138", "Microsoft Edge";v="138"
+sec-ch-ua-mobile
+?1
+sec-ch-ua-platform
+"Android"
+sec-fetch-dest
+empty
+sec-fetch-mode
+cors
+sec-fetch-site
+same-origin
+user-agent
+Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36 E
+@POST
     @Transactional
+    @RolesAllowed("user")
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     @Produces(MediaType.APPLICATION_JSON)
     public Response create(@Valid PostCreateRequest req) {
@@ -41,7 +104,38 @@
                 .entity(post)
                 .build();
     }
+package Forum;
+import jakarta.ws.rs.FormParam;
+import org.jboss.resteasy.reactive.PartType;
 
+import java.io.InputStream;
+
+public class PostCreateRequest {
+
+    @FormParam("title")
+
+    public String title;
+
+    @FormParam("message")
+
+    public String message;
+
+    @FormParam("authorName")
+
+    public String authorName;
+
+    @FormParam("forumCategory")
+
+    public String forumCategory;
+
+    @FormParam("picture")
+    @PartType("application/octet-stream")
+
+    public InputStream picture;
+
+    @FormParam("pictureFileName")
+    public String pictureFileName;
+}
 package Forum;
 
 import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
@@ -180,178 +274,3 @@ public class PostEntity extends PanacheEntityBase {
         this.pictureUrl = pictureUrl;
     }
 }
-
-package Forum;
-import jakarta.ws.rs.FormParam;
-import java.io.InputStream;
-
-public class PostCreateRequest {
-
-    @FormParam("title")
-
-    public String title;
-
-    @FormParam("message")
-
-    public String message;
-
-    @FormParam("authorName")
-
-    public String authorName;
-
-    @FormParam("forumCategory")
-
-    public String forumCategory;
-
-    @FormParam("picture")
-
-    public InputStream picture;
-
-    @FormParam("picture")
-    public String pictureFileName;
-}
-
-
----
-
-    @POST
-    @Transactional
-    @RolesAllowed("admin")
-    @Consumes(MediaType.MULTIPART_FORM_DATA)
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response create(ExtendedLearningContentDto dto) {
-        if (dto.questionsJson != null && !dto.questionsJson.isEmpty()) {
-            try {
-                ObjectMapper mapper = new ObjectMapper();
-                dto.questions = mapper.readValue(dto.questionsJson,
-                        new com.fasterxml.jackson.core.type.TypeReference<List<QuestionDTO>>() {});
-                System.out.println("✅ Parsed questions count: " + dto.questions.size());
-            } catch (Exception e) {
-                System.out.println("❌ Failed to parse questions JSON");
-                e.printStackTrace();
-                throw new BadRequestException("Invalid format for questions JSON");
-            }
-        }
-
-        String lessonId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-        LearningContent lc = new LearningContent();
-        lc.setId(lessonId);
-        lc.setTitle(dto.title);
-        lc.setDescription(dto.description);
-        lc.setCategory(dto.category);
-        lc.setThumbnailUrl(dto.thumbnailUrl);
-        lc.setAuthorName(jwt.getClaim("name"));
-        lc.setAuthorEmail(jwt.getSubject());
-        lc.setAuthorRole("admin");
-        lc.setClickCount(0L);
-        lc.setAuthorAvatarUrl(dto.authorAvatarUrl);
-        lc.setCreatedAt(LocalDateTime.now());
-        lc.setMaxAttempts(Optional.ofNullable(dto.maxAttempts).orElse(1));
-        lc.setContentType(dto.contentType);
-        lc.setAssignType(dto.assignType);
-        lc.setAssignedUserIds(dto.assignedUserIds);
-        lc.setAssignedTeamIds(dto.assignedTeamIds);
-        lc.setDueDate(dto.dueDate);
-
-        if (dto.videoStream != null) {
-            try {
-                String originalName = dto.videoMeta != null ? dto.videoMeta.fileName() : "video.mp4";
-                String filename = lessonId + ".mp4";
-                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/video");
-                java.nio.file.Files.createDirectories(dir);
-                java.nio.file.Path videoPath = dir.resolve(filename);
-                java.nio.file.Files.copy(dto.videoStream, videoPath, StandardCopyOption.REPLACE_EXISTING);
-
-                System.out.println("Video path : " + videoPath.toString());
-                System.out.println("Original file name: " + originalName);
-                lc.setVideoUrl("uploads/video/" + filename);
-            } catch (Exception e) {
-                throw new InternalServerErrorException("Failed to save video.");
-            }
-        }
-
-        em.persist(lc);
-
-        String quizId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-        if (dto.questions != null) {
-            for (QuestionDTO q : dto.questions) {
-                QuestionEntity qe = new QuestionEntity();
-                qe.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 21));
-                qe.setLearningContent(lc);
-                qe.setQuiz_id(quizId);
-                qe.setQuestionText(q.questionText);
-                qe.setType(QuestionType.valueOf(q.type.toUpperCase()));
-                qe.setPoints(q.points != null ? q.points : 1);
-                em.persist(qe);
-
-                if (q.choices != null) {
-                    for (ChoiceDTO c : q.choices) {
-                        QuestionChoiceEntity ce = new QuestionChoiceEntity();
-                        ce.id = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-                        ce.question = qe;
-                        ce.choiceText = c.text;
-                        ce.isCorrect = c.isCorrect;
-                        em.persist(ce);
-                    }
-                }
-            }
-        }
-
-        System.out.println("📥 Received new lesson creation request:");
-        System.out.println("Title: " + dto.title);
-        System.out.println("Description: " + dto.description);
-        System.out.println("Category: " + dto.category);
-        System.out.println("Thumbnail URL: " + dto.thumbnailUrl);
-        System.out.println("Assign Type: " + dto.assignType);
-        System.out.println("Assigned Users: " + (dto.assignedUserIds != null ? dto.assignedUserIds : "[]"));
-        System.out.println("Assigned Teams: " + (dto.assignedTeamIds != null ? dto.assignedTeamIds : "[]"));
-        System.out.println("Due Date: " + dto.dueDate);
-        System.out.println("Author Avatar URL: " + dto.authorAvatarUrl);
-        System.out.println("Max Attempts: " + dto.maxAttempts);
-        System.out.println("Video Meta: " + (dto.videoMeta != null ? dto.videoMeta.fileName() : "No file meta"));
-        System.out.println("Questions count: " + (dto.questions != null ? dto.questions.size() : 0));
-
-        return Response.created(URI.create("/learning/" + lc.getId()))
-                .entity(LearningContentDto.fromEntity(lc))
-                .build();
-    }
-package Forum;
-import jakarta.ws.rs.FormParam;
-import org.jboss.resteasy.reactive.PartType;
-
-import java.io.InputStream;
-
-public class PostCreateRequest {
-
-    @FormParam("title")
-
-    public String title;
-
-    @FormParam("message")
-
-    public String message;
-
-    @FormParam("authorName")
-
-    public String authorName;
-
-    @FormParam("forumCategory")
-
-    public String forumCategory;
-
-    @FormParam("picture")
-    @PartType("application/octet-stream")
-
-    public InputStream picture;
-
-    @FormParam("picture")
-    public String pictureFileName;
-}
- const formData = new FormData();
-        formData.append("title", title);
-        formData.append("message", message);
-        formData.append("authorName", user?.name ?? "Unknown");
-        formData.append("forumCategory", forumCategory);
-        if (picture) {
-            formData.append("picture", picture);
-        }
