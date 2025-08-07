@@ -1,33 +1,212 @@
+ @POST
+    @Transactional
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response create(@Valid PostCreateRequest req) {
+        String email = identity.getPrincipal().getName();
+        String displayName = Optional.ofNullable(req.authorName).filter(s -> !s.isBlank()).orElse(email);
 
-Exception in thread "executor-thread-3" java.lang.NoClassDefFoundError: Could not initialize class org.jboss.threads.JDKSpecific$ThreadAccess
+        User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                .setParameter("email", email)
+                .getSingleResult();
 
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:13)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1447)                                                                                                                                                                         
-Caused by: java.lang.ExceptionInInitializerError: Exception java.lang.IllegalAccessError: module java.base does not open java.lang to unnamed module @5cfd59de; to use the thread-local-reset capability on Java 24 or later, use this JVM option: --add-opens java.base/java.lang=ALL-UNNAMED [in thread "executor-thread-1"]                                                                                                                                          
-        at org.jboss.threads.JDKSpecific$ThreadAccess.<clinit>(JDKSpecific.java:32)                                                                                                                                                 
-        ... 3 more                                                                                                                                                                                                                  
-Exception in thread "executor-thread-4" java.lang.NoClassDefFoundError: Could not initialize class org.jboss.threads.JDKSpecific$ThreadAccess                                                                                       
+        PostEntity post = new PostEntity();
+        post.setAuthorName(displayName);
+        post.setAuthorEmail(email);
+        post.setTitle(req.title);
+        post.setMessage(req.message);
+        post.setForumCategory(req.forumCategory);
 
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:13)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1447)                                                                                                                                                                         
-Caused by: java.lang.ExceptionInInitializerError: Exception java.lang.IllegalAccessError: module java.base does not open java.lang to unnamed module @5cfd59de; to use the thread-local-reset capability on Java 24 or later, use this JVM option: --add-opens java.base/java.lang=ALL-UNNAMED [in thread "executor-thread-1"]                                                                                                                                          
-        at org.jboss.threads.JDKSpecific$ThreadAccess.<clinit>(JDKSpecific.java:32)                                                                                                                                                 
-        ... 3 more                                                                                                                                                                                                                  
-Exception in thread "executor-thread-5" java.lang.NoClassDefFoundError: Could not initialize class org.jboss.threads.JDKSpecific$ThreadAccess                                                                                       
+        if (user.getAvatar() != null) {
+            post.setAvatarUrl(user.getAvatar());
+        }
+        post.persist();
+        String filename = post.getId() + ".jpg";
+        if(req.picture != null){
+            try {
+                String originalName = req.pictureFileName != null ? req.pictureFileName : "picture.jpeg";
+                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/picture");
+                java.nio.file.Files.createDirectories(dir);
+                java.nio.file.Path picturePath = dir.resolve(filename);
+                java.nio.file.Files.copy(req.picture, picturePath, StandardCopyOption.REPLACE_EXISTING);
 
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:13)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1447)                                                                                                                                                                         
-Caused by: java.lang.ExceptionInInitializerError: Exception java.lang.IllegalAccessError: module java.base does not open java.lang to unnamed module @5cfd59de; to use the thread-local-reset capability on Java 24 or later, use this JVM option: --add-opens java.base/java.lang=ALL-UNNAMED [in thread "executor-thread-1"]                                                                                                                                          
-        at org.jboss.threads.JDKSpecific$ThreadAccess.<clinit>(JDKSpecific.java:32)                                                                                                                                                 
-        ... 3 more                                                                                                                                                                                                                  
-Exception in thread "executor-thread-2" java.lang.NoClassDefFoundError: Could not initialize class org.jboss.threads.JDKSpecific$ThreadAccess                                                                                       
+                System.out.println("Picture path : " + picturePath.toString());
+                System.out.println("Original file name: " + originalName);
+                post.setPictureUrl("uploads/picture/" + filename);
+            } catch (Exception e) {
+                throw new InternalServerErrorException("Failed to save photo.");
+            }
+        }
+        return Response.created(URI.create("/posts/" + post.getId()))
+                .entity(post)
+                .build();
+    }
 
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:13)
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
-        at java.base/java.lang.Thread.run(Thread.java:1447)
-Caused by: java.lang.ExceptionInInitializerError: Exception java.lang.IllegalAccessError: module java.base does not open java.lang to unnamed module @5cfd59de; to use the thread-local-reset capability on Java 24 or later, use this JVM option: --add-opens java.base/java.lang=ALL-UNNAMED [in thread "executor-thread-1"]
-        at org.jboss.threads.JDKSpecific$ThreadAccess.<clinit>(JDKSpecific.java:32)
-        ... 3 more
+package Forum;
+
+import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
+import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
+import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import model.CommentEntity;
+
+import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
+
+@Entity
+@Table(name = "posts")
+public class PostEntity extends PanacheEntityBase {
+    @Id
+    @Column(length = 21, nullable = false, updatable = false)
+    private String id;
+
+    @NotBlank
+    @Size(max = 100)
+    @Column(name = "author_name", nullable = false, length = 100)
+    private String authorName;
+
+    @NotBlank
+    @Column(name = "author_email", nullable = false, length = 150)
+    private String authorEmail;
+
+    @NotBlank
+    @Size(max = 255)
+    private String title;
+
+    @NotBlank
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String message;
+
+    @Column(nullable = false)
+    private long likes = 0;
+
+    @Column(nullable = false)
+    private long views = 0;
+
+    @Column(name = "forum_category")
+    private String forumCategory;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @Column(length = 512,name = "avatarurl")
+    private String avatarUrl;
+
+    @Transient
+    private boolean likedByUser;
+
+    @ElementCollection
+    @CollectionTable(name = "post_likes", joinColumns = @JoinColumn(name = "post_id"))
+    @Column(name = "user_email")
+    private Set<String> likedBy = new HashSet<>();
+
+    @Column(name = "pictureUrl")
+    private String pictureUrl;
+
+
+    @PrePersist
+    void prePersist() {
+        if (id == null || id.isBlank()) id = NanoIdUtils.randomNanoId();
+        createdAt  = LocalDateTime.now();
+        updatedAt  = createdAt;
+    }
+
+    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
+    private java.util.List<CommentEntity> comments = new java.util.ArrayList<>();
+
+
+    @PreUpdate
+    void preUpdate() { updatedAt = LocalDateTime.now(); }
+
+    public String getId()            { return id; }
+    public String getAuthorName()    { return authorName; }
+    public String getAuthorEmail()   { return authorEmail; }
+    public String getTitle()         { return title; }
+    public String getMessage()       { return message; }
+    public long   getLikes()         { return likes; }
+    public long   getViews()         { return views; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public Set<String> getLikedBy() { return likedBy; }
+
+    public void setAuthorName(String n)     { this.authorName = n; }
+    public void setAuthorEmail(String e)    { this.authorEmail = e; }
+    public void setTitle(String t)          { this.title = t; }
+    public void setMessage(String m)        { this.message = m; }
+    public void setLikes(long l)            { this.likes = l; }
+    public void setViews(long v)            { this.views = v; }
+
+    public String getAvatarUrl() {
+        return avatarUrl;
+    }
+
+    public void setAvatarUrl(String avatarUrl) {
+        this.avatarUrl = avatarUrl;
+    }
+    public void addLike(String email) {
+        likedBy.add(email);
+        this.likes = likedBy.size();
+    }
+
+    public void removeLike(String email) {
+        likedBy.remove(email);
+        this.likes = likedBy.size();
+    }
+
+    public boolean isLikedByUser() {
+        return likedByUser;
+    }
+
+    public void setLikedByUser(boolean likedByUser) {
+        this.likedByUser = likedByUser;
+    }
+
+    public String getForumCategory() {
+        return forumCategory;
+    }
+
+    public void setForumCategory(String forumCategory) {
+        this.forumCategory = forumCategory;
+    }
+    public String getPictureUrl() {
+        return pictureUrl;
+    }
+    public void setPictureUrl(String pictureUrl) {
+        this.pictureUrl = pictureUrl;
+    }
+}
+
+package Forum;
+import jakarta.ws.rs.FormParam;
+import java.io.InputStream;
+
+public class PostCreateRequest {
+
+    @FormParam("title")
+
+    public String title;
+
+    @FormParam("message")
+
+    public String message;
+
+    @FormParam("authorName")
+
+    public String authorName;
+
+    @FormParam("forumCategory")
+
+    public String forumCategory;
+
+    @FormParam("picture")
+
+    public InputStream picture;
+
+    @FormParam("picture")
+    public String pictureFileName;
+}
