@@ -40,3 +40,47 @@ else if (lesson.contentType === "document") {
     }
     return null;
   };
+
+
+
+
+
+else if (lesson.contentType === "document") {
+  return (
+    <div className="bg-white p-4 rounded shadow w-full">
+      <Document
+        file={`/api/learning/document/${documentfile}`}
+        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+        onLoadError={(error) => console.error("Error loading PDF:", error)}
+        loading={<p>Loading PDF...</p>}
+      >
+        <Page
+          pageNumber={currentPage + 1}
+          renderAnnotationLayer={true}
+          renderTextLayer={true}
+        />
+      </Document>
+
+      <div className="flex justify-between items-center mt-4">
+        <button
+          onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
+          disabled={currentPage <= 0}
+          className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+        >
+          ◀️ Previous
+        </button>
+        <p className="text-sm text-gray-600">
+          Page {currentPage + 1} of {numPages}
+        </p>
+        <button
+          onClick={() => setCurrentPage((prev) => Math.min(prev + 1, numPages - 1))}
+          disabled={currentPage >= numPages - 1}
+          className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+        >
+          Next ▶️
+        </button>
+      </div>
+    </div>
+  );
+}
+
