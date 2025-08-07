@@ -1,19 +1,2 @@
-09:05:33 [vite] Internal server error: [postcss] ENOENT: no such file or directory, open 'C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend\react-pdf\dist\esm\Page\TextLayer.css'
-  Plugin: vite:css
-  File: C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/src/index.css:undefined:NaN
-      at async open (node:internal/fs/promises:639:25)
-      at async Object.readFile (node:internal/fs/promises:1243:14)
-      at async Object.load (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-DBxKXgDP.js:43727:25)
-      at async loadImportContent (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-AiMcmC_f.js:673:19)
-      at async Promise.all (index 0)
-      at async resolveImportId (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-AiMcmC_f.js:629:27)
-      at async parseStyles$1 (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-AiMcmC_f.js:537:5)
-      at async Object.Once (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-AiMcmC_f.js:794:22)
-      at async LazyResult.runAsync (C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend\node_modules\postcss\lib\lazy-result.js:293:11)
-      at async runPostCSS (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-DBxKXgDP.js:43824:21)
-      at async compilePostCSS (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-DBxKXgDP.js:43794:18)
-      at async compileCSS (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-DBxKXgDP.js:43649:27)
-      at async TransformPluginContext.handler (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-DBxKXgDP.js:42965:11)
-      at async EnvironmentPluginContainer.transform (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-DBxKXgDP.js:42294:18)
-      at async loadAndTransform (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-DBxKXgDP.js:35735:27)
-      at async viteTransformMiddleware (file:///C:/Users/S_Tratchanon/Documents/GitHub/IT_Learning_hub/frontend/node_modules/vite/dist/node/chunks/dep-DBxKXgDP.js:37250:24)
+import 'react-pdf/dist/Page/TextLayer.css';
+import 'react-pdf/dist/Page/AnnotationLayer.css';
