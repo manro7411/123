@@ -347,4 +347,11 @@ public class PostCreateRequest {
     @FormParam("picture")
     public String pictureFileName;
 }
-
+ const formData = new FormData();
+        formData.append("title", title);
+        formData.append("message", message);
+        formData.append("authorName", user?.name ?? "Unknown");
+        formData.append("forumCategory", forumCategory);
+        if (picture) {
+            formData.append("picture", picture);
+        }
