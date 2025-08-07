@@ -1,92 +1,33 @@
-Tests paused
-2025-08-07 15:48:50,960 ERROR [org.jbo.res.rea.ser.cor.mul.MultiPartParserDefinition] (executor-thread-2) Cannot remove uploaded file C:\Users\S_TRAT~1\AppData\Local\Temp\uploads\resteasy-reactive662157833082799336upload: java.nio.file.FileSystemException: C:\Users\S_TRAT~1\AppData\Local\Temp\uploads\resteasy-reactive662157833082799336upload: The process cannot access the file because it is being used by another process
-        at java.base/sun.nio.fs.WindowsException.translateToIOException(WindowsException.java:92)
-        at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:103)
-        at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:108)
-        at java.base/sun.nio.fs.WindowsFileSystemProvider.implDelete(WindowsFileSystemProvider.java:269)
-        at java.base/sun.nio.fs.AbstractFileSystemProvider.delete(AbstractFileSystemProvider.java:105)
-        at java.base/java.nio.file.Files.delete(Files.java:1049)
-        at org.jboss.resteasy.reactive.server.core.multipart.MultiPartParserDefinition$MultiPartUploadHandler$1.run(MultiPartParserDefinition.java:407)
-        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)
-        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)
-        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)
-        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1586)
-        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)
+
+Exception in thread "executor-thread-3" java.lang.NoClassDefFoundError: Could not initialize class org.jboss.threads.JDKSpecific$ThreadAccess
+
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:13)                                                                                                                                 
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
+        at java.base/java.lang.Thread.run(Thread.java:1447)                                                                                                                                                                         
+Caused by: java.lang.ExceptionInInitializerError: Exception java.lang.IllegalAccessError: module java.base does not open java.lang to unnamed module @5cfd59de; to use the thread-local-reset capability on Java 24 or later, use this JVM option: --add-opens java.base/java.lang=ALL-UNNAMED [in thread "executor-thread-1"]                                                                                                                                          
+        at org.jboss.threads.JDKSpecific$ThreadAccess.<clinit>(JDKSpecific.java:32)                                                                                                                                                 
+        ... 3 more                                                                                                                                                                                                                  
+Exception in thread "executor-thread-4" java.lang.NoClassDefFoundError: Could not initialize class org.jboss.threads.JDKSpecific$ThreadAccess                                                                                       
+
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:13)                                                                                                                                 
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
+        at java.base/java.lang.Thread.run(Thread.java:1447)                                                                                                                                                                         
+Caused by: java.lang.ExceptionInInitializerError: Exception java.lang.IllegalAccessError: module java.base does not open java.lang to unnamed module @5cfd59de; to use the thread-local-reset capability on Java 24 or later, use this JVM option: --add-opens java.base/java.lang=ALL-UNNAMED [in thread "executor-thread-1"]                                                                                                                                          
+        at org.jboss.threads.JDKSpecific$ThreadAccess.<clinit>(JDKSpecific.java:32)                                                                                                                                                 
+        ... 3 more                                                                                                                                                                                                                  
+Exception in thread "executor-thread-5" java.lang.NoClassDefFoundError: Could not initialize class org.jboss.threads.JDKSpecific$ThreadAccess                                                                                       
+
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:13)                                                                                                                                 
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
+        at java.base/java.lang.Thread.run(Thread.java:1447)                                                                                                                                                                         
+Caused by: java.lang.ExceptionInInitializerError: Exception java.lang.IllegalAccessError: module java.base does not open java.lang to unnamed module @5cfd59de; to use the thread-local-reset capability on Java 24 or later, use this JVM option: --add-opens java.base/java.lang=ALL-UNNAMED [in thread "executor-thread-1"]                                                                                                                                          
+        at org.jboss.threads.JDKSpecific$ThreadAccess.<clinit>(JDKSpecific.java:32)                                                                                                                                                 
+        ... 3 more                                                                                                                                                                                                                  
+Exception in thread "executor-thread-2" java.lang.NoClassDefFoundError: Could not initialize class org.jboss.threads.JDKSpecific$ThreadAccess                                                                                       
+
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:13)
         at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
         at java.base/java.lang.Thread.run(Thread.java:1447)
-
-@POST
-    @Transactional
-    @Consumes(MediaType.MULTIPART_FORM_DATA)
-    public Response create(@Valid PostCreateRequest req) {
-        String email = identity.getPrincipal().getName();
-        String displayName = Optional.ofNullable(req.authorName).filter(s -> !s.isBlank()).orElse(email);
-
-        User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
-                .setParameter("email", email)
-                .getSingleResult();
-
-        PostEntity post = new PostEntity();
-        post.setAuthorName(displayName);
-        post.setAuthorEmail(email);
-        post.setTitle(req.title);
-        post.setMessage(req.message);
-        post.setForumCategory(req.forumCategory);
-
-        if (user.getAvatar() != null) {
-            post.setAvatarUrl(user.getAvatar());
-        }
-        if(req.picture != null){
-            try {
-                String originalName = req.pictureFileName != null ? req.pictureFileName : "picture.jpeg";
-                String filename = post.getId() + ".mp4";
-                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/picture");
-                java.nio.file.Files.createDirectories(dir);
-                java.nio.file.Path picturePath = dir.resolve(filename);
-                java.nio.file.Files.copy(req.picture, picturePath, StandardCopyOption.REPLACE_EXISTING);
-
-                System.out.println("Video path : " + picturePath.toString());
-                System.out.println("Original file name: " + originalName);
-                post.setPictureUrl("uploads/picture/" + filename);
-            } catch (Exception e) {
-                throw new InternalServerErrorException("Failed to save photo.");
-            }
-        }
-
-        post.persist();
-
-        return Response.created(URI.create("/posts/" + post.getId()))
-                .entity(post)
-                .build();
-    }
-}
-package Forum;
-import jakarta.ws.rs.FormParam;
-import java.io.InputStream;
-
-public class PostCreateRequest {
-
-    @FormParam("title")
-
-    public String title;
-
-    @FormParam("message")
-
-    public String message;
-
-    @FormParam("authorName")
-
-    public String authorName;
-
-    @FormParam("forumCategory")
-
-    public String forumCategory;
-
-    @FormParam("picture")
-
-    public InputStream picture;
-
-    @FormParam("picture")
-    public String pictureFileName; // Optional: to get original file name
-}
+Caused by: java.lang.ExceptionInInitializerError: Exception java.lang.IllegalAccessError: module java.base does not open java.lang to unnamed module @5cfd59de; to use the thread-local-reset capability on Java 24 or later, use this JVM option: --add-opens java.base/java.lang=ALL-UNNAMED [in thread "executor-thread-1"]
+        at org.jboss.threads.JDKSpecific$ThreadAccess.<clinit>(JDKSpecific.java:32)
+        ... 3 more
