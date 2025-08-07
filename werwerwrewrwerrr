@@ -1,17 +1,42 @@
-import 'react-pdf/dist/Page/TextLayer.css';
-import 'react-pdf/dist/Page/AnnotationLayer.css';
-Uncaught TypeError: pdfjs3.TextLayer is not a constructor
-    at renderTextLayer (TextLayer.js:126:29)
-    at Object.react_stack_bottom_frame (react-dom-client.development.js:23953:20)
-    at runWithFiberInDEV (react-dom-client.development.js:1519:30)
-    at commitHookEffectListMount (react-dom-client.development.js:11905:29)
-    at commitHookLayoutEffects (react-dom-client.development.js:11855:11)
-    at commitLayoutEffectOnFiber (react-dom-client.development.js:12613:13)
-    at recursivelyTraverseLayoutEffects (react-dom-client.development.js:13590:11)
-    at commitLayoutEffectOnFiber (react-dom-client.development.js:12791:11)
-    at recursivelyTraverseLayoutEffects (react-dom-client.development.js:13590:11)
-    at commitLayoutEffectOnFiber (react-dom-client.development.js:12727:11)
-react-dom-client.development.js:8283  An error occurred in the <TextLayer2> component.
+else if (lesson.contentType === "document") {
+      return (
+        // <div>
+        //   <iframe
+        //   src={`/api/learning/document/${documentfile}`}
+        //   className="w-full h-[600px] border rounded"
+        //   title="Lesson Document"
+        // />
+        // </div>
 
-Consider adding an error boundary to your tree to customize error handling behavior.
-Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+    <div className="bg-white p-4 rounded shadow w-full">
+    <Document
+      file={`/api/learning/document/${documentfile}`}
+      onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+      onLoadError={(error) => console.error("Error loading PDF:", error)}
+    >
+      <Page pageNumber={currentPage + 1} />
+    </Document>
+    <div className="flex justify-between items-center mt-4">
+      <button
+        onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
+        disabled={currentPage <= 0}
+        className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+      >
+        ◀️ Previous
+      </button>
+      <p className="text-sm text-gray-600">
+        Page {currentPage + 1} of {numPages}
+      </p>
+      <button
+        onClick={() => setCurrentPage((prev) => Math.min(prev + 1, numPages - 1))}
+        disabled={currentPage >= numPages - 1}
+        className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+      >
+        Next ▶️
+      </button>
+    </div>
+  </div>
+      );
+    }
+    return null;
+  };
