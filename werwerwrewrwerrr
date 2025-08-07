@@ -210,3 +210,109 @@ public class PostCreateRequest {
     @FormParam("picture")
     public String pictureFileName;
 }
+
+
+---
+
+    @POST
+    @Transactional
+    @RolesAllowed("admin")
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response create(ExtendedLearningContentDto dto) {
+        if (dto.questionsJson != null && !dto.questionsJson.isEmpty()) {
+            try {
+                ObjectMapper mapper = new ObjectMapper();
+                dto.questions = mapper.readValue(dto.questionsJson,
+                        new com.fasterxml.jackson.core.type.TypeReference<List<QuestionDTO>>() {});
+                System.out.println("✅ Parsed questions count: " + dto.questions.size());
+            } catch (Exception e) {
+                System.out.println("❌ Failed to parse questions JSON");
+                e.printStackTrace();
+                throw new BadRequestException("Invalid format for questions JSON");
+            }
+        }
+
+        String lessonId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+        LearningContent lc = new LearningContent();
+        lc.setId(lessonId);
+        lc.setTitle(dto.title);
+        lc.setDescription(dto.description);
+        lc.setCategory(dto.category);
+        lc.setThumbnailUrl(dto.thumbnailUrl);
+        lc.setAuthorName(jwt.getClaim("name"));
+        lc.setAuthorEmail(jwt.getSubject());
+        lc.setAuthorRole("admin");
+        lc.setClickCount(0L);
+        lc.setAuthorAvatarUrl(dto.authorAvatarUrl);
+        lc.setCreatedAt(LocalDateTime.now());
+        lc.setMaxAttempts(Optional.ofNullable(dto.maxAttempts).orElse(1));
+        lc.setContentType(dto.contentType);
+        lc.setAssignType(dto.assignType);
+        lc.setAssignedUserIds(dto.assignedUserIds);
+        lc.setAssignedTeamIds(dto.assignedTeamIds);
+        lc.setDueDate(dto.dueDate);
+
+        if (dto.videoStream != null) {
+            try {
+                String originalName = dto.videoMeta != null ? dto.videoMeta.fileName() : "video.mp4";
+                String filename = lessonId + ".mp4";
+                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/video");
+                java.nio.file.Files.createDirectories(dir);
+                java.nio.file.Path videoPath = dir.resolve(filename);
+                java.nio.file.Files.copy(dto.videoStream, videoPath, StandardCopyOption.REPLACE_EXISTING);
+
+                System.out.println("Video path : " + videoPath.toString());
+                System.out.println("Original file name: " + originalName);
+                lc.setVideoUrl("uploads/video/" + filename);
+            } catch (Exception e) {
+                throw new InternalServerErrorException("Failed to save video.");
+            }
+        }
+
+        em.persist(lc);
+
+        String quizId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+        if (dto.questions != null) {
+            for (QuestionDTO q : dto.questions) {
+                QuestionEntity qe = new QuestionEntity();
+                qe.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 21));
+                qe.setLearningContent(lc);
+                qe.setQuiz_id(quizId);
+                qe.setQuestionText(q.questionText);
+                qe.setType(QuestionType.valueOf(q.type.toUpperCase()));
+                qe.setPoints(q.points != null ? q.points : 1);
+                em.persist(qe);
+
+                if (q.choices != null) {
+                    for (ChoiceDTO c : q.choices) {
+                        QuestionChoiceEntity ce = new QuestionChoiceEntity();
+                        ce.id = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+                        ce.question = qe;
+                        ce.choiceText = c.text;
+                        ce.isCorrect = c.isCorrect;
+                        em.persist(ce);
+                    }
+                }
+            }
+        }
+
+        System.out.println("📥 Received new lesson creation request:");
+        System.out.println("Title: " + dto.title);
+        System.out.println("Description: " + dto.description);
+        System.out.println("Category: " + dto.category);
+        System.out.println("Thumbnail URL: " + dto.thumbnailUrl);
+        System.out.println("Assign Type: " + dto.assignType);
+        System.out.println("Assigned Users: " + (dto.assignedUserIds != null ? dto.assignedUserIds : "[]"));
+        System.out.println("Assigned Teams: " + (dto.assignedTeamIds != null ? dto.assignedTeamIds : "[]"));
+        System.out.println("Due Date: " + dto.dueDate);
+        System.out.println("Author Avatar URL: " + dto.authorAvatarUrl);
+        System.out.println("Max Attempts: " + dto.maxAttempts);
+        System.out.println("Video Meta: " + (dto.videoMeta != null ? dto.videoMeta.fileName() : "No file meta"));
+        System.out.println("Questions count: " + (dto.questions != null ? dto.questions.size() : 0));
+
+        return Response.created(URI.create("/learning/" + lc.getId()))
+                .entity(LearningContentDto.fromEntity(lc))
+                .build();
+    }
+
