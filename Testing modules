@@ -1,221 +1,4 @@
 package Forum;
-
-import jakarta.persistence.Column;
-import jakarta.persistence.Embeddable;
-
-@Embeddable
-public class AttachmentMeta {
-    @Column(name = "file_name", nullable = false, length = 255)
-    private String filename;
-
-    @Column(name = "original_name", length = 255)
-    private String originalName;
-
-    @Column(name = "mime_type", length = 127)
-    private String mimeType;         // Content-Type
-
-    @Column(name = "file_size")
-    private long size;               // ขนาด (ไบต์)
-
-    public AttachmentMeta() {}
-
-    public AttachmentMeta(String filename, String originalName, String mimeType, long size) {
-        this.filename = filename;
-        this.originalName = originalName;
-        this.mimeType = mimeType;
-        this.size = size;
-    }
-
-    public String getFilename() {
-        return filename;
-    }
-    public String getOriginalName() {
-        return originalName;
-    }
-    public String getMimeType() {
-        return mimeType;
-    }
-    public long getSize() {
-        return size;
-    }
-    public void setOriginalName(String originalName) {
-        this.originalName = originalName;
-    }
-    public void setMimeType(String mimeType) {
-        this.mimeType = mimeType;
-    }
-    public void setFilename(String filename) {
-        this.filename = filename;
-    }
-    public void setSize(long size) {
-        this.size = size;
-    }
-}
-package Forum;
-import jakarta.ws.rs.FormParam;
-import org.jboss.resteasy.reactive.PartType;
-
-import java.io.InputStream;
-
-public class PostCreateRequest {
-
-    @FormParam("title")
-
-    public String title;
-
-    @FormParam("message")
-
-    public String message;
-
-    @FormParam("authorName")
-
-    public String authorName;
-
-    @FormParam("forumCategory")
-
-    public String forumCategory;
-
-    @FormParam("picture")
-    @PartType("application/octet-stream")
-
-    public InputStream picture;
-
-    @FormParam("pictureFileName")
-    public String pictureFileName;
-
-    @FormParam("document")
-    @PartType("application/octet-stream")
-    public InputStream document;
-
-    @FormParam("DocumentFileName")
-    public String documentFileName;
-}
-package Forum;
-
-import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
-import jakarta.persistence.*;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
-import model.CommentEntity;
-
-import java.time.LocalDateTime;
-import java.util.HashSet;
-import java.util.Set;
-@Entity
-@Table(name = "posts")
-public class PostEntity extends PanacheEntityBase {
-    @Id
-    @Column(length = 21, nullable = false, updatable = false)
-    private String id;
-
-    @NotBlank
-    @Size(max = 100)
-    @Column(name = "author_name", nullable = false, length = 100)
-    private String authorName;
-
-    @NotBlank
-    @Column(name = "author_email", nullable = false, length = 150)
-    private String authorEmail;
-
-    @NotBlank
-    @Size(max = 255)
-    private String title;
-
-    @NotBlank
-    @Column(nullable = false, columnDefinition = "TEXT")
-    private String message;
-
-    @Column(nullable = false)
-    private long likes = 0;
-
-    @Column(nullable = false)
-    private long views = 0;
-
-    @Column(name = "forum_category")
-    private String forumCategory;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
-
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
-
-    @Column(length = 512, name = "avatarurl")
-    private String avatarUrl;
-
-    @Transient
-    private boolean likedByUser;
-
-    @ElementCollection
-    @CollectionTable(name = "post_likes", joinColumns = @JoinColumn(name = "post_id"))
-    @Column(name = "user_email")
-    private Set<String> likedBy = new HashSet<>();
-
-    @Column(name = "pictureUrl")
-    private String pictureUrl;
-
-    @ElementCollection(fetch = FetchType.EAGER)
-    @CollectionTable(name = "post_attachments", joinColumns = @JoinColumn(name = "post_id"))
-    private java.util.List<AttachmentMeta> attachments = new java.util.ArrayList<>();
-
-    @PrePersist
-    void prePersist() {
-        if (id == null || id.isBlank()) id = NanoIdUtils.randomNanoId();
-        createdAt  = LocalDateTime.now();
-        updatedAt  = createdAt;
-    }
-
-    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
-    private java.util.List<model.CommentEntity> comments = new java.util.ArrayList<>();
-
-    @PreUpdate
-    void preUpdate() { updatedAt = LocalDateTime.now(); }
-
-    public String getId()            { return id; }
-    public String getAuthorName()    { return authorName; }
-    public String getAuthorEmail()   { return authorEmail; }
-    public String getTitle()         { return title; }
-    public String getMessage()       { return message; }
-    public long   getLikes()         { return likes; }
-    public long   getViews()         { return views; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public Set<String> getLikedBy()  { return likedBy; }
-
-    public void setAuthorName(String n)     { this.authorName = n; }
-    public void setAuthorEmail(String e)    { this.authorEmail = e; }
-    public void setTitle(String t)          { this.title = t; }
-    public void setMessage(String m)        { this.message = m; }
-    public void setLikes(long l)            { this.likes = l; }
-    public void setViews(long v)            { this.views = v; }
-
-    public String getAvatarUrl() { return avatarUrl; }
-    public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
-
-    public void addLike(String email) {
-        likedBy.add(email);
-        this.likes = likedBy.size();
-    }
-
-    public void removeLike(String email) {
-        likedBy.remove(email);
-        this.likes = likedBy.size();
-    }
-
-    public boolean isLikedByUser() { return likedByUser; }
-    public void setLikedByUser(boolean likedByUser) { this.likedByUser = likedByUser; }
-
-    public String getForumCategory() { return forumCategory; }
-    public void setForumCategory(String forumCategory) { this.forumCategory = forumCategory; }
-
-    public String getPictureUrl() { return pictureUrl; }
-    public void setPictureUrl(String pictureUrl) { this.pictureUrl = pictureUrl; }
-
-    public java.util.List<AttachmentMeta> getAttachments() { return attachments; }
-    public void setAttachments(java.util.List<AttachmentMeta> attachments) { this.attachments = attachments; }
-}
-package Forum;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -375,6 +158,29 @@ public class PostResource {
             return Response.ok().entity(picturePath.toFile()).build();
         }catch(Exception e){
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+    @GET
+    @Path("/postDocument/{filename}")
+    public Response getPostDocument(@PathParam("filename") String filename){
+        try {
+            java.nio.file.Path file = Paths.get("uploads/postDocuments", filename);
+            if (!Files.exists(file)) {
+                throw new NotFoundException("File not found: " + filename);
+            }
+
+            String mimeType = Files.probeContentType(file);
+            if (mimeType == null) {
+                mimeType = "application/octet-stream";
+            }
+
+            return Response.ok(Files.newInputStream(file))
+                    .type(mimeType)
+                    .header("Content-Disposition", "inline; filename=\"" + filename + "\"")
+                    .build();
+
+        } catch (IOException e) {
+            throw new InternalServerErrorException("Failed to load document: " + filename, e);
         }
     }
 }
