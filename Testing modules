@@ -55,7 +55,7 @@ const PostCardWidget = ({ post }: Props) => {
       const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-    if (!res.ok) throw new Error("Failed to fetch comments");
+      if (!res.ok) throw new Error("Failed to fetch comments");
       const data = await res.json();
       setComments(data);
     } catch (err) {
@@ -174,8 +174,8 @@ const PostCardWidget = ({ post }: Props) => {
   const rawDoc: string | undefined = (post as any).documentUrl;
   const documentUrl = formatDocumentUrl(rawDoc);
   const docFileName = rawDoc ? decodeURIComponent(rawDoc.split("/").pop() || "") : "";
-  const docExt = docFileName.includes(".") ? docFileName.split(".").pop()!.toUpperCase() : "FILE";
-  const isPdf = docExt.toLowerCase() === "pdf";
+  const docExt = docFileName.includes(".") ? docFileName.split(".").pop()!.toLowerCase() : "";
+  const isPdf = docExt === "pdf";
 
   return (
     <article className="bg-white rounded-lg shadow p-4">
@@ -210,20 +210,19 @@ const PostCardWidget = ({ post }: Props) => {
         </div>
       )}
 
-      {/* ---------- การ์ดพรีวิวเอกสาร + ปุ่มเปิดดู/ดาวน์โหลด ---------- */}
+      {/* ---------- พรีวิว + ดาวน์โหลดเอกสาร ---------- */}
       {documentUrl && (
         <div className="mt-3">
+          {/* การ์ดหัวเอกสารเหมือนตัวอย่าง */}
           <div className="relative w-[260px] rounded-xl border bg-white shadow-sm overflow-hidden group hover:shadow-md transition-shadow">
-            {/* มุมป้ายชนิดไฟล์ */}
             <div
               className={`absolute top-0 left-0 px-2 py-1 text-[10px] font-semibold text-white rounded-br-lg ${
                 isPdf ? "bg-red-600" : "bg-gray-600"
               }`}
             >
-              {docExt}
+              {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
             </div>
 
-            {/* พื้นที่พรีวิว (icon กลาง) */}
             <div className="h-36 w-full bg-gray-50 flex items-center justify-center">
               {isPdf ? (
                 <FaFilePdf className="text-5xl opacity-80" />
@@ -232,21 +231,19 @@ const PostCardWidget = ({ post }: Props) => {
               )}
             </div>
 
-            {/* แถบล่างชื่อไฟล์ */}
             <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 border-t">
               <span
                 className={`px-1.5 py-0.5 text-[10px] leading-none rounded-sm font-bold text-white ${
                   isPdf ? "bg-red-600" : "bg-gray-600"
                 }`}
               >
-                {isPdf ? "PDF" : docExt}
+                {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
               </span>
               <span className="text-sm font-semibold truncate" title={docFileName}>
                 {docFileName}
               </span>
             </div>
 
-            {/* ปุ่มลอยตอน hover */}
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
             <div className="absolute inset-x-0 bottom-2 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
               <a
@@ -268,6 +265,17 @@ const PostCardWidget = ({ post }: Props) => {
               </a>
             </div>
           </div>
+
+          {/* พรีวิว PDF ฝังในโพสต์ (inline) */}
+          {isPdf && (
+            <div className="mt-3 border rounded-md overflow-hidden">
+              <iframe
+                src={`${documentUrl}#toolbar=0`} // ซ่อน toolbar เล็กน้อย
+                className="w-full h-96"
+                title={docFileName || "Document preview"}
+              />
+            </div>
+          )}
         </div>
       )}
 
