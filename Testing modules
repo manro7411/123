@@ -359,3 +359,5 @@ const PostCardWidget = ({ post }: Props) => {
 };
 
 export default PostCardWidget;
+
+`/api/posts/picture/${docFileName}`
