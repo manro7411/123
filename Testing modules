@@ -1,59 +1,321 @@
-package Forum;
-import jakarta.ws.rs.FormParam;
-import org.jboss.resteasy.reactive.PartType;
+import { useContext, useEffect, useState } from "react";
+import type { Post, Comment } from "./KnowledgeForumLayout.tsx";
+import { AuthContext } from "../../Authentication/AuthContext.tsx";
+import {
+  // FaEye,
+  FaCommentDots,
+  FaHeart,
+  FaRegHeart,
+} from "react-icons/fa";
 
-import java.io.InputStream;
+type Props = {
+  post: Post;
+};
 
-public class PostCreateRequest {
+const PostCardWidget = ({ post }: Props) => {
+  const { token, user } = useContext(AuthContext);
+  const [showComments, setShowComments] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [comments, setComments] = useState<Comment[]>(post.comments);
 
-    @FormParam("title")
+  const [likes, setLikes] = useState(post.likes);
+  const [liked, setLiked] = useState(post.likedByUser ?? false);
+  const [liking, setLiking] = useState(false);
 
-    public String title;
+  const [userProfile, setUserProfile] = useState<{
+    name: string;
+    email: string;
+    avatarUrl?: string;
+  } | null>(null);
 
-    @FormParam("message")
+  const userEmail = user?.email || user?.upn;
 
-    public String message;
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch(`/api/profile`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error("Failed to fetch user profile");
+        const data = await res.json();
+        setUserProfile(data);
+      } catch (err) {
+        console.error("❌ Failed to fetch user profile:", err);
+      }
+    };
+    fetchUserProfile();
+  }, [token]);
 
-    @FormParam("authorName")
+  const fetchComments = async () => {
+    try {
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("Failed to fetch comments");
+      const data = await res.json();
+      setComments(data);
+    } catch (err) {
+      console.error("❌ Failed to load comments:", err);
+    }
+  };
 
-    public String authorName;
+  const handleCommentSubmit = async () => {
+    const trimmed = commentText.trim();
+    if (!trimmed) return;
 
-    @FormParam("forumCategory")
+    try {
+      const payload = {
+        message: trimmed,
+        authorName: user?.name || "Anonymous",
+        authorEmail: userEmail || "unknown@example.com",
+        avatarUrl: userProfile?.avatarUrl || "",
+      };
 
-    public String forumCategory;
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
 
-    @FormParam("picture")
-    @PartType("application/octet-stream")
+      if (!res.ok) throw new Error("Failed to submit comment");
 
-    public InputStream picture;
+      setCommentText("");
+      await fetchComments();
+    } catch (err) {
+      console.error("❌ Failed to submit comment:", err);
+    }
+  };
 
-    @FormParam("pictureFileName")
-    public String pictureFileName;
+  const handleToggleComments = async () => {
+    const willShow = !showComments;
+    setShowComments(willShow);
+    if (willShow && comments.length === 0) {
+      await fetchComments();
+    }
+  };
 
-    @FormParam("document")
-    @PartType("application/octet-stream")
-    public InputStream document;
+  const handleToggleLike = async () => {
+    if (!userEmail || liking) return;
 
-    @FormParam("DocumentFileName")
-    public String documentFileName;
-}
-2025-08-13 13:31:35,184 ERROR [org.jbo.res.rea.ser.cor.mul.MultiPartParserDefinition] (executor-thread-2) Cannot remove uploaded file C:\Users\S_TRAT~1\AppData\Local\Temp\uploads\resteasy-reactive8303231697315393734upload: java.nio.file.FileSystemException: C:\Users\S_TRAT~1\AppData\Local\Temp\uploads\resteasy-reactive8303231697315393734upload: The process cannot access the file because it is being used by another process
-        at java.base/sun.nio.fs.WindowsException.translateToIOException(WindowsException.java:92)
-        at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:103)
-        at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:108)
-        at java.base/sun.nio.fs.WindowsFileSystemProvider.implDelete(WindowsFileSystemProvider.java:269)
-        at java.base/sun.nio.fs.AbstractFileSystemProvider.delete(AbstractFileSystemProvider.java:105)
-        at java.base/java.nio.file.Files.delete(Files.java:1049)
-        at org.jboss.resteasy.reactive.server.core.multipart.MultiPartParserDefinition$MultiPartUploadHandler$1.run(MultiPartParserDefinition.java:407)
-        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)
-        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)
-        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)
-        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1586)
-        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
-        at java.base/java.lang.Thread.run(Thread.java:1447)
+    setLiking(true);
+    const endpoint = liked ? "unlike" : "like";
+    const nextLiked = !liked;
+    const optimisticLikes = liked ? likes - 1 : likes + 1;
 
+    setLiked(nextLiked);
+    setLikes(optimisticLikes);
 
+    try {
+      const res = await fetch(`/api/posts/${post.id}/${endpoint}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
 
+      if (!res.ok) throw new Error("Failed to toggle like");
 
+      const data = await res.json();
+      if (typeof data.likes === "number") setLikes(data.likes);
+      if (typeof data.likedByUser === "boolean") setLiked(data.likedByUser ?? false);
+    } catch (err) {
+      console.error("❌ Failed to toggle like:", err);
+      setLiked(!nextLiked);
+      setLikes(likes);
+    } finally {
+      setLiking(false);
+    }
+  };
+
+  const linkify = (text: string): string => {
+    const urlRegex = /(\bhttps?:\/\/[^\s]+)/g;
+    return text.replace(urlRegex, (url) => {
+      const safeUrl = url.replace(/"/g, "&quot;");
+      return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">${url}</a>`;
+    });
+  };
+
+  const renderAvatar = () => {
+    if (post.avatarUrl) {
+      const isFullUrl = post.avatarUrl.startsWith("http");
+      const filename = post.avatarUrl.split("/").pop();
+      const avatarUrl = isFullUrl ? `/api/profile/avatars/${filename}` : "";
+
+      return (
+        <img
+          src={avatarUrl}
+          alt="Avatar"
+          className="w-10 h-10 rounded-full object-cover border"
+          onError={(e) => (e.currentTarget.style.display = "none")}
+        />
+      );
+    }
+    return (
+      <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold text-sm">
+        {post.authorName?.charAt(0)?.toUpperCase() || "?"}
+      </div>
+    );
+  };
+
+  // -------- Document support: สร้างลิงก์เปิดดู/ดาวน์โหลดถ้ามีเอกสาร --------
+  const formatDocumentUrl = (raw?: string): string | undefined => {
+    if (!raw) return undefined;
+    if (raw.startsWith("http")) return raw; // รองรับกรณีมี CDN/external
+    const filename = raw.split("/").pop();
+    if (!filename) return undefined;
+    return `/api/posts/postDocument/${encodeURIComponent(filename)}`;
+  };
+  const rawDoc: string | undefined = (post as any).documentUrl;
+  const documentUrl = formatDocumentUrl(rawDoc);
+  const docFileName = rawDoc ? decodeURIComponent(rawDoc.split("/").pop() || "") : "";
+
+  return (
+    <article className="bg-white rounded-lg shadow p-4">
+      {/* Header */}
+      <header className="flex items-center gap-3 mb-3">
+        {renderAvatar()}
+        <div>
+          <p className="text-sm font-semibold text-gray-800">
+            {post.authorName}
+          </p>
+          <p className="text-xs text-gray-500">{post.authorEmail}</p>
+          <p className="text-xs text-gray-400">
+            {new Date(post.createdAt).toLocaleString()}
+          </p>
+        </div>
+      </header>
+
+      <h2 className="text-base font-semibold text-gray-800">{post.title}</h2>
+      <p
+        className="text-sm text-gray-700 mt-1 whitespace-pre-line"
+        dangerouslySetInnerHTML={{ __html: linkify(post.message) }}
+      />
+
+      {post.pictureUrl && (
+        <div className="mt-3">
+          {(() => {
+            const filename = post.pictureUrl.split("/").pop();
+            return (
+              <img
+                src={`/api/posts/picture/${filename}`}
+                alt="Post Image"
+                className="w-full max-h-96 object-cover rounded-md border"
+              />
+            );
+          })()}
+        </div>
+      )}
+
+      {/* เอกสารแนบของโพสต์ (เปิดดู/ดาวน์โหลด) */}
+      {documentUrl && (
+        <div className="mt-3 border rounded-md p-3 bg-gray-50">
+          <h4 className="text-sm font-medium mb-2">ไฟล์เอกสาร</h4>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-700 truncate max-w-[60%]" title={docFileName}>
+              {docFileName}
+            </span>
+
+            {/* ปุ่มเปิดดู (inline) */}
+            <a
+              href={documentUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1 text-xs rounded bg-gray-200 hover:bg-gray-300"
+            >
+              เปิดดู
+            </a>
+
+            {/* ปุ่มดาวน์โหลด (บังคับดาวน์โหลดฝั่งเบราว์เซอร์) */}
+            <a
+              href={documentUrl}
+              download={docFileName || true}
+              className="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+            >
+              ดาวน์โหลด
+            </a>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-4 text-xs text-gray-500 mt-3 items-center">
+        {/* <span className="flex items-center gap-1">
+          <FaEye /> {post.views}
+        </span> */}
+
+        <button
+          type="button"
+          onClick={handleToggleComments}
+          className="hover:underline flex items-center gap-1"
+        >
+          <FaCommentDots /> {comments.length}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleToggleLike}
+          disabled={liking}
+          className={`hover:underline flex items-center gap-1 ${
+            liked ? "text-red-600 font-bold" : ""
+          }`}
+        >
+          {liked ? <FaHeart /> : <FaRegHeart />} {likes}
+        </button>
+      </div>
+
+      {showComments && (
+        <section className="mt-4 space-y-2 border-t pt-4">
+          {comments.length === 0 ? (
+            <p className="text-xs text-gray-400">No comments yet.</p>
+          ) : (
+            comments.map((c) => (
+              <div key={c.id} className="flex items-start gap-2 text-xs">
+                {c.avatarUrl ? (
+                  <img
+                    src={`/api/profile/avatars/${c.avatarUrl.split("/").pop()}`}
+                    alt="User avatar"
+                    className="w-6 h-6 rounded-full object-cover border"
+                  />
+                ) : (
+                  <div className="w-6 h-6 bg-gray-400 text-white rounded-full flex items-center justify-center text-[10px] font-bold">
+                    {c.authorName?.charAt(0)?.toUpperCase() || "?"}
+                  </div>
+                )}
+                <div>
+                  <p className="font-medium">{c.authorName}</p>
+                  <p className="text-gray-700 whitespace-pre-line">{c.message}</p>
+                  <p className="text-[10px] text-gray-400">
+                    {new Date(c.createdAt).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            ))
+          )}
+
+          <div className="mt-3">
+            <textarea
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              className="w-full border border-gray-300 rounded p-2 text-xs focus:outline-none focus:ring focus:ring-blue-200"
+              rows={3}
+              placeholder="Add a comment..."
+            />
+            <div className="flex justify-end mt-2">
+              <button
+                type="button"
+                onClick={handleCommentSubmit}
+                disabled={!commentText.trim()}
+                className="bg-blue-600 text-white px-4 py-1 rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
+              >
+                Submit
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+    </article>
+  );
+};
+
+export default PostCardWidget;
