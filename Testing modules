@@ -4,6 +4,7 @@ import { AuthContext } from "../../Authentication/AuthContext.tsx";
 import {
   // FaEye,
   FaCommentDots,
+  FaEye,
   FaHeart,
   FaRegHeart,
 } from "react-icons/fa";
@@ -40,6 +41,7 @@ const PostCardWidget = ({ post }: Props) => {
         if (!res.ok) throw new Error("Failed to fetch user profile");
         const data = await res.json();
         setUserProfile(data);
+        // console.log("✅ User profile data:", data);
       } catch (err) {
         console.error("❌ Failed to fetch user profile:", err);
       }
@@ -72,6 +74,7 @@ const PostCardWidget = ({ post }: Props) => {
         avatarUrl: userProfile?.avatarUrl || "",
       };
 
+      console.log(payload)
       const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
         method: "POST",
         headers: {
@@ -119,29 +122,33 @@ const PostCardWidget = ({ post }: Props) => {
 
       const data = await res.json();
       if (typeof data.likes === "number") setLikes(data.likes);
-      if (typeof data.likedByUser === "boolean") setLiked(data.likedByUser ?? false);
+       if (typeof data.likedByUser === "boolean") setLiked(data.likedByUser ?? false);
+      console.log("data :",data)
     } catch (err) {
       console.error("❌ Failed to toggle like:", err);
       setLiked(!nextLiked);
       setLikes(likes);
+
+      
     } finally {
       setLiking(false);
     }
   };
 
-  const linkify = (text: string): string => {
-    const urlRegex = /(\bhttps?:\/\/[^\s]+)/g;
-    return text.replace(urlRegex, (url) => {
-      const safeUrl = url.replace(/"/g, "&quot;");
-      return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">${url}</a>`;
-    });
-  };
-
+ const linkify = (text: string): string => {
+  const urlRegex = /(\bhttps?:\/\/[^\s]+)/g;
+  return text.replace(urlRegex, (url) => {
+    const safeUrl = url.replace(/"/g, "&quot;");
+    return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">${url}</a>`;
+  });
+};
   const renderAvatar = () => {
     if (post.avatarUrl) {
-      const isFullUrl = post.avatarUrl.startsWith("http");
+      const isFullUrl = post.avatarUrl.startsWith("http") ;
       const filename = post.avatarUrl.split("/").pop();
-      const avatarUrl = isFullUrl ? `/api/profile/avatars/${filename}` : "";
+      const avatarUrl = isFullUrl
+        ? `/api/profile/avatars/${filename}`
+        : "";
 
       return (
         <img
@@ -159,17 +166,7 @@ const PostCardWidget = ({ post }: Props) => {
     );
   };
 
-  // -------- Document support: สร้างลิงก์เปิดดู/ดาวน์โหลดถ้ามีเอกสาร --------
-  const formatDocumentUrl = (raw?: string): string | undefined => {
-    if (!raw) return undefined;
-    if (raw.startsWith("http")) return raw; // รองรับกรณีมี CDN/external
-    const filename = raw.split("/").pop();
-    if (!filename) return undefined;
-    return `/api/posts/postDocument/${encodeURIComponent(filename)}`;
-  };
-  const rawDoc: string | undefined = (post as any).documentUrl;
-  const documentUrl = formatDocumentUrl(rawDoc);
-  const docFileName = rawDoc ? decodeURIComponent(rawDoc.split("/").pop() || "") : "";
+  
 
   return (
     <article className="bg-white rounded-lg shadow p-4">
@@ -188,12 +185,8 @@ const PostCardWidget = ({ post }: Props) => {
       </header>
 
       <h2 className="text-base font-semibold text-gray-800">{post.title}</h2>
-      <p
-        className="text-sm text-gray-700 mt-1 whitespace-pre-line"
-        dangerouslySetInnerHTML={{ __html: linkify(post.message) }}
-      />
-
-      {post.pictureUrl && (
+      <p className="text-sm text-gray-700 mt-1 whitespace-pre-line" dangerouslySetInnerHTML={{__html:linkify(post.message)}} />
+     {post.pictureUrl && (
         <div className="mt-3">
           {(() => {
             const filename = post.pictureUrl.split("/").pop();
@@ -207,42 +200,10 @@ const PostCardWidget = ({ post }: Props) => {
           })()}
         </div>
       )}
-
-      {/* เอกสารแนบของโพสต์ (เปิดดู/ดาวน์โหลด) */}
-      {documentUrl && (
-        <div className="mt-3 border rounded-md p-3 bg-gray-50">
-          <h4 className="text-sm font-medium mb-2">ไฟล์เอกสาร</h4>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-gray-700 truncate max-w-[60%]" title={docFileName}>
-              {docFileName}
-            </span>
-
-            {/* ปุ่มเปิดดู (inline) */}
-            <a
-              href={documentUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1 text-xs rounded bg-gray-200 hover:bg-gray-300"
-            >
-              เปิดดู
-            </a>
-
-            {/* ปุ่มดาวน์โหลด (บังคับดาวน์โหลดฝั่งเบราว์เซอร์) */}
-            <a
-              href={documentUrl}
-              download={docFileName || true}
-              className="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
-            >
-              ดาวน์โหลด
-            </a>
-          </div>
-        </div>
-      )}
-
       <div className="flex gap-4 text-xs text-gray-500 mt-3 items-center">
-        {/* <span className="flex items-center gap-1">
+        <span className="flex items-center gap-1">
           <FaEye /> {post.views}
-        </span> */}
+        </span>
 
         <button
           type="button"
@@ -270,6 +231,8 @@ const PostCardWidget = ({ post }: Props) => {
             <p className="text-xs text-gray-400">No comments yet.</p>
           ) : (
             comments.map((c) => (
+
+                          
               <div key={c.id} className="flex items-start gap-2 text-xs">
                 {c.avatarUrl ? (
                   <img
@@ -277,6 +240,7 @@ const PostCardWidget = ({ post }: Props) => {
                     alt="User avatar"
                     className="w-6 h-6 rounded-full object-cover border"
                   />
+
                 ) : (
                   <div className="w-6 h-6 bg-gray-400 text-white rounded-full flex items-center justify-center text-[10px] font-bold">
                     {c.authorName?.charAt(0)?.toUpperCase() || "?"}
@@ -290,7 +254,9 @@ const PostCardWidget = ({ post }: Props) => {
                   </p>
                 </div>
               </div>
-            ))
+            )
+          
+          )
           )}
 
           <div className="mt-3">
