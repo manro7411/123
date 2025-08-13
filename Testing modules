@@ -144,8 +144,7 @@ const PostCardWidget = ({ post }: Props) => {
     if (post.avatarUrl) {
       const isFullUrl = post.avatarUrl.startsWith("http");
       const filename = post.avatarUrl.split("/").pop();
-      const avatarUrl = isFullUrl ? `/api/profile/avatars/${filename}` : "";
-
+      const avatarUrl = isFullUrl ? `/api/posts/avatars/${filename}` : "";
 
       return (
         <img
@@ -162,17 +161,13 @@ const PostCardWidget = ({ post }: Props) => {
       </div>
     );
   };
-  const formatDocumentUrl = (raw?: string): string | undefined => {
-    if (!raw) return undefined;
-    if (raw.startsWith("http")) return raw; // เผื่อกรณีใช้ CDN
-    const filename = raw.split("/").pop();
-    if (!filename) return undefined;
-    return `/api/posts/postDocument/${encodeURIComponent(filename)}`;
-  };
 
-  const rawDoc: string | undefined = (post as any).documentUrl;
-  const documentUrl = formatDocumentUrl(rawDoc);
-  const docFileName = rawDoc ? decodeURIComponent(rawDoc.split("/").pop() || "") : "";
+  // ---------- เอกสารแนบจากแบ็กเอนด์: post.document = <filename> ----------
+  const fileNameFromBackend: string | undefined = (post as any).document || undefined;
+  const documentUrl = fileNameFromBackend
+    ? `/api/posts/postDocument/${encodeURIComponent(fileNameFromBackend)}`
+    : undefined;
+  const docFileName = fileNameFromBackend || "";
   const docExt = docFileName.includes(".") ? docFileName.split(".").pop()!.toLowerCase() : "";
   const isPdf = docExt === "pdf";
 
@@ -208,10 +203,12 @@ const PostCardWidget = ({ post }: Props) => {
           })()}
         </div>
       )}
+
+      {/* ---------- การ์ดพรีวิว + ดาวน์โหลดเอกสาร ---------- */}
       {documentUrl && (
         <div className="mt-3">
-  
           <div className="relative w-[260px] rounded-xl border bg-white shadow-sm overflow-hidden group hover:shadow-md transition-shadow">
+            {/* ป้ายชนิดไฟล์ที่มุม */}
             <div
               className={`absolute top-0 left-0 px-2 py-1 text-[10px] font-semibold text-white rounded-br-lg ${
                 isPdf ? "bg-red-600" : "bg-gray-600"
@@ -220,6 +217,7 @@ const PostCardWidget = ({ post }: Props) => {
               {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
             </div>
 
+            {/* พื้นที่พรีวิว: แสดงไอคอน PDF หรือ placeholder */}
             <div className="h-36 w-full bg-gray-50 flex items-center justify-center">
               {isPdf ? (
                 <FaFilePdf className="text-5xl opacity-80" />
@@ -228,6 +226,7 @@ const PostCardWidget = ({ post }: Props) => {
               )}
             </div>
 
+            {/* แถบชื่อไฟล์ด้านล่าง */}
             <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 border-t">
               <span
                 className={`px-1.5 py-0.5 text-[10px] leading-none rounded-sm font-bold text-white ${
@@ -237,14 +236,15 @@ const PostCardWidget = ({ post }: Props) => {
                 {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
               </span>
               <span className="text-sm font-semibold truncate" title={docFileName}>
-                {`/api/posts/postDocument/${docFileName}`}
+                {docFileName}
               </span>
             </div>
 
+            {/* ปุ่ม เปิดดู / ดาวน์โหลด (แสดงตอน hover) */}
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
             <div className="absolute inset-x-0 bottom-2 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
               <a
-                href={`/api/posts/postDocument/${docFileName}`}
+                href={documentUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="pointer-events-auto inline-flex items-center gap-1 text-xs px-3 py-1 rounded bg-white border hover:bg-gray-50"
@@ -253,7 +253,7 @@ const PostCardWidget = ({ post }: Props) => {
                 <FaExternalLinkAlt /> เปิดดู
               </a>
               <a
-                href={`/api/posts/postDocument/${docFileName}`}
+                href={documentUrl}
                 download={docFileName || true}
                 className="pointer-events-auto inline-flex items-center gap-1 text-xs px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
                 title="ดาวน์โหลด"
@@ -263,11 +263,11 @@ const PostCardWidget = ({ post }: Props) => {
             </div>
           </div>
 
-          {/* พรีวิว PDF ฝังในโพสต์ (inline) */}
+          {/* พรีวิว PDF ฝังในโพสต์ */}
           {isPdf && (
             <div className="mt-3 border rounded-md overflow-hidden">
               <iframe
-                src={`/api/posts/postDocument/${docFileName}#toolbar=0`} 
+                src={`${documentUrl}#toolbar=0`}
                 className="w-full h-96"
                 title={docFileName || "Document preview"}
               />
@@ -356,56 +356,3 @@ const PostCardWidget = ({ post }: Props) => {
 };
 
 export default PostCardWidget;
-0
-: 
-authorEmail
-: 
-"ratchanon@gmail.com"
-authorName
-: 
-"Ratchanon Traitiprat"
-avatarUrl
-: 
-"http://localhost:8080/posts/avatars/avatar_QPAPTi3NYI6pEReqnSHAm.jpg"
-comments
-: 
-[]
-createdAt
-: 
-"2025-08-13T14:20:03.140186"
-document
-: 
-"document_u_pOCXMvKiEbg60g3ipWK.pdf"
-forumCategory
-: 
-"พูดคุยทั่วไป"
-id
-: 
-"u_pOCXMvKiEbg60g3ipWK"
-likedBy
-: 
-[]
-likedByUser
-: 
-false
-likes
-: 
-0
-message
-: 
-"testing sectuon "
-pictureUrl
-: 
-null
-title
-: 
-"testesting section"
-updatedAt
-: 
-"2025-08-13T14:20:03.145199"
-views
-: 
-0
-[[Prototype]]
-: 
-Objec
