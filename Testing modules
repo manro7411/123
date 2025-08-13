@@ -37,3 +37,23 @@ public class PostCreateRequest {
     @FormParam("DocumentFileName")
     public String documentFileName;
 }
+2025-08-13 13:31:35,184 ERROR [org.jbo.res.rea.ser.cor.mul.MultiPartParserDefinition] (executor-thread-2) Cannot remove uploaded file C:\Users\S_TRAT~1\AppData\Local\Temp\uploads\resteasy-reactive8303231697315393734upload: java.nio.file.FileSystemException: C:\Users\S_TRAT~1\AppData\Local\Temp\uploads\resteasy-reactive8303231697315393734upload: The process cannot access the file because it is being used by another process
+        at java.base/sun.nio.fs.WindowsException.translateToIOException(WindowsException.java:92)
+        at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:103)
+        at java.base/sun.nio.fs.WindowsException.rethrowAsIOException(WindowsException.java:108)
+        at java.base/sun.nio.fs.WindowsFileSystemProvider.implDelete(WindowsFileSystemProvider.java:269)
+        at java.base/sun.nio.fs.AbstractFileSystemProvider.delete(AbstractFileSystemProvider.java:105)
+        at java.base/java.nio.file.Files.delete(Files.java:1049)
+        at org.jboss.resteasy.reactive.server.core.multipart.MultiPartParserDefinition$MultiPartUploadHandler$1.run(MultiPartParserDefinition.java:407)
+        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)
+        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)
+        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)
+        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1586)
+        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
+        at java.base/java.lang.Thread.run(Thread.java:1447)
+
+
+
+
