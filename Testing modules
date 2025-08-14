@@ -1,164 +1,381 @@
-import { useContext, useEffect, useMemo, useState } from "react";
-import { AuthContext } from "../../Authentication/AuthContext";
+import { useEffect, useState } from "react";
 import axios from "axios";
-import SidebarWidget from "../../widgets/SidebarWidget";
-import CalendarWidget from "../../widgets/CalendarWidget";
-import ChatBubbleWidget from "../../widgets/ChatBubbleWidget";
-import StatisticsChart from "../../components/StatisticsChart";
-import OnlineCourseBanner from "../../components/OnlineCourseBanner";
-import TopViewedLessonsWidget from "./TopViewedLessonsWidget";
-import NotificationWidget from "../../widgets/NotificationWidget";
-import ReminderBox from "../../widgets/ReminderBoxWidget";
-import { Navigate, useNavigate } from "react-router-dom";
-import JointeamWidget from "../../widgets/JointeamWidget";
-import Userwidget from "../../widgets/UserAvatarWidget";
 
-interface Lesson {
+interface TeamMember {
   id: string;
-  title: string;
-  dueDate?: string;
-  assignType: string;
+  name: string;
+  email: string;
 }
 
-interface Reminder {
-  id: string;
-  title: string;
-  dueDate: string;
+interface TeamMembersModalProps {
+  teamId: string;
+  open: boolean;
+  onClose: () => void;
 }
 
-const UserDashboard = () => {
-  const { user, token: ctxToken } = useContext(AuthContext);
-  const token = ctxToken || localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken");
-
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [assignTypeFilter, setAssignTypeFilter] = useState<string>("all");
-  const navigate = useNavigate();
+const TeamMembersModal = ({ teamId, open, onClose }: TeamMembersModalProps) => {
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
 
   useEffect(() => {
-    if (!token) return;
+    if (!open || !teamId) return;
 
-    const fetchLessons = async () => {
+    const fetchMembers = async () => {
+      setLoading(true);
       try {
-        const res = await axios.get("/api/learning/upcoming-due", {
+        const res = await axios.get(`/api/teams/${teamId}/members`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        setLessons(res.data);
+        setMembers(res.data);
       } catch (err) {
-        console.error("❌ Error fetching lessons", err);
+        console.error("❌ Failed to fetch team members:", err);
+        setError("Failed to load team members.");
+      } finally {
+        setLoading(false);
       }
     };
 
-    fetchLessons();
-  }, [token]);
+    fetchMembers();
+  }, [teamId, open]);
 
+  const handleRemoveMember = async (memberId: string) => {
+    try {
+      await axios.delete(`/api/teams/${teamId}/members/${memberId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setMembers((prev) => prev.filter((m) => m.id !== memberId));
+    } catch (err) {
+      console.error("❌ Failed to remove member:", err);
+      alert("Failed to remove member.");
+    }
+  };
 
-
-  const filteredLessons = useMemo(() => {
-    return lessons.filter((lesson) =>
-      assignTypeFilter === "all-types" ? true : lesson.assignType === assignTypeFilter
-    );
-  }, [lessons, assignTypeFilter]);
-
-  const calendarEvents = useMemo(() => {
-    return filteredLessons
-      .filter((lesson) => lesson.dueDate)
-      .map((lesson) => ({
-        title: lesson.title,
-        date: lesson.dueDate!,
-        id: lesson.id,
-        assignType: lesson.assignType,
-      }));
-  }, [filteredLessons]);
-
-const pastDueLessons: Reminder[] = useMemo(() => {
-  return calendarEvents
-    .filter((e) => new Date(e.date) < new Date())
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .map((e) => ({ id:e.id, title: e.title, dueDate: e.date }))
-    .slice(0, 5);
-}, [calendarEvents]);
-
-const upcomingReminders: Reminder[] = useMemo(() => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const filteredEvents = calendarEvents.filter((event) => {
-    const dueDate = new Date(event.date);
-    dueDate.setHours(0, 0, 0, 0);
-    return dueDate > today;
-  });
-
-  const sortedEvents = filteredEvents.sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-  );
-
-  const reminders = sortedEvents.map((event) => ({
-    id: event.id,
-    title: event.title,
-    dueDate: event.date,
-  }));
-
-  return reminders.slice(0, 5);
-}, [calendarEvents]);
-
-
-const handleReminderClick = (id:string) =>{
-  navigate(`/lesson/${id}`)
-}
-
-  if (!token) return <Navigate to="/" replace />;
-
-  const displayName = user?.name || user?.upn || "User";
+  if (!open) return null;
 
   return (
-    <>
-      <div className="min-h-screen bg-gray-50 flex">
-        <SidebarWidget />
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+      <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+        <h2 className="text-xl font-bold mb-4">Team Members</h2>
 
-        <main className="flex-1 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h1 className="text-3xl font-bold text-gray-800">👋 Welcome, {displayName}</h1>
-            <div className="flex items-center space-x-4">
-            <NotificationWidget />
-            <Userwidget/>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-            <div className="xl:col-span-3 space-y-6">
-              <OnlineCourseBanner />
-              <StatisticsChart />
-              <TopViewedLessonsWidget />
-              <JointeamWidget />
-            </div>
-            <div className="order-1 xl:order-2">
-              <div className="space-y-6 mt-4 xl:mt-0">
-                <div className="flex space-x-2">
-                  {["all", "team", "specific"].map((type) => (
-                    <button
-                      key={type}
-                      onClick={() => setAssignTypeFilter(type)}
-                      className={`px-3 py-1 rounded-md text-sm capitalize ${
-                        assignTypeFilter === type
-                          ? "bg-blue-500 text-white"
-                          : "bg-gray-200 hover:bg-gray-300"
-                      }`}
-                    >
-                      {type === "all-types" ? "All Types" : type}
-                    </button>
-                  ))}
-              </div>
-                <CalendarWidget events={calendarEvents} />
-                <ReminderBox title="🔔 Upcoming Due Lesson" reminders={upcomingReminders} accentColor="text-blue-600"  onReminderClick={handleReminderClick}/>
-                <ReminderBox title="⏰ Past Due Lessons" reminders={pastDueLessons} accentColor="text-red-600" onReminderClick={handleReminderClick}/>
+        {loading ? (
+          <p className="text-gray-500">Loading...</p>
+        ) : error ? (
+          <p className="text-red-500">{error}</p>
+        ) : members.length === 0 ? (
+          <p className="text-gray-400">No members found.</p>
+        ) : (
+          <ul className="space-y-3">
+            {members.map((member) => (
+              <li key={member.id} className="flex justify-between items-center">
+                <div>
+                  <p className="font-medium">{member.name}</p>
+                  <p className="text-sm text-gray-500">{member.email}</p>
+                </div>
+                <button
+                  onClick={() => handleRemoveMember(member.id)}
+                  className="text-red-600 hover:underline text-sm"
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
 
-              </div>
-            </div>
-          </div>
-        </main>
+        <button
+          onClick={onClose}
+          className="mt-6 text-blue-600 hover:underline text-sm"
+        >
+          Close
+        </button>
       </div>
-      <ChatBubbleWidget />
-    </>
+    </div>
   );
 };
 
-export default UserDashboard;
+export default TeamMembersModal;
+-----
+import { useEffect, useState } from "react";
+import AdminSidebarWidget from "../Widgets/AdminSideBar";
+import { Plus } from "lucide-react";
+import CreateTeamModal from "./CreateTeamModal";
+import TeamCardWidget from "./TeamCardWidget";
+import TeamMembersModal from "./TeamMembersModal";
+
+import axios from "axios";
+
+interface Team {
+  id: string;
+  name: string;
+  description: string;
+  createBy: string;
+  joinCode: string;
+}
+
+interface UserProfile {
+  email: string;
+  name: string;
+}
+
+const TeamManagement = () => {
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [error, setError] = useState("");
+  const [userEmail, setUserEmail] = useState<string>("");
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null); 
+
+  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+
+  const fetchUserProfile = async () => {
+    try {
+      const res = await axios.get<UserProfile>("/api/profile", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setUserEmail(res.data.email);
+    } catch (error) {
+      console.error("❌ Failed to load user profile:", error);
+    }
+  };
+
+  const fetchTeams = async () => {
+    try {
+      const res = await axios.get<Team[]>("/api/teams", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setTeams(res.data);
+    } catch (error) {
+      console.error("❌ Failed to load teams:", error);
+      setError("Failed to load team list.");
+    }
+  };
+
+  useEffect(() => {
+    if (!token) return;
+    fetchUserProfile();
+    fetchTeams();
+  }, [token]);
+
+  const myTeams = teams.filter((team) => team.createBy === userEmail);
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      <AdminSidebarWidget />
+      <main className="flex-1 p-6 relative space-y-8">
+        <div className="border-b pb-4">
+          <h1 className="text-3xl font-bold">Team Management</h1>
+          <p className="text-gray-600">Manage teams and members efficiently.</p>
+        </div>
+
+        {error && <p className="text-red-500">{error}</p>}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {myTeams.map((team) => (
+            <TeamCardWidget
+            key={team.id}
+            name={team.name}
+            description={team.description}
+            createBy={team.createBy}
+            joinCode={team.joinCode}
+             onClick={() => {
+              console.log("Clicked team ID:", team.id); 
+              setSelectedTeamId(team.id); 
+          }}
+            
+          />
+          ))}
+          {myTeams.length === 0 && (
+            <p className="text-gray-400 col-span-full">No teams found.</p>
+          )}
+        </div>
+
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="fixed bottom-6 right-6 bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700"
+        >
+          <Plus size={24} />
+        </button>
+
+        <CreateTeamModal open={showCreateModal} onClose={() => setShowCreateModal(false)} />
+
+        {selectedTeamId && (
+          <TeamMembersModal
+            teamId={selectedTeamId}
+            open={!!selectedTeamId}
+            onClose={() => setSelectedTeamId(null)}
+          />
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default TeamManagement;
+---
+import { useEffect, useState } from "react";
+import axios from "axios";
+import { Plus, Trash2, X } from "lucide-react";
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface CreateTeamModalProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+const CreateTeamModal = ({ open, onClose }: CreateTeamModalProps) => {
+  const [users, setUsers] = useState<User[]>([]);
+  const [teamMembers, setTeamMembers] = useState<User[]>([]);
+  const [teamName, setTeamName] = useState("");
+  const [description, setDescription] = useState("");
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [username, setUsername] = useState("unknown@example.com");
+
+  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+
+  useEffect(() => {
+    if (!token) return;
+    axios.get<User>("/api/profile", { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => setUsername(res.data.email))
+      .catch(err => console.error("❌ Failed to fetch profile:", err));
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    axios.get<User[]>("/api/profile/users", { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => setUsers(res.data))
+      .catch(err => {
+        console.error("❌ Failed to load users:", err);
+        setError("Failed to load users.");
+      });
+  }, [token]);
+
+  const handleAddMember = (user: User) => {
+    if (teamMembers.some(m => m.id === user.id)) {
+      setError("User already added.");
+      return;
+    }
+    setTeamMembers([...teamMembers, user]);
+    setError("");
+  };
+
+  const handleRemoveMember = (userId: string) => {
+    setTeamMembers(teamMembers.filter(m => m.id !== userId));
+  };
+
+  const handleCreateTeam = async () => {
+    if (!teamName.trim()) return setError("Please enter a team name.");
+    if (teamMembers.length === 0) return setError("Add at least one team member.");
+
+    const newTeam = {
+      name: teamName.trim(),
+      description: description.trim(),
+      createBy: username,
+      members: teamMembers.map((m) => ({
+        userId: m.id,
+        userName: m.name,
+      })),
+    };
+
+    try {
+      await axios.post("/api/teams", newTeam, { headers: { Authorization: `Bearer ${token}` } });
+      alert(`✅ Team "${teamName}" created!`);
+      setTeamName("");
+      setDescription("");
+      setTeamMembers([]);
+      setError("");
+      onClose(); // Close modal
+    } catch (err) {
+      console.error("❌ Failed to create team:", err);
+      setError("Failed to create team.");
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl p-6 w-full max-w-2xl relative overflow-y-auto max-h-[90vh]">
+        <button onClick={onClose} className="absolute top-4 right-4 text-gray-500 hover:text-gray-700">
+          <X size={20} />
+        </button>
+        <h2 className="text-xl font-bold mb-4">Create New Team</h2>
+
+        {error && <p className="text-red-500 mb-2">{error}</p>}
+
+        <div className="space-y-3 mb-4">
+          <input
+            value={teamName}
+            onChange={(e) => setTeamName(e.target.value)}
+            placeholder="Team name"
+            className="border px-4 py-2 rounded w-full"
+          />
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Team description"
+            className="border px-4 py-2 rounded w-full"
+            rows={3}
+          />
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold">Add Members</h3>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search users"
+            className="border px-4 py-2 rounded w-full mb-2"
+          />
+          <div className="space-y-2">
+            {users
+              .filter(user => user.name.toLowerCase().includes(search.toLowerCase()))
+              .map(user => (
+                <div key={user.id} className="flex justify-between items-center">
+                  <span>{user.name}</span>
+                  <button
+                    onClick={() => handleAddMember(user)}
+                    className="bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700"
+                  >
+                    <Plus size={14} className="inline mr-1" /> Add
+                  </button>
+                </div>
+              ))}
+            {users.length === 0 && <p className="text-gray-400">No users available.</p>}
+          </div>
+        </div>
+
+        <div className="space-y-4 mt-6">
+          <h3 className="text-lg font-semibold">Team Members</h3>
+          <div className="space-y-2">
+            {teamMembers.map((member) => (
+              <div key={member.id} className="flex justify-between items-center">
+                <span>{member.name}</span>
+                <button onClick={() => handleRemoveMember(member.id)} className="text-red-500 hover:text-red-700">
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+            {teamMembers.length === 0 && <p className="text-gray-400">No members yet.</p>}
+          </div>
+        </div>
+
+        <button
+          onClick={handleCreateTeam}
+          className="mt-6 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 w-full"
+        >
+          Create Team
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default CreateTeamModal;
