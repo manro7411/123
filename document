@@ -1,135 +1,67 @@
-import { useEffect, useState } from "react";
-import { X, Save } from "lucide-react";
+เพิ่มปุ่ม Edit ในการ์ดบทเรียน (ตรงส่วน map ของ lessons)
 
-interface Lesson {
-  id: number;
-  title: string;
-  thumbnailUrl?: string;
-  category: string;
-}
+<div
+  key={lesson.id}
+  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all
+  ${selectedLesson?.id === lesson.id ? "bg-blue-50 border-blue-500" : "bg-white hover:border-blue-500"}`}
+>
+  <div onClick={() => handleSelectLesson(lesson)}>
+    <h3 className="font-semibold text-lg text-gray-800">{lesson.title}</h3>
+    <p className="text-sm text-gray-500">ID: {lesson.id}</p>
+    <p className="text-xs text-purple-600 font-semibold uppercase">{lesson.category}</p>
+  </div>
 
-interface EditLessonModalProps {
-  open: boolean;
-  initial: Lesson;
-  onClose: () => void;
-  onSave: (data: { title: string; category: string; thumbnailUrl?: string }) => void;
-}
+  {/* ปุ่มแก้ไข */}
+  <button
+    onClick={(e) => {
+      e.stopPropagation(); // กันคลิกไปเลือกการ์ด
+      handleOpenEdit(lesson);
+    }}
+    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
+    title="Edit lesson"
+    type="button"
+  >
+    <Pencil size={18} />
+  </button>
 
-const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProps) => {
-  const [title, setTitle] = useState(initial.title);
-  const [category, setCategory] = useState(initial.category);
-  const [thumbnailUrl, setThumbnailUrl] = useState(initial.thumbnailUrl ?? "");
-
-  useEffect(() => {
-    if (!open) return;
-    // รีเฟรชค่าเมื่อเปิดใหม่/เปลี่ยน initial
-    setTitle(initial.title);
-    setCategory(initial.category);
-    setThumbnailUrl(initial.thumbnailUrl ?? "");
-  }, [open, initial]);
-
-  if (!open) return null;
-
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSave({ title: title.trim(), category: category.trim(), thumbnailUrl: thumbnailUrl.trim() || undefined });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6" onClick={stop}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Edit Learning Content</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700" aria-label="Close">
-            <X size={18} />
-          </button>
-        </div>
-
-        <form className="space-y-4" onSubmit={handleSubmit}>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2"
-              placeholder="Lesson title"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-            <input
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2"
-              placeholder="Category"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Thumbnail URL</label>
-            <input
-              value={thumbnailUrl}
-              onChange={(e) => setThumbnailUrl(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2"
-              placeholder="https://..."
-              type="url"
-            />
-          </div>
-
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border">
-              Cancel
-            </button>
-            <button type="submit" className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2">
-              <Save size={16} /> Save
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-};
-
-export default EditLessonModal;
+  {/* ปุ่มลบ (คงเดิม) */}
+  <button
+    onClick={(e) => {
+      e.stopPropagation();
+      handleDeleteLesson(lesson.id);
+    }}
+    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+    title="Delete lesson"
+    type="button"
+  >
+    🗑
+  </button>
+</div>
 
 
-// เพิ่ม import
-import { Pencil } from "lucide-react";
-import EditLessonModal from "./EditLessonModal";
+เรนเดอร์โมดัลแก้ไขใต้สุดของหน้า
 
-// ...ใน component state
-const [showEditModal, setShowEditModal] = useState(false);
+{showEditModal && selectedLesson && (
+  <EditLessonModal
+    open={showEditModal}
+    initial={selectedLesson}
+    onClose={() => setShowEditModal(false)}
+    onSave={handleSaveLesson}
+  />
+)}
 
-// ฟังก์ชันเปิด modal แก้ไข
-const handleOpenEdit = (lesson: Lesson) => {
-  setSelectedLesson(lesson);
-  setShowEditModal(true);
-};
+ทำเสร็จแล้วจะได้อะไร
 
-// ฟังก์ชันบันทึกผลการแก้ไข
-const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
-  if (!selectedLesson) return;
-  try {
-    const payload = { ...selectedLesson, ...data }; // รวมค่าที่แก้
-    await axios.put(`/api/learning/${selectedLesson.id}`, payload, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+ไอคอนดินสอ (Edit) โผล่มุมขวาบนการ์ด (ถัดจากปุ่มลบ)
 
-    // อัปเดตรายการบทเรียนใน state
-    setLessons((prev) =>
-      prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l))
-    );
+กดแล้วเปิด Modal ที่มีฟอร์มแก้ไข Title / Category / Thumbnail URL
 
-    setShowEditModal(false);
-    alert("✅ Lesson updated");
-  } catch (err) {
-    console.error("❌ Update failed:", err);
-    alert("Failed to update lesson.");
-  }
-};
+กด Save → ยิง PUT /api/learning/:id → อัปเดต state ทันที
 
+ถ้าต้องการให้ “แก้ไขแล้วรีเฟรชรายการจากเซิร์ฟเวอร์” แทนการแก้ใน state ก็สามารถเรียก fetchLessons() ซ้ำหลัง PUT ได้เช่นกันครับ.
+
+You said:
+please give me one commit name,i update forum to attachment the file photo and link
+ChatGPT said:
+
+feat(forum): add support for photo uploads and link attachments
