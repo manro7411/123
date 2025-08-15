@@ -96,3 +96,40 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
 };
 
 export default EditLessonModal;
+
+
+// เพิ่ม import
+import { Pencil } from "lucide-react";
+import EditLessonModal from "./EditLessonModal";
+
+// ...ใน component state
+const [showEditModal, setShowEditModal] = useState(false);
+
+// ฟังก์ชันเปิด modal แก้ไข
+const handleOpenEdit = (lesson: Lesson) => {
+  setSelectedLesson(lesson);
+  setShowEditModal(true);
+};
+
+// ฟังก์ชันบันทึกผลการแก้ไข
+const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
+  if (!selectedLesson) return;
+  try {
+    const payload = { ...selectedLesson, ...data }; // รวมค่าที่แก้
+    await axios.put(`/api/learning/${selectedLesson.id}`, payload, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    // อัปเดตรายการบทเรียนใน state
+    setLessons((prev) =>
+      prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l))
+    );
+
+    setShowEditModal(false);
+    alert("✅ Lesson updated");
+  } catch (err) {
+    console.error("❌ Update failed:", err);
+    alert("Failed to update lesson.");
+  }
+};
+
