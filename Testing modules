@@ -73,3 +73,12 @@ const fetchLearningTasks = async () => {
   </button>
 </div>
 
+{showEditModal && selectedLesson && (
+  <EditLessonModal
+    open={showEditModal}
+    initial={selectedLesson}
+    onClose={() => setShowEditModal(false)}
+    onSave={handleSaveLesson}
+  />
+)}
+
