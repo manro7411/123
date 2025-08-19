@@ -1,300 +1,441 @@
-ได้เลยครับ — ผมเตรียม “แพตช์ปรับจากโค้ดเดิม” ให้ใช้งานหมวดหลัก/หมวดย่อย ตามที่กำหนดไว้ โดยเปลี่ยนน้อยที่สุดจากไฟล์เก่า และแยกเฉพาะส่วน config/utility ออกเป็นไฟล์เล็ก ๆ (อ่านง่าย ดูแลง่าย)
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import axios from "axios";
+import { AuthContext } from "../../Authentication/AuthContext";
+import Sidebar from "../../widgets/SidebarWidget";
+import ChatBubbleWidget from "../../widgets/ChatBubbleWidget";
+import NotificationWidget from "../../widgets/NotificationWidget";
+import { useLesson } from "./hooks/useLessons";
+import { useUserProfile } from "./hooks/useUserProfile";
+import { useTeam } from "./hooks/useTeam";
+import { CATEGORY_GROUPS } from "./constants/categories";
+import { resolveCategoryPath, countByPath } from "./utils/resolveCategory";
 
-ด้านล่างมี 3 ส่วน:
+// ------------------------------------------------------
+// LessonDashboard
+// - หน้ารวมบทเรียนพร้อมตัวกรองแบบกลุ่ม/หมวดย่อย
+// - แสดงสรุปสถิติบทเรียน, ค้นหา, กรองแบบกำหนดสิทธิ์ (all/team/specific)
+// - จัดกลุ่มการ์ดตาม Group > Subcategory
+// ------------------------------------------------------
 
-ไฟล์ใหม่ constants/categories.ts
+export default function LessonDashboard() {
+  const { token: ctxToken } = useContext(AuthContext);
+  const token = ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
+  const navigate = useNavigate();
+  const location = useLocation();
 
-ไฟล์ใหม่ utils/resolveCategory.ts
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedAssignType, setSelectedAssignType] = useState<"all" | "team" | "specific">("all");
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [showCompleted, setShowCompleted] = useState(false);
 
-แพตช์แก้ LessonPage.tsx จากของเดิมให้รองรับตัวกรองแบบกลุ่ม/ย่อย (ไม่ต้องรื้อใหญ่)
+  const { lessons, progressMap, loading } = useLesson(token, location.pathname);
+  const { userId } = useUserProfile(token);
+  const myTeamIds = useTeam(token);
 
-1) src/pages/Lesson/constants/categories.ts
+  // ------- Derivations -------
+  const lessonsWithPath = useMemo(() => {
+    return lessons.map((l) => ({ ...l, __cat: resolveCategoryPath(l.category) }));
+  }, [lessons]);
 
-แทน CATEGORY_GROUP เดิม แนะนำใช้ชื่อ CATEGORY_GROUPS + สะกด/ตัวพิมพ์ให้สอดคล้อง (Others, Project Management)
+  const allPaths = useMemo(() => lessonsWithPath.map((l) => l.__cat.path), [lessonsWithPath]);
+  const pathCounts = useMemo(() => countByPath(allPaths), [allPaths]);
 
-// src/pages/Lesson/constants/categories.ts
-export const CATEGORY_GROUPS: Record<string, string[]> = {
-  "Technical Skills": [
-    "Programming & Development",
-    "Cloud & Infrastructure",
-    "Cybersecurity",
-    "Data & AI",
-    "DevOps & Automation",
-  ],
-  "Business & Project Skills": [
-    "IT Governance & Compliance",
-    "Project Management (Agile, Scrum, PMP)",
-    "Digital Transformation",
-  ],
-  "IT Process": [],
-  Others: [],
-};
+  const stats = useMemo(() => {
+    let total = lessons.length;
+    let completed = 0;
+    let inProgress = 0;
+    for (const l of lessons) {
+      const key = l.id.toLowerCase();
+      const percent = progressMap[key]?.percent ?? 0;
+      if (percent >= 100) completed += 1; else inProgress += 1;
+    }
+    return { total, completed, inProgress };
+  }, [lessons, progressMap]);
 
-2) src/pages/Lesson/utils/resolveCategory.ts
+  // ------- Filters -------
+  const filteredLessons = useMemo(() => {
+    return lessonsWithPath.filter((lesson) => {
+      const key = lesson.id.toLowerCase();
+      const percent = progressMap[key]?.percent ?? 0;
 
-ยูทิลจัดหมวดให้เป็น {group, sub, path} และฟังก์ชันนับจำนวน path (ใช้โชว์ตัวเลขในเมนู)
+      const matchesCompletion = showCompleted ? true : percent < 100;
 
-// src/pages/Lesson/utils/resolveCategory.ts
-import { CATEGORY_GROUPS } from "../constants/categories";
+      const matchesAssignType =
+        selectedAssignType === "all"
+          ? lesson.assignType === "all"
+          : selectedAssignType === "specific"
+          ? lesson.assignType === "specific" && userId && lesson.assignedUserIds?.includes(userId)
+          : selectedAssignType === "team"
+          ? lesson.assignType === "team" && lesson.assignedTeamIds?.some((id: string) => myTeamIds.includes(id))
+          : false;
 
-export type CategoryPath = { group: string; sub: string | null; path: string };
+      const matchesSearch = [lesson.title, lesson.category, lesson.description ?? ""]
+        .filter(Boolean)
+        .some((v) => v.toLowerCase().includes(searchQuery.toLowerCase()));
 
-export function resolveCategoryPath(raw?: string): CategoryPath {
-  const value = (raw ?? "").trim();
-  if (!value) return { group: "Others", sub: null, path: "Others" };
+      const { group, path } = lesson.__cat;
+      const hasSelection = selectedPaths.length > 0;
+      const matchesCategory = !hasSelection || selectedPaths.some((p) => p === group || p === path);
 
-  // รองรับรูปแบบ "Group > Sub" ถ้า data เดิมเคยส่งมาแบบนี้
-  if (value.includes(">")) {
-    const [g, s] = value.split(">").map((v) => v.trim());
-    const group = CATEGORY_GROUPS[g] ? g : "Others";
-    const sub = s || null;
-    return { group, sub, path: sub ? `${group}/${sub}` : group };
-  }
+      return matchesCompletion && matchesAssignType && matchesSearch && matchesCategory;
+    });
+  }, [lessonsWithPath, progressMap, showCompleted, selectedAssignType, userId, myTeamIds, searchQuery, selectedPaths]);
 
-  // จับคู่เป็นหมวดย่อยที่อยู่ในกลุ่มใด
-  for (const [group, subs] of Object.entries(CATEGORY_GROUPS)) {
-    if (subs.includes(value)) return { group, sub: value, path: `${group}/${value}` };
-  }
+  // Grouped for render: Group -> Sub -> Lessons
+  const grouped = useMemo(() => {
+    const map = new Map<string, Map<string | "__root__", typeof filteredLessons>>();
+    for (const l of filteredLessons) {
+      const g = l.__cat.group;
+      const s = l.__cat.sub ?? "__root__";
+      if (!map.has(g)) map.set(g, new Map());
+      const subMap = map.get(g)!;
+      if (!subMap.has(s)) subMap.set(s, []);
+      subMap.get(s)!.push(l);
+    }
+    return map;
+  }, [filteredLessons]);
 
-  // ถ้าตรงชื่อหมวดหลักพอดี
-  if (CATEGORY_GROUPS[value]) return { group: value, sub: null, path: value };
+  // ------- Handlers -------
+  const handleLessonClick = async (id: string) => {
+    const key = id.toLowerCase();
+    const lastTimestamp = progressMap[key]?.lastTimestamp || 0;
+    try {
+      await axios.post(`/api/learning/${id}/click`, {}, { headers: { Authorization: `Bearer ${token}` } });
+    } catch (err) {
+      console.error("Failed to log click:", err);
+    } finally {
+      navigate(`/lesson/${id}`, { state: { lastTimestamp } });
+    }
+  };
 
-  // ไม่เข้ากลุ่มใด -> Others
-  return { group: "Others", sub: value || null, path: value ? `Others/${value}` : "Others" };
+  const togglePath = (path: string) => {
+    setSelectedPaths((prev) => (prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]));
+  };
+  const clearAllSelections = () => setSelectedPaths([]);
+  const selectEntireGroup = (group: string) => {
+    setSelectedPaths((prev) => {
+      const withoutGroup = prev.filter((p) => !p.startsWith(`${group}/`) && p !== group);
+      return [...withoutGroup, group];
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      <Sidebar />
+      <main className="flex-1 p-6">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-800">Lesson Dashboard</h1>
+            <p className="text-sm text-gray-500">ค้นหา/กรองบทเรียน และติดตามความคืบหน้าได้ในที่เดียว</p>
+          </div>
+          <NotificationWidget />
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+          <StatCard label="ทั้งหมด" value={stats.total} subtitle="บทเรียน" />
+          <StatCard label="กำลังเรียน" value={stats.inProgress} subtitle="ยังไม่จบ" />
+          <StatCard label="เรียนจบแล้ว" value={stats.completed} subtitle="ครบ 100%" />
+        </div>
+
+        {/* Controls */}
+        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3 w-full xl:w-auto">
+            <input
+              type="text"
+              placeholder="Search lessons…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full xl:w-96 p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+            <CategoryDropdown
+              selectedPaths={selectedPaths}
+              pathCounts={pathCounts}
+              onTogglePath={togglePath}
+              onClearAll={clearAllSelections}
+              onSelectGroup={selectEntireGroup}
+            />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex space-x-2">
+              {["all", "team", "specific"].map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setSelectedAssignType(type as any)}
+                  className={`px-3 py-1 rounded-md text-sm ${
+                    selectedAssignType === type ? "bg-purple-500 text-white" : "bg-gray-200 hover:bg-gray-300"
+                  }`}
+                >
+                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="accent-purple-600"
+                checked={showCompleted}
+                onChange={(e) => setShowCompleted(e.target.checked)}
+              />
+              แสดงที่เรียนจบแล้ว
+            </label>
+          </div>
+        </div>
+
+        {/* Content */}
+        {loading ? (
+          <div className="text-gray-500">Loading lessons…</div>
+        ) : filteredLessons.length === 0 ? (
+          <div className="text-gray-500">No lessons found</div>
+        ) : (
+          <div className="space-y-8">
+            {Array.from(grouped.keys()).map((group) => {
+              const subMap = grouped.get(group)!;
+              const groupTotal = Array.from(subMap.values()).reduce((acc, arr) => acc + arr.length, 0);
+              return (
+                <section key={group}>
+                  <div className="flex items-end justify-between mb-3">
+                    <h2 className="text-lg font-semibold text-gray-800">
+                      {group} <span className="text-sm font-normal text-gray-500">({groupTotal})</span>
+                    </h2>
+                  </div>
+
+                  {/* มีหมวดย่อยหรือไม่ */}
+                  {Array.from(subMap.keys()).some((k) => k !== "__root__") ? (
+                    <div className="space-y-6">
+                      {Array.from(subMap.entries())
+                        .filter(([sub]) => sub !== "__root__")
+                        .map(([sub, items]) => (
+                          <div key={String(sub)}>
+                            <h3 className="text-sm font-medium text-gray-700 mb-2">{String(sub)}</h3>
+                            <div className="grid gap-6 grid-cols-[repeat(auto-fill,minmax(256px,1fr))]">
+                              {(items as any[]).map((lesson) => (
+                                <LessonCard
+                                  key={lesson.id}
+                                  lesson={lesson}
+                                  progressMap={progressMap}
+                                  onClick={() => handleLessonClick(lesson.id)}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+
+                      {/* รายการที่อยู่ในกลุ่มแต่ไม่มีหมวดย่อย */}
+                      {subMap.get("__root__") && subMap.get("__root__")!.length > 0 && (
+                        <div>
+                          <h3 className="text-sm font-medium text-gray-700 mb-2">General</h3>
+                          <div className="grid gap-6 grid-cols-[repeat(auto-fill,minmax(256px,1fr))]">
+                            {subMap.get("__root__")!.map((lesson) => (
+                              <LessonCard
+                                key={(lesson as any).id}
+                                lesson={lesson}
+                                progressMap={progressMap}
+                                onClick={() => handleLessonClick((lesson as any).id)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="grid gap-6 grid-cols-[repeat(auto-fill,minmax(256px,1fr))]">
+                      {subMap.get("__root__")!.map((lesson) => (
+                        <LessonCard
+                          key={(lesson as any).id}
+                          lesson={lesson}
+                          progressMap={progressMap}
+                          onClick={() => handleLessonClick((lesson as any).id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )}
+      </main>
+      <ChatBubbleWidget />
+    </div>
+  );
 }
 
-export function countByPath(paths: string[]): Record<string, number> {
-  return paths.reduce((acc, p) => {
-    acc[p] = (acc[p] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+// --------------------------
+// Components
+// --------------------------
+function StatCard({ label, value, subtitle }: { label: string; value: number | string; subtitle?: string }) {
+  return (
+    <div className="bg-white rounded-xl shadow-sm p-4 border border-gray-100">
+      <div className="text-xs text-gray-500">{label}</div>
+      <div className="text-2xl font-semibold text-gray-800">{value}</div>
+      {subtitle && <div className="text-[11px] text-gray-400">{subtitle}</div>}
+    </div>
+  );
 }
 
-3) แพตช์ LessonPage.tsx (จากของเก่า)
+function CategoryDropdown({
+  selectedPaths,
+  pathCounts,
+  onTogglePath,
+  onClearAll,
+  onSelectGroup,
+}: {
+  selectedPaths: string[];
+  pathCounts: Record<string, number>;
+  onTogglePath: (p: string) => void;
+  onClearAll: () => void;
+  onSelectGroup: (g: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
 
-เปลี่ยนเฉพาะ: import ใหม่, state เป็น selectedPaths, คำนวณ category path, ปรับ filter และ UI เมนูหมวดเป็นแบบกลุ่ม/ย่อย
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
--import { useContext, useEffect, useRef, useState } from "react";
-+import { useContext, useEffect, useMemo, useRef, useState } from "react";
- import { useNavigate, useLocation } from "react-router-dom";
- import axios from "axios";
- import { AuthContext } from "../../Authentication/AuthContext";
- import Sidebar from "../../widgets/SidebarWidget";
- import defaultUserAvatar from "../../assets/user.png";
- import ChatBubbleWidget from "../../widgets/ChatBubbleWidget";
- import NotificationWidget from "../../widgets/NotificationWidget";
- import { useLesson } from "./hooks/useLessons";
- import { useUserProfile } from "./hooks/useUserProfile";
- import { useTeam } from "./hooks/useTeam";
-+import { CATEGORY_GROUPS } from "./constants/categories";
-+import { resolveCategoryPath, countByPath } from "./utils/resolveCategory";
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-white hover:bg-gray-100 text-sm"
+      >
+        {selectedPaths.length > 0 ? `Category (${selectedPaths.length})` : "Filter by Category"}
+      </button>
+      {open && (
+        <div className="absolute right-0 z-10 mt-2 w-80 max-h-96 overflow-auto bg-white border border-gray-200 rounded-md shadow-lg p-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Select one or more groups/subcategories</span>
+            <button className="text-xs text-blue-600 hover:underline" onClick={onClearAll}>
+              Clear All
+            </button>
+          </div>
+          {Object.entries(CATEGORY_GROUPS).map(([group, subs]) => (
+            <div key={group} className="border-t pt-2 first:border-0 first:pt-0">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center space-x-2 font-medium text-sm">
+                  <input
+                    type="checkbox"
+                    className="accent-purple-500"
+                    checked={selectedPaths.includes(group)}
+                    onChange={() => onTogglePath(group)}
+                  />
+                  <span>
+                    {group}
+                    {pathCounts[group] ? (
+                      <span className="ml-1 text-[10px] text-gray-500">({pathCounts[group]})</span>
+                    ) : null}
+                  </span>
+                </label>
+                {subs.length > 0 && (
+                  <button
+                    className="text-[10px] text-blue-600 hover:underline"
+                    onClick={() => onSelectGroup(group)}
+                  >
+                    Select all
+                  </button>
+                )}
+              </div>
+              {subs.length > 0 && (
+                <div className="mt-2 grid grid-cols-1 gap-1">
+                  {subs.map((sub) => {
+                    const path = `${group}/${sub}`;
+                    return (
+                      <label key={path} className="flex items-center space-x-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="accent-purple-500"
+                          checked={selectedPaths.includes(path)}
+                          onChange={() => onTogglePath(path)}
+                        />
+                        <span>
+                          {sub}
+                          {pathCounts[path] ? (
+                            <span className="ml-1 text-[10px] text-gray-500">({pathCounts[path]})</span>
+                          ) : null}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
- const LessonPage = () => {
-   const { token: ctxToken } = useContext(AuthContext);
-   const token = ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
-   const navigate = useNavigate();
-   const location = useLocation();
-   const menuRef = useRef<HTMLDivElement>(null);
-   const [searchQuery, setSearchQuery] = useState("");
--  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
--  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
-+  // เก็บ selection เป็น "path" เช่น "Technical Skills/Programming & Development" หรือ "Technical Skills"
-+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
-   const [selectedAssignType, setSelectedAssignType] = useState<string>("all");
-   const {lessons, progressMap, loading} = useLesson(token, location.pathname);
-   const {userId} = useUserProfile(token);
-   const myTeamIds = useTeam(token);
+function LessonCard({
+  lesson,
+  progressMap,
+  onClick,
+}: {
+  lesson: any;
+  progressMap: Record<string, { percent: number; lastTimestamp: number }>;
+  onClick: () => void;
+}) {
+  const key = lesson.id.toLowerCase();
+  const progress = progressMap[key] ?? { percent: 0, lastTimestamp: 0 };
+  const avatarFilename = lesson.authorAvatarUrl?.split("/").pop();
+  const avatarUrl = avatarFilename && avatarFilename !== "null"
+    ? `/api/profile/avatars/${avatarFilename}`
+    : "/api/profile/avatars/placeholder"; // ปลอดภัยถ้า default asset ไม่มี import
 
-   useEffect(() => {
-     const handleClickOutside = (event: MouseEvent) => {
-       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-         setCategoryMenuOpen(false);
-       }
-     };
-     document.addEventListener("mousedown", handleClickOutside);
-     return () => document.removeEventListener("mousedown", handleClickOutside);
-   }, []);
+  return (
+    <button onClick={onClick} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500">
+      <div className="w-64 h-[300px] bg-white rounded-xl shadow-md flex flex-col overflow-hidden">
+        <div className="w-full h-32 bg-gray-100">
+          <img
+            src={lesson.thumbnailUrl || "/placeholder.png"}
+            alt={lesson.title}
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).onerror = null;
+              (e.currentTarget as HTMLImageElement).src = "/placeholder.png";
+            }}
+            className="h-full w-full object-cover"
+          />
+        </div>
 
--  const categories = Array.from(new Set(lessons.map((l) => l.category).filter(Boolean)));
-+  // สร้างเส้นทางหมวดสำหรับแต่ละ lesson
-+  const lessonsWithPath = useMemo(() => {
-+    return lessons.map((l) => ({ ...l, __cat: resolveCategoryPath(l.category) }));
-+  }, [lessons]);
-+  const allPaths = useMemo(() => lessonsWithPath.map((l) => l.__cat.path), [lessonsWithPath]);
-+  const pathCounts = useMemo(() => countByPath(allPaths), [allPaths]);
+        <div className="flex flex-1 flex-col p-4">
+          <span className="text-[10px] font-semibold uppercase text-purple-600">
+            {lesson.__cat?.sub ? `${lesson.__cat.group} › ${lesson.__cat.sub}` : lesson.__cat?.group}
+          </span>
+          <h3 className="mt-1 line-clamp-2 text-sm font-semibold">{lesson.title}</h3>
 
--  const filteredLessons = lessons.filter((lesson) => {
-+  const filteredLessons = lessonsWithPath.filter((lesson) => {
-   const key = lesson.id.toLowerCase();
-   const progress = progressMap[key]?.percent ?? 0;
-   const isIncomplete = progress < 100;
+          <div className="mb-2 mt-3 h-1 rounded-full bg-gray-200">
+            <div
+              className="h-full transition-all duration-300 rounded-full bg-blue-500"
+              style={{ width: `${Math.max(progress.percent, 1)}%`, minWidth: progress.percent > 0 ? 4 : 0 }}
+            />
+          </div>
+          <div className="text-[10px] text-gray-500 mb-1">Progress: {progress.percent}%</div>
 
-   const matchesAssignType =
-     selectedAssignType === "all"
-       ? lesson.assignType === "all"
-       : selectedAssignType === "specific"
-       ? lesson.assignType === "specific" && userId && lesson.assignedUserIds?.includes(userId)
-       : selectedAssignType === "team"
-       ? lesson.assignType === "team" && lesson.assignedTeamIds?.some((id) => myTeamIds.includes(id))
-       : false;
-
-   const matchesSearch = [lesson.title, lesson.category, lesson.description ?? ""].some((v) =>
-     v.toLowerCase().includes(searchQuery.toLowerCase())
-   );
--  const matchesCategory =
--    selectedCategories.length === 0 || selectedCategories.includes(lesson.category);
-+  // ถ้าเลือกทั้ง "Group" ให้ผ่านทุก sub ใน group นั้น
-+  const { group, path } = lesson.__cat;
-+  const hasSelection = selectedPaths.length > 0;
-+  const matchesCategory =
-+    !hasSelection || selectedPaths.some((p) => p === group || p === path);
-   return isIncomplete && matchesAssignType && matchesSearch && matchesCategory;
- });
- 
-+  // helpers ของเมนูเลือกหมวด
-+  const togglePath = (path: string) => {
-+    setSelectedPaths((prev) =>
-+      prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]
-+    );
-+  };
-+  const clearAllSelections = () => setSelectedPaths([]);
-+  const selectEntireGroup = (group: string) => {
-+    // โหมดนี้บันทึกแค่ชื่อ group เดียว (แทนการติ๊กทุก sub) เพื่อให้อ่าน/ลบออกง่าย
-+    setSelectedPaths((prev) => {
-+      const withoutGroup = prev.filter((p) => !p.startsWith(`${group}/`) && p !== group);
-+      return [...withoutGroup, group];
-+    });
-+  };
-
-   return (
-     <div className="min-h-screen bg-gray-50 flex">
-       <Sidebar />
-       <main className="flex-1 p-6">
-         <div className="flex items-center justify-between mb-4">
-           <input
-             type="text"
-             placeholder="Search lessons…"
-             value={searchQuery}
-             onChange={(e) => setSearchQuery(e.target.value)}
-             className="w-full xl:w-1/3 p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-           />
-           <div className="flex items-center space-x-4">
-             {/* Category Filter */}
-             <div className="relative" ref={menuRef}>
-               <button
-                 onClick={() => setCategoryMenuOpen(!categoryMenuOpen)}
-                 className="px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-white hover:bg-gray-100 text-sm"
-               >
--                {selectedCategories.length > 0
--                  ? `Category (${selectedCategories.length})`
-+                {selectedPaths.length > 0
-+                  ? `Category (${selectedPaths.length})`
-                   : "Filter by Category"}
-               </button>
-               {categoryMenuOpen && (
--                <div className="absolute z-10 mt-2 w-48 bg-white border border-gray-200 rounded-md shadow-lg">
--                  <div className="p-2 space-y-1">
--                    {categories.map((category) => (
--                      <label key={category} className="flex items-center space-x-2 text-sm cursor-pointer">
--                        <input
--                          type="checkbox"
--                          checked={selectedCategories.includes(category)}
--                          onChange={() =>
--                            setSelectedCategories((prev) =>
--                              prev.includes(category)
--                                ? prev.filter((c) => c !== category)
--                                : [...prev, category]
--                            )
--                          }
--                          className="accent-purple-500"
--                        />
--                        <span>{category}</span>
--                      </label>
--                    ))}
--                    <button
--                      className="mt-2 text-xs text-blue-500 hover:underline"
--                      onClick={() => setSelectedCategories([])}
--                    >
--                      Clear All
--                    </button>
--                  </div>
--                </div>
-+                <div className="absolute right-0 z-10 mt-2 w-80 max-h-96 overflow-auto bg-white border border-gray-200 rounded-md shadow-lg p-3 space-y-3">
-+                  <div className="flex items-center justify-between">
-+                    <span className="text-xs text-gray-500">Select one or more groups/subcategories</span>
-+                    <button className="text-xs text-blue-600 hover:underline" onClick={clearAllSelections}>
-+                      Clear All
-+                    </button>
-+                  </div>
-+                  {Object.entries(CATEGORY_GROUPS).map(([group, subs]) => (
-+                    <div key={group} className="border-t pt-2 first:border-0 first:pt-0">
-+                      <div className="flex items-center justify-between">
-+                        <label className="flex items-center space-x-2 font-medium text-sm">
-+                          <input
-+                            type="checkbox"
-+                            className="accent-purple-500"
-+                            checked={selectedPaths.includes(group)}
-+                            onChange={() => togglePath(group)}
-+                          />
-+                          <span>
-+                            {group}
-+                            {pathCounts[group] ? (
-+                              <span className="ml-1 text-[10px] text-gray-500">({pathCounts[group]})</span>
-+                            ) : null}
-+                          </span>
-+                        </label>
-+                        {subs.length > 0 && (
-+                          <button
-+                            className="text-[10px] text-blue-600 hover:underline"
-+                            onClick={() => selectEntireGroup(group)}
-+                          >
-+                            Select all
-+                          </button>
-+                        )}
-+                      </div>
-+                      {subs.length > 0 && (
-+                        <div className="mt-2 grid grid-cols-1 gap-1">
-+                          {subs.map((sub) => {
-+                            const path = `${group}/${sub}`;
-+                            return (
-+                              <label key={path} className="flex items-center space-x-2 text-sm cursor-pointer">
-+                                <input
-+                                  type="checkbox"
-+                                  className="accent-purple-500"
-+                                  checked={selectedPaths.includes(path)}
-+                                  onChange={() => togglePath(path)}
-+                                />
-+                                <span>
-+                                  {sub}
-+                                  {pathCounts[path] ? (
-+                                    <span className="ml-1 text-[10px] text-gray-500">({pathCounts[path]})</span>
-+                                  ) : null}
-+                                </span>
-+                              </label>
-+                            );
-+                          })}
-+                        </div>
-+                      )}
-+                    </div>
-+                  ))}
-+                </div>
-               )}
-             </div>
-
-
-ส่วนที่เหลือ (Assign Type, รายการการ์ด, handleLessonClick) ใช้ของเดิมได้เลยไม่ต้องแก้ครับ
-
-หมายเหตุที่แก้ให้เรียบร้อย
-
-เปลี่ยน CATEGORY_GROUP ➜ CATEGORY_GROUPS เพื่อความสอดคล้องทั้งโปรเจกต์
-
-ใช้ Others (พหูพจน์) ให้ตรงกันทั้งที่แสดงผลและในโค้ด
-
-Project Management (Agile, Scrum, PMP) ปรับตัวพิมพ์ใหญ่สม่ำเสมอ
-
-เพิ่ม counter (pathCounts) หลังชื่อกลุ่ม/ย่อยในเมนู เพื่อดูจำนวนบทเรียนแต่ละส่วน
-
-ถ้าต้องการให้ผม “ไม่แยกไฟล์” ก็ทำได้ โดยเอาเนื้อหา CATEGORY_GROUPS และ resolveCategoryPath / countByPath วางไว้บนสุดของ LessonPage.tsx แทนการ import — บอกผมได้เลยครับ เดี๋ยวผมสรุปร่างรวมไฟล์เดียวให้ทันที ✨
-
-ChatGPT can make mistakes. Check important info.
+          <div className="mt-auto flex items-center space-x-2">
+            <img
+              src={avatarUrl}
+              alt="Author"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).onerror = null;
+                (e.currentTarget as HTMLImageElement).src = "/placeholder.png";
+              }}
+              className="h-7 w-7 rounded-full object-cover"
+            />
+            <div>
+              <div className="text-xs font-medium">{lesson.authorName || "Unknown Author"}</div>
+              <div className="text-[10px] text-gray-500">Learning Content</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
