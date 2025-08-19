@@ -441,3 +441,902 @@ function LessonCard({
     </button>
   );
 }
+
+package Testing;
+
+import QuizService.Entity.QuestionChoiceEntity;
+import QuizService.Entity.QuestionEntity;
+import QuizService.QuestionType;
+import QuizService.ExtendedLearningContentDto;
+import QuizService.QuestionDTO;
+import QuizService.ChoiceDTO;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dto.LearningContentDto;
+import io.netty.handler.codec.http.multipart.FileUpload;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.LearningContent;
+import model.UserLessonProgress;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.jboss.resteasy.reactive.PartType;
+import org.jboss.resteasy.reactive.RestForm;
+import java.io.IOException;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Path("/learning")
+@Consumes(MediaType.APPLICATION_JSON)
+@Produces(MediaType.APPLICATION_JSON)
+public class LearningContentResource {
+
+    @Inject EntityManager em;
+    @Inject JsonWebToken jwt;
+
+    @GET
+    public List<LearningContentDto> list(@QueryParam("mine") @DefaultValue("false") boolean mine) {
+        if (mine) {
+            String email = jwt.getSubject();
+            return em.createQuery("""
+                    SELECT lc FROM LearningContent lc
+                    WHERE lc.authorEmail = :email
+                    ORDER BY lc.createdAt DESC
+                    """, LearningContent.class)
+                    .setParameter("email", email)
+                    .getResultStream()
+                    .map(LearningContentDto::fromEntity)
+                    .toList();
+        }
+        return em.createQuery("""
+                SELECT lc FROM LearningContent lc
+                ORDER BY lc.createdAt DESC
+                """, LearningContent.class)
+                .getResultStream()
+                .map(LearningContentDto::fromEntity)
+                .toList();
+    }
+
+    @GET
+    @Path("/video/{filename}")
+    @Produces("video/mp4")
+    public Response getVideo(@PathParam("filename") String filename) {
+        try {
+            java.nio.file.Path videoPath = java.nio.file.Paths.get("uploads/video", filename);
+            if (!Files.exists(videoPath)) {
+                throw new NotFoundException("Video not found.");
+            }
+
+            return Response.ok(Files.newInputStream(videoPath))
+                    .header("Content-Disposition", "inline; filename=\"" + filename + "\"")
+                    .build();
+        } catch (Exception e) {
+            throw new InternalServerErrorException("Failed to load video.");
+        }
+    }
+
+    @POST
+    @Transactional
+    @RolesAllowed("admin")
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response create(ExtendedLearningContentDto dto) {
+        if (dto.questionsJson != null && !dto.questionsJson.isEmpty()) {
+            try {
+                ObjectMapper mapper = new ObjectMapper();
+                dto.questions = mapper.readValue(dto.questionsJson,
+                        new com.fasterxml.jackson.core.type.TypeReference<List<QuestionDTO>>() {});
+                System.out.println("✅ Parsed questions count: " + dto.questions.size());
+            } catch (Exception e) {
+                System.out.println("❌ Failed to parse questions JSON");
+                e.printStackTrace();
+                throw new BadRequestException("Invalid format for questions JSON");
+            }
+        }
+
+        String lessonId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+        LearningContent lc = new LearningContent();
+        lc.setId(lessonId);
+        lc.setTitle(dto.title);
+        lc.setDescription(dto.description);
+        lc.setCategory(dto.category);
+        lc.setThumbnailUrl(dto.thumbnailUrl);
+        lc.setAuthorName(jwt.getClaim("name"));
+        lc.setAuthorEmail(jwt.getSubject());
+        lc.setAuthorRole("admin");
+        lc.setClickCount(0L);
+        lc.setAuthorAvatarUrl(dto.authorAvatarUrl);
+        lc.setCreatedAt(LocalDateTime.now());
+        lc.setMaxAttempts(Optional.ofNullable(dto.maxAttempts).orElse(1));
+        lc.setContentType(dto.contentType);
+        lc.setAssignType(dto.assignType);
+        lc.setAssignedUserIds(dto.assignedUserIds);
+        lc.setAssignedTeamIds(dto.assignedTeamIds);
+        lc.setDueDate(dto.dueDate);
+
+        if (dto.videoStream != null) {
+            try {
+                String originalName = dto.videoMeta != null ? dto.videoMeta.fileName() : "video.mp4";
+                String filename = lessonId + ".mp4";
+                java.nio.file.Path dir = java.nio.file.Paths.get("uploads/video");
+                java.nio.file.Files.createDirectories(dir);
+                java.nio.file.Path videoPath = dir.resolve(filename);
+                java.nio.file.Files.copy(dto.videoStream, videoPath, StandardCopyOption.REPLACE_EXISTING);
+
+                System.out.println("Video path : " + videoPath.toString());
+                System.out.println("Original file name: " + originalName);
+                lc.setVideoUrl("uploads/video/" + filename);
+            } catch (Exception e) {
+                throw new InternalServerErrorException("Failed to save video.");
+            }
+        }
+
+        em.persist(lc);
+
+        String quizId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+        if (dto.questions != null) {
+            for (QuestionDTO q : dto.questions) {
+                QuestionEntity qe = new QuestionEntity();
+                qe.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 21));
+                qe.setLearningContent(lc);
+                qe.setQuiz_id(quizId);
+                qe.setQuestionText(q.questionText);
+                qe.setType(QuestionType.valueOf(q.type.toUpperCase()));
+                qe.setPoints(q.points != null ? q.points : 1);
+                em.persist(qe);
+
+                if (q.choices != null) {
+                    for (ChoiceDTO c : q.choices) {
+                        QuestionChoiceEntity ce = new QuestionChoiceEntity();
+                        ce.id = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+                        ce.question = qe;
+                        ce.choiceText = c.text;
+                        ce.isCorrect = c.isCorrect;
+                        em.persist(ce);
+                    }
+                }
+            }
+        }
+
+        System.out.println("📥 Received new lesson creation request:");
+        System.out.println("Title: " + dto.title);
+        System.out.println("Description: " + dto.description);
+        System.out.println("Category: " + dto.category);
+        System.out.println("Thumbnail URL: " + dto.thumbnailUrl);
+        System.out.println("Assign Type: " + dto.assignType);
+        System.out.println("Assigned Users: " + (dto.assignedUserIds != null ? dto.assignedUserIds : "[]"));
+        System.out.println("Assigned Teams: " + (dto.assignedTeamIds != null ? dto.assignedTeamIds : "[]"));
+        System.out.println("Due Date: " + dto.dueDate);
+        System.out.println("Author Avatar URL: " + dto.authorAvatarUrl);
+        System.out.println("Max Attempts: " + dto.maxAttempts);
+        System.out.println("Video Meta: " + (dto.videoMeta != null ? dto.videoMeta.fileName() : "No file meta"));
+        System.out.println("Questions count: " + (dto.questions != null ? dto.questions.size() : 0));
+
+        return Response.created(URI.create("/learning/" + lc.getId()))
+                .entity(LearningContentDto.fromEntity(lc))
+                .build();
+    }
+
+
+    @PUT
+    @Path("/{id}")
+    @Transactional
+    @RolesAllowed("admin")
+    public LearningContentDto update(@PathParam("id") String id, LearningContentDto dto) {
+        LearningContent lc = em.find(LearningContent.class, id);
+        if (lc == null) throw new NotFoundException();
+
+        lc.setTitle(dto.title());
+        lc.setDescription(dto.description());
+        lc.setCategory(dto.category());
+        lc.setThumbnailUrl(dto.thumbnailUrl());
+        lc.setAssignType(dto.assignType());
+        lc.setAssignedUserIds(dto.assignedUserIds());
+        lc.setAssignedTeamIds(dto.assignedTeamIds());
+        lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
+
+        if (dto.dueDate() != null) {
+            lc.setDueDate(dto.dueDate());
+        }
+
+        return LearningContentDto.fromEntity(lc);
+    }
+
+    @DELETE
+    @Path("/{id}")
+    @Transactional
+    @RolesAllowed("admin")
+    public void delete(@PathParam("id") String id) {
+        LearningContent lc = em.find(LearningContent.class, id);
+        if (lc != null) em.remove(lc);
+    }
+
+    @GET
+    @Path("/{id}")
+    public LearningContentDto getOne(@PathParam("id") String id) {
+        LearningContent lc = em.find(LearningContent.class, id);
+        if (lc == null) throw new NotFoundException();
+        return LearningContentDto.fromEntity(lc);
+    }
+
+    @POST
+    @Path("/{id}/click")
+    @Transactional
+    @RolesAllowed("user")
+    public void addClick(@PathParam("id") String lessonId) {
+        String userEmail = jwt.getSubject();
+        UserLessonProgress progress = em.createQuery(
+                        "SELECT p FROM UserLessonProgress p WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail",
+                        UserLessonProgress.class)
+                .setParameter("lessonId", lessonId)
+                .setParameter("userEmail", userEmail)
+                .getResultStream()
+                .findFirst()
+                .orElse(null);
+
+        if (progress == null) {
+            progress = new UserLessonProgress();
+            progress.setLessonId(lessonId);
+            progress.setUserEmail(userEmail);
+            progress.setPercent(1);
+            progress.setUpdatedAt(LocalDateTime.now());
+            em.persist(progress);
+        } else {
+            progress.setPercent(Math.max(progress.getPercent(), 1));
+            progress.setUpdatedAt(LocalDateTime.now());
+        }
+
+        int updated = em.createQuery("UPDATE LearningContent lc SET lc.clickCount = lc.clickCount + 1 WHERE lc.id = :id")
+                .setParameter("id", lessonId)
+                .executeUpdate();
+        if (updated == 0) throw new NotFoundException();
+    }
+
+    @GET
+    @Path("/{id}/click-count")
+    public Long getClickCount(@PathParam("id") String id) {
+        LearningContent lc = em.find(LearningContent.class, id);
+        if (lc == null) throw new NotFoundException();
+        return lc.getClickCount();
+    }
+
+    @GET
+    @Path("/top-viewed")
+    public List<LearningContentDto> topViewed(@QueryParam("limit") @DefaultValue("5") int limit) {
+        return em.createQuery("""
+                SELECT lc FROM LearningContent lc
+                ORDER BY lc.clickCount DESC
+                """, LearningContent.class)
+                .setMaxResults(limit)
+                .getResultStream()
+                .map(LearningContentDto::fromEntity)
+                .toList();
+    }
+
+    @GET
+    @Path("/assigned-to-me")
+    @RolesAllowed({"user", "admin"})
+    public List<LearningContentDto> getAssignedToMe() {
+        String userEmail = jwt.getSubject();
+
+        List<String> myTeamIds = em.createQuery("""
+            SELECT DISTINCT m.team.id FROM MemberEntity m
+            WHERE m.userID = :userId
+        """, String.class)
+                .setParameter("userId", userEmail)
+                .getResultList();
+
+        List<LearningContent> lessons = em.createQuery("""
+    SELECT lc FROM LearningContent lc
+    WHERE
+        lc.assignType = 'all'
+        OR (lc.assignType = 'specific' AND :userId IN ELEMENTS(lc.assignedUserIds))
+        OR (lc.assignType = 'team' AND EXISTS (
+            SELECT 1 FROM LearningContent l2
+            WHERE l2.id = lc.id AND EXISTS (
+                SELECT teamId FROM LearningContent l3 JOIN l3.assignedTeamIds teamId
+                WHERE teamId IN :teamIds
+            )
+        ))
+    ORDER BY lc.createdAt DESC
+""", LearningContent.class)
+                .setParameter("userId", userEmail)
+                .setParameter("teamIds", myTeamIds)
+                .getResultList();
+
+        return lessons.stream()
+                .map(LearningContentDto::fromEntity)
+                .toList();
+    }
+    @GET
+    @Path("/upcoming-due")
+    @RolesAllowed({"user", "admin"})
+    public List<LearningContentDto> getUpcomingDue() {
+        List<LearningContent> lessons = em.createQuery("""
+        SELECT lc FROM LearningContent lc
+        WHERE lc.dueDate IS NOT NULL
+        ORDER BY lc.dueDate ASC
+    """, LearningContent.class)
+                .setMaxResults(20)
+                .getResultList();
+
+        return lessons.stream()
+                .map(LearningContentDto::fromEntity)
+                .toList();
+    }
+
+    @GET
+    @Path("/document/{filename}")
+    @Produces({"application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "image/jpeg", "image/png"})
+    public Response getDocument(@PathParam("filename") String filename) {
+        try {
+            java.nio.file.Path file = Paths.get("uploads/documents", filename);
+            if (!Files.exists(file)) {
+                throw new NotFoundException("File not found: " + filename);
+            }
+
+            String mimeType = Files.probeContentType(file); // Automatically detect MIME type
+            if (mimeType == null) {
+                mimeType = "application/octet-stream";
+            }
+
+            return Response.ok(Files.newInputStream(file))
+                    .type(mimeType)
+                    .header("Content-Disposition", "inline; filename=\"" + filename + "\"")
+                    .build();
+
+        } catch (IOException e) {
+            throw new InternalServerErrorException("Failed to load document: " + filename, e);
+        }
+    }
+
+
+    @POST
+    @Path("/documents")
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed("admin")
+    @Transactional
+    public Response uploadDocument(PdfUploadForm form) {
+
+        try {
+            if (form.document == null || form.document.uploadedFile() == null) {
+                throw new BadRequestException("Missing document file.");
+            }
+            LearningContent lc = new LearningContent();
+            String lessonId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+            String originalName = form.document.fileName();
+            String extension = originalName.contains(".")
+                    ? originalName.substring(originalName.lastIndexOf("."))
+                    : "";
+            String newFileName = UUID.randomUUID().toString().replace("-", "") + extension;
+
+            java.nio.file.Path dir = java.nio.file.Paths.get("uploads/documents");
+            java.nio.file.Files.createDirectories(dir);
+            java.nio.file.Path destination = dir.resolve(newFileName);
+
+            Files.copy(form.document.uploadedFile(), destination, StandardCopyOption.REPLACE_EXISTING);
+            lc.setId(lessonId);
+            lc.setTitle(form.title);
+            lc.setDescription(form.description);
+            lc.setCreatedAt(LocalDateTime.now());
+            lc.setAuthorName(jwt.getClaim("name"));
+            lc.setAuthorEmail(jwt.getSubject());
+            lc.setAuthorRole("admin");
+            lc.setContentType("document");
+            lc.setAuthorAvatarUrl(form.avatarUrl);
+            lc.setCategory(form.category);
+            lc.setAssignType(form.assignType);
+            lc.setDocumentUrl(destination.toString().replace("\\", "/"));
+
+            em.persist(lc);
+            return Response.ok().entity("{\"message\": \"✅ Document uploaded successfully.\"}").build();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new InternalServerErrorException("❌ Failed to save document.");
+        }
+    }
+
+
+}
+
+import { useState, useEffect, useContext} from "react";
+import { useNavigate } from "react-router-dom";
+import axios from "axios";
+import AdminSidebarWidget from "../Widgets/AdminSideBar";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import { sendLessonNotification } from "../Widgets/notificationServices";
+
+interface LessonFormState {
+  title: string;
+  description: string;
+  category: "AGILE" | "SCRUM" | "WATERFALL";
+  thumbnailUrl: string; 
+   thumbnailFile: File | null;
+  quizAttemptLimit: number;
+  assignType: "all" | "team" | "specific";
+  assignTeamId?: string;
+  videoUrl:string,
+  dueDate?: string;
+  questions: QuestionForm[];
+}
+
+interface QuestionForm {
+  questionText: string;
+  type: "single" | "multiple" | "fill" | "ordering" | "matching";
+  options: string[];
+  correctAnswers: string[];
+}
+
+interface User {
+  id: string;
+  name: string;
+  userPicture?:string;
+}
+
+interface Team {
+  id: string;
+  name: string;
+}
+
+const INITIAL_FORM: LessonFormState = {
+  title: "",
+  description: "",
+  category: "AGILE",
+  thumbnailUrl: "",
+    thumbnailFile: null,
+  quizAttemptLimit: 1,
+  assignType: "all",
+  questions: [],
+  videoUrl:"",
+  dueDate: ""
+};
+
+const tabs = [
+  { label: "Video_Content", value: "video" },
+  { label: "Document_Content", value: "document" },
+];
+const mapAssignTypeToTarget = (assignType: string): "ALL" | "TEAM" | "USER" => {
+  switch (assignType) {
+    case "all":
+      return "ALL";
+    case "team":
+      return "TEAM";
+    case "specific":
+      return "USER";
+    default:
+      throw new Error(`Invalid assignType: ${assignType}`);
+  }
+};
+
+
+const AdminAddLessonPage = () => {
+  const { token} = useContext(AuthContext);
+  const navigate = useNavigate();
+  const [form, setForm] = useState<LessonFormState>(INITIAL_FORM);
+  const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState<User[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [activeTab, setActiveTab] = useState("video");
+   const [authorAvatarUrl, setAuthorAvatarUrl] = useState<User | null>(null);
+   const [videoUrl, setvideoUrl] = useState<File | null>(null);
+  useEffect(() => {
+    if (!token) navigate("/");
+  }, [token, navigate]);
+
+ useEffect(() => {
+    if (token) {
+      axios
+        .get("/api/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        .then((res) => {
+          setAuthorAvatarUrl({
+            id: res.data.id,
+            name: res.data.name,
+            userPicture: `${res.data.avatarUrl}`, 
+            });
+        })
+        .catch((err) => {
+          console.error("❌ Failed to fetch user profile", err);
+        });
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    axios.get<User[]>("/api/profile/users", { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => setUsers(res.data))
+      .catch(() => console.error("❌ Failed to load users"));
+
+    axios.get<Team[]>("/api/teams", { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => setTeams(res.data))
+      .catch(() => console.error("❌ Failed to load teams"));
+  }, [token]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setForm((prev) => ({
+      ...prev,
+      [name]: name === "quizAttemptLimit" ? parseInt(value) : value,
+    }));
+  };
+
+  const handleAssignTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value as LessonFormState["assignType"];
+    setForm((prev) => ({
+      ...prev,
+      assignType: value,
+      assignTeamId: value !== "team" ? undefined : prev.assignTeamId,
+    }));
+    if (value === "specific") setShowUserModal(true);
+    else setSelectedUsers([]);
+  };
+
+  const handleQuestionChange = (index: number, field: keyof QuestionForm, value: string | string[]) => {
+    const updatedQuestions = [...form.questions];
+    updatedQuestions[index] = { ...updatedQuestions[index], [field]: value };
+    setForm({ ...form, questions: updatedQuestions });
+  };
+
+  const addQuestion = () => setForm((prev) => ({
+    ...prev,
+    questions: [...prev.questions, { questionText: "", type: "single", options: [""], correctAnswers: [""] }],
+  }));
+
+  const addOption = (qIdx: number) => {
+    const updated = [...form.questions];
+    updated[qIdx].options.push("");
+    setForm({ ...form, questions: updated });
+  };
+
+  const addCorrectAnswer = (qIdx: number) => {
+    const updated = [...form.questions];
+    updated[qIdx].correctAnswers.push("");
+    setForm({ ...form, questions: updated });
+  };
+
+  const resetForm = () => {
+    setForm(INITIAL_FORM);
+    setSelectedUsers([]);
+  };
+
+const handleVideoSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setLoading(true);
+
+  const formData = new FormData();
+  formData.append("contentType", "video");
+  formData.append("title", form.title);
+  formData.append("description", form.description);
+  formData.append("category", form.category);
+  formData.append("thumbnailUrl", form.thumbnailUrl);
+  formData.append("maxAttempts", form.quizAttemptLimit.toString());
+  formData.append("assignType", form.assignType);
+  formData.append("authorAvatarUrl", authorAvatarUrl?.userPicture ?? "");
+  if (form.dueDate) formData.append("dueDate", form.dueDate);
+
+
+  if (videoUrl) {
+    formData.append("video", videoUrl); 
+  }
+
+
+
+  if (form.assignType === "specific") {
+    selectedUsers.forEach((id) => formData.append("assignedUserIds", id));
+  }
+
+  if (form.assignType === "team" && form.assignTeamId) {
+    formData.append("assignedTeamIds", form.assignTeamId);
+  }
+
+  formData.append("questions", JSON.stringify(form.questions.map((q) => ({
+    questionText: q.questionText,
+    type: q.type,
+    choices: q.options.map((text) => ({
+      text,
+      isCorrect: q.correctAnswers.includes(text),
+    })),
+  }))));
+  console.log("Data",formData)
+  try {
+    await axios.post("/api/learning", formData, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "multipart/form-data",
+      },
+    });
+
+    await sendLessonNotification({
+      token:token as string,
+      message:`A new Video 📢 "${form.title} Lesson has been added`,
+     target: mapAssignTypeToTarget(form.assignType),
+      userIds: form.assignType === "specific" ? selectedUsers:[],
+      teamIds: form.assignType === "team" && form.assignTeamId ? [form.assignTeamId]:[]
+
+    })
+
+    alert("✅ Video lesson created!");
+    resetForm();
+    navigate("/admin/lesson/management");
+  } catch (err) {
+    alert("❌ Failed to create video lesson");
+    console.error(err);
+  } finally {
+    setLoading(false);
+  }
+};
+
+
+        const handleDocumentSubmit = async () => {
+          setLoading(true);
+          const formData = new FormData;
+
+          formData.append("contentType","document")
+          formData.append("title",form.title)
+          formData.append("description",form.description)
+          formData.append("avatarUrl",authorAvatarUrl?.userPicture ?? "")
+          formData.append("category",form.category)
+          formData.append("assignType", form.assignType ?? "");
+
+          if (form.assignType === "team" && form.assignTeamId) {
+            formData.append("assignTeamId", form.assignTeamId);
+          }
+
+          if (form.thumbnailUrl) {
+            formData.append("thumbnailUrl", form.thumbnailUrl);
+          }
+
+          
+          if (form.thumbnailFile) {
+            console.log("Document file", form.thumbnailFile); 
+            formData.append("document",form.thumbnailFile)
+          }
+          try {
+          for (const [key, value] of formData.entries()) {
+        if (value instanceof File) {
+          console.log(`${key}:`, value.name, value.type, value.size);
+        } else {
+          console.log(`${key}:`, value);
+        }
+      }
+
+      console.log("Payload Result : ",formData.entries())
+      await axios.post("/api/learning/documents", formData, {
+        headers: { Authorization: `Bearer ${token}` },  
+      });
+      
+      await sendLessonNotification({
+      token:token as string,
+      message:`A new Document 📢 "${form.title} Lesson has been added`,
+      target:form.assignType.toLocaleUpperCase() as "ALL" | "TEAM" | "USER",
+      userIds: form.assignType === "specific" ? selectedUsers:[],
+      teamIds: form.assignType === "team" && form.assignTeamId ? [form.assignTeamId]:[]
+      })
+
+
+      alert("✅ Document uploaded!");
+      resetForm();
+      navigate("/admin/lesson/management");
+    } catch (err) {
+      alert("❌ Failed to upload document");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      <AdminSidebarWidget />
+      <main className="flex-1 p-10 space-y-6 max-w-3xl">
+        <h1 className="text-2xl font-bold text-blue-800 pb-2">📚 Add New Lesson</h1>
+        <div className="flex space-x-6 border-b mb-6 text-sm font-semibold">
+          {tabs.map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => setActiveTab(tab.value)}
+              className={`pb-2 ${
+                activeTab === tab.value
+                  ? "text-blue-600 border-b-2 border-blue-600"
+                  : "text-gray-500 hover:text-blue-600"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "video" && (
+          <form onSubmit={handleVideoSubmit} className="bg-white p-8 rounded-xl shadow space-y-6">
+            <Field label="Lesson Thumbnail URL" name="thumbnailUrl" value={form.thumbnailUrl} onChange={handleChange} />
+            <div className="flex flex-col space-y-2">
+              <label className="text-sm font-medium text-gray-700">Upload File (.mp4)</label>
+              <input type="file" className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50"   onChange={(e) => setvideoUrl(e.target.files?.[0] || null)}/>
+            </div>
+            <Field label="Lesson Title" name="title" value={form.title} onChange={handleChange} required />
+            <Field label="Description" name="description" value={form.description} onChange={handleChange} />
+            <Field label="Category" name="category" value={form.category} onChange={handleChange} />
+            <div>
+              <label className="text-sm font-medium text-gray-700">Assign To</label>
+              <select name="assignType" value={form.assignType} onChange={handleAssignTypeChange} className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50">
+                <option value="all">All Users</option>
+                <option value="team">Specific Team</option>
+                <option value="specific">Specific Users</option>
+              </select>
+              {form.assignType === "team" && (
+                <select
+                  name="assignTeamId"
+                  value={form.assignTeamId || ""}
+                  onChange={(e) => setForm({ ...form, assignTeamId: e.target.value })}
+                  className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50"
+                >
+                  <option value="">-- Select a team --</option>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>{team.name}</option>
+                  ))}
+                </select>
+              )}
+              {form.assignType === "specific" && selectedUsers.length > 0 && (
+                <p className="text-sm text-gray-500 mt-1">
+                  Selected users: {users.filter(u => selectedUsers.includes(u.id)).map(u => u.name).join(", ")}
+                </p>
+              )}
+            </div>
+            <div className="flex justify-between gap-4">
+              <Field label="Max Quiz Attempts" name="quizAttemptLimit" type="number" min={1} max={3} value={form.quizAttemptLimit.toString()} onChange={handleChange} />
+              <Field label="Due Date & Time" name="dueDate" type="datetime-local" value={form.dueDate || ""} onChange={handleChange} />
+            </div>
+
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold">Questions</h2>
+              {form.questions.map((q, idx) => (
+                <div key={idx} className="border rounded-lg p-4 space-y-2">
+                  <input className="w-full border px-2 py-1 rounded" placeholder="Question text" value={q.questionText} onChange={(e) => handleQuestionChange(idx, "questionText", e.target.value)} />
+                  <select value={q.type} onChange={(e) => handleQuestionChange(idx, "type", e.target.value as QuestionForm["type"])} className="w-full border px-2 py-1 rounded">
+                    <option value="single">Single Choice</option>
+                    <option value="multiple">Multiple Choice</option>
+                    <option value="fill">Fill in the Blank</option>
+                    <option value="ordering">Ordering</option>
+                    <option value="matching">Matching</option>
+                  </select>
+                  <div>
+                    <h4 className="text-sm font-medium">Options</h4>
+                    {q.options.map((opt, oIdx) => (
+                      <input key={oIdx} className="w-full border px-2 py-1 rounded" value={opt} onChange={(e) => {
+                        const opts = [...q.options];
+                        opts[oIdx] = e.target.value;
+                        handleQuestionChange(idx, "options", opts);
+                      }} />
+                    ))}
+                    <button type="button" onClick={() => addOption(idx)} className="text-blue-600 text-sm underline">+ Add Option</button>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium">Correct Answers</h4>
+                    {q.correctAnswers.map((ans, aIdx) => (
+                      <input key={aIdx} className="w-full border px-2 py-1 rounded" value={ans} onChange={(e) => {
+                        const answers = [...q.correctAnswers];
+                        answers[aIdx] = e.target.value;
+                        handleQuestionChange(idx, "correctAnswers", answers);
+                      }} />
+                    ))}
+                    <button type="button" onClick={() => addCorrectAnswer(idx)} className="text-green-600 text-sm underline">+ Add Correct Answer</button>
+                  </div>
+                </div>
+              ))}
+              <button type="button" onClick={addQuestion} className="text-blue-700 font-semibold">+ Add Question</button>
+            </div>
+            <div className="flex gap-4">
+              <button type="submit" disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg disabled:opacity-50">{loading ? "Saving…" : "Create Lesson"}</button>
+              <button type="button" onClick={resetForm} className="text-gray-600 hover:underline">Reset</button>
+            </div>
+          </form>
+        )}
+
+        {activeTab === "document" && (
+          <div className="bg-white p-8 rounded-xl shadow space-y-6">
+            <Field label="Lesson Thumbnail URL" name="thumbnailUrl" value={form.thumbnailUrl} onChange={handleChange} />
+            <Field label="Lesson Title" name="title" value={form.title} onChange={handleChange} required />
+            <Field label="Lesson Description" name="description" value={form.description} onChange={handleChange} />
+            <Field label="Category" name="category" value={form.category} onChange={handleChange}></Field>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Assgin To</label>
+              <select name="assignType" value={form.assignType} onChange={handleAssignTypeChange} className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50">
+                <option value="all">All Users</option>
+                <option value="team">Specific Team</option>
+                <option value="specific">Specific User</option>                
+              </select>
+              {form.assignType === "team" && (
+                <select
+                  name="assignTeamId"
+                  value={form.assignTeamId || ""}
+                  onChange={(e) => setForm({ ...form, assignTeamId: e.target.value })}
+                  className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50"
+                >
+                  <option value="">-- Select a team --</option>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>{team.name}</option>
+                  ))}
+                </select>
+              )}
+              {form.assignType === "specific" && selectedUsers.length > 0 &&(
+               <p className="text-sm text-gray-500 mt-1">
+                  Selected users: {users.filter(u => selectedUsers.includes(u.id)).map(u => u.name).join(", ")}
+                </p>
+              ) 
+              }
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Upload File (.pdf, .doc, .docx)</label>
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.png,.jpeg"
+                className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      setForm((prev) => ({
+                        ...prev,
+                        thumbnailFile: file,
+                        thumbnailUrl: URL.createObjectURL(file),
+                      }));
+                    };
+                    reader.readAsDataURL(file);
+                  }
+                }}
+              />
+            </div>
+            <div className="flex gap-4">
+              <button onClick={handleDocumentSubmit} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg disabled:opacity-50">{loading ? "Uploading…" : "Upload Document"}</button>
+              <button onClick={resetForm} className="text-gray-600 hover:underline">Reset</button>
+            </div>
+          </div>
+        )}
+
+        {showUserModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-xl shadow-xl w-[90%] max-w-md">
+              <h2 className="text-lg font-bold mb-4">Select Users</h2>
+              <select multiple value={selectedUsers} onChange={(e) => setSelectedUsers(Array.from(e.target.selectedOptions, o => o.value))} className="w-full h-40 border p-2 rounded-lg bg-gray-50">
+                {users.map((u) => (<option key={u.id} value={u.id}>{u.name}</option>))}
+              </select>
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setShowUserModal(false)} className="px-4 py-2 bg-gray-500 text-white rounded">Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+function Field(props: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
+  const { label, ...inputProps } = props;
+  return (
+    <div>
+      <label className="text-sm font-medium text-gray-700">{label}</label>
+      <input {...inputProps} className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50" />
+    </div>
+  );
+}
+
+export default AdminAddLessonPage;
+
+
+
