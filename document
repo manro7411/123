@@ -1,4 +1,86 @@
-import { useContext, useEffect, useRef, useState } from "react";
+// src/pages/LessonPage/hooks/useFilteredLessons.ts
+import { useMemo } from "react";
+
+interface Lesson {
+  id: string;
+  title: string;
+  description?: string;
+  category?: string;
+  assignType?: string;
+  assignedUserIds?: string[];
+  assignedTeamIds?: string[];
+}
+
+interface Progress {
+  percent: number;
+  lastTimestamp: number;
+}
+
+export const useFilteredLessons = (
+  lessons: Lesson[],
+  progressMap: Record<string, Progress>,
+  userId: string | null,
+  myTeamIds: string[],
+  searchQuery: string,
+  selectedAssignType: string,
+  selectedCategories: string[]
+) => {
+  return useMemo(() => {
+    return lessons.filter((lesson) => {
+      const key = lesson.id.toLowerCase();
+      const progress = progressMap[key]?.percent ?? 0;
+
+      const isIncomplete = progress < 100;
+
+      const matchesAssignType =
+        selectedAssignType === "all"
+          ? lesson.assignType === "all"
+          : selectedAssignType === "specific"
+          ? lesson.assignType === "specific" &&
+            userId &&
+            lesson.assignedUserIds?.includes(userId)
+          : selectedAssignType === "team"
+          ? lesson.assignType === "team" &&
+            lesson.assignedTeamIds?.some((id) => myTeamIds.includes(id))
+          : false;
+
+      const matchesSearch = [lesson.title, lesson.category, lesson.description ?? ""].some((v) =>
+        v.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+
+      const matchesCategory =
+        selectedCategories.length === 0 ||
+        (lesson.category && selectedCategories.includes(lesson.category));
+
+      return isIncomplete && matchesAssignType && matchesSearch && matchesCategory;
+    });
+  }, [lessons, progressMap, userId, myTeamIds, searchQuery, selectedAssignType, selectedCategories]);
+};
+
+ขขขขขขขข
+
+// src/pages/LessonPage/hooks/useClickOutside.ts
+import { useEffect } from "react";
+
+export const useClickOutside = (
+  ref: React.RefObject<HTMLElement>,
+  onClose: () => void
+) => {
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [ref, onClose]);
+};
+
+-----
+
+// src/pages/LessonPage/LessonPage.tsx
+import { useContext, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { AuthContext } from "../../Authentication/AuthContext";
@@ -6,77 +88,61 @@ import Sidebar from "../../widgets/SidebarWidget";
 import defaultUserAvatar from "../../assets/user.png";
 import ChatBubbleWidget from "../../widgets/ChatBubbleWidget";
 import NotificationWidget from "../../widgets/NotificationWidget";
+
 import { useLesson } from "./hooks/useLessons";
 import { useUserProfile } from "./hooks/useUserProfile";
 import { useTeam } from "./hooks/useTeam";
+import { useFilteredLessons } from "./hooks/useFilteredLessons";
 import { useClickOutside } from "./hooks/useClickOutside";
 
 const LessonPage = () => {
   const { token: ctxToken } = useContext(AuthContext);
-  const token = ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
+  const token =
+    ctxToken ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("token");
 
   const navigate = useNavigate();
   const location = useLocation();
   const menuRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedAssignType, setSelectedAssignType] = useState<string>("all");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const {lessons, progressMap, loading} = useLesson(token, location.pathname);
-  const {userId} = useUserProfile(token);
+  const { lessons, progressMap, loading } = useLesson(token, location.pathname);
+  const { userId } = useUserProfile(token);
   const myTeamIds = useTeam(token);
 
-  // useEffect(() => {
-  //   const handleClickOutside = (event: MouseEvent) => {
-  //     if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-  //       setCategoryMenuOpen(false);
-  //     }
-  //   };
-  //   document.addEventListener("mousedown", handleClickOutside);
-  //   return () => document.removeEventListener("mousedown", handleClickOutside);
-  // }, []);
-  const sidebarRef = useRef<HTMLElement>(null);
+  useClickOutside(sidebarRef, () => setSidebarOpen(false));
 
-  useClickOutside(sidebarRef, () => setSidebarOpen(false))
-
-  const categories = Array.from(new Set(lessons.map((l) => l.category).filter(Boolean)));
-
- 
-
- const filteredLessons = lessons.filter((lesson) => {
-  const key = lesson.id.toLowerCase();
-  const progress = progressMap[key]?.percent ?? 0;
-
-  const isIncomplete = progress < 100;
-
-  const matchesAssignType =
-    selectedAssignType === "all"
-      ? lesson.assignType === "all"
-      : selectedAssignType === "specific"
-      ? lesson.assignType === "specific" && userId && lesson.assignedUserIds?.includes(userId)
-      : selectedAssignType === "team"
-      ? lesson.assignType === "team" && lesson.assignedTeamIds?.some((id) => myTeamIds.includes(id))
-      : false;
-
-  const matchesSearch = [lesson.title, lesson.category, lesson.description ?? ""].some((v) =>
-    v.toLowerCase().includes(searchQuery.toLowerCase())
+  const categories = Array.from(
+    new Set(lessons.map((l) => l.category).filter(Boolean))
   );
 
-  const matchesCategory =
-    selectedCategories.length === 0 || selectedCategories.includes(lesson.category);
-
-  return isIncomplete && matchesAssignType && matchesSearch && matchesCategory;
-});
+  const filteredLessons = useFilteredLessons(
+    lessons,
+    progressMap,
+    userId,
+    myTeamIds,
+    searchQuery,
+    selectedAssignType,
+    selectedCategories
+  );
 
   const handleLessonClick = async (id: string) => {
     const key = id.toLowerCase();
     const lastTimestamp = progressMap[key]?.lastTimestamp || 0;
 
     try {
-      await axios.post(`/api/learning/${id}/click`, {}, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await axios.post(
+        `/api/learning/${id}/click`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
     } catch (err) {
       console.error("Failed to log click:", err);
     } finally {
@@ -86,8 +152,9 @@ const LessonPage = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
+      <Sidebar ref={sidebarRef} open={sidebarOpen} />
       <main className="flex-1 p-6">
+        {/* Search & Filter */}
         <div className="flex items-center justify-between mb-4">
           <input
             type="text"
@@ -107,12 +174,14 @@ const LessonPage = () => {
                   ? `Category (${selectedCategories.length})`
                   : "Filter by Category"}
               </button>
-
               {categoryMenuOpen && (
                 <div className="absolute z-10 mt-2 w-48 bg-white border border-gray-200 rounded-md shadow-lg">
                   <div className="p-2 space-y-1">
                     {categories.map((category) => (
-                      <label key={category} className="flex items-center space-x-2 text-sm cursor-pointer">
+                      <label
+                        key={category}
+                        className="flex items-center space-x-2 text-sm cursor-pointer"
+                      >
                         <input
                           type="checkbox"
                           checked={selectedCategories.includes(category)}
@@ -159,6 +228,8 @@ const LessonPage = () => {
             <NotificationWidget />
           </div>
         </div>
+
+        {/* Lesson List */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="xl:col-span-3 grid gap-6 grid-cols-[repeat(auto-fill,minmax(256px,1fr))]">
             {loading ? (
@@ -168,12 +239,16 @@ const LessonPage = () => {
             ) : (
               filteredLessons.map((lesson) => {
                 const key = lesson.id.toLowerCase();
-                const progress = progressMap[key] ?? { percent: 0, lastTimestamp: 0 };
+                const progress =
+                  progressMap[key] ?? { percent: 0, lastTimestamp: 0 };
 
-                const avatarFilename = lesson.authorAvatarUrl?.split("/").pop();
-                const avatarUrl = avatarFilename && avatarFilename !== "null"
-                  ? `/api/profile/avatars/${avatarFilename}`
-                  : defaultUserAvatar;
+                const avatarFilename =
+                  lesson.authorAvatarUrl?.split("/").pop();
+                const avatarUrl =
+                  avatarFilename && avatarFilename !== "null"
+                    ? `/api/profile/avatars/${avatarFilename}`
+                    : defaultUserAvatar;
+
                 return (
                   <button
                     key={lesson.id}
@@ -197,7 +272,9 @@ const LessonPage = () => {
                         <span className="text-[10px] font-semibold uppercase text-purple-600">
                           {lesson.category}
                         </span>
-                        <h3 className="mt-1 line-clamp-2 text-sm font-semibold">{lesson.title}</h3>
+                        <h3 className="mt-1 line-clamp-2 text-sm font-semibold">
+                          {lesson.title}
+                        </h3>
 
                         <div className="mb-2 mt-3 h-1 rounded-full bg-gray-200">
                           <div
@@ -226,7 +303,9 @@ const LessonPage = () => {
                             <div className="text-xs font-medium">
                               {lesson.authorName || "Unknown Author"}
                             </div>
-                            <div className="text-[10px] text-gray-500">Learning Content</div>
+                            <div className="text-[10px] text-gray-500">
+                              Learning Content
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -244,24 +323,4 @@ const LessonPage = () => {
 };
 
 export default LessonPage;
-====
-// src/hooks/useClickOutside.ts
-import { useEffect } from "react";
 
-export const useClickOutside = (
-  ref: React.RefObject<HTMLElement>,
-  onClose: () => void
-) => {
-  useEffect(() => {
-    const handleClick = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        onClose();
-      }
-    };
-
-    document.addEventListener("mousedown", handleClick);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-    };
-  }, [ref, onClose]);
-};
