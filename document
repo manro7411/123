@@ -6,25 +6,9 @@ import Sidebar from "../../widgets/SidebarWidget";
 import defaultUserAvatar from "../../assets/user.png";
 import ChatBubbleWidget from "../../widgets/ChatBubbleWidget";
 import NotificationWidget from "../../widgets/NotificationWidget";
-
-interface Lesson {
-  id: string;
-  title: string;
-  category: string;
-  description?: string;
-  thumbnailUrl?: string;
-  authorName?: string;
-  authorAvatarUrl?: string;
-  assignType: string;
-  assignedUserIds?: string[];
-  assignedTeamIds?: string[];
-  contentType: "video" | "document";
-}
-
-interface Progress {
-  percent: number;
-  lastTimestamp: number;
-}
+import { useLesson } from "./hooks/useLessons";
+import { useUserProfile } from "./hooks/useUserProfile";
+import { useTeam } from "./hooks/useTeam";
 
 const LessonPage = () => {
   const { token: ctxToken } = useContext(AuthContext);
@@ -33,82 +17,14 @@ const LessonPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const menuRef = useRef<HTMLDivElement>(null);
-
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [progressMap, setProgressMap] = useState<Record<string, Progress>>({});
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedAssignType, setSelectedAssignType] = useState<string>("all");
-  const [userId, setUserId] = useState<string | null>(null);
-  const [myTeamIds, setMyTeamIds] = useState<string[]>([]);
 
-  useEffect(() => {
-    const fetchTeams = async () => {
-      try {
-        const res = await axios.get("/api/teams", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setMyTeamIds(res.data.map((team: { id: string }) => team.id));
-      } catch (error) {
-        console.error("❌ Failed to fetch user teams:", error);
-      }
-    };
-    if (token) fetchTeams();
-  }, [token]);
-
-  useEffect(() => {
-    const fetchUserProfile = async () => {
-      try {
-        const res = await axios.get("/api/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setUserId(res.data.id);
-        setMyTeamIds(res.data.teams || []);
-      } catch (error) {
-        console.error("❌ Failed to fetch user profile:", error);
-      }
-    };
-    if (token) fetchUserProfile();
-  }, [token]);
-
-  useEffect(() => {
-    if (!token) {
-      navigate("/");
-      return;
-    }
-
-    const fetchData = async () => {
-      try {
-        const [lessonsRes, progressRes] = await Promise.all([
-          axios.get("/api/learning", {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          axios.get("/api/user/progress", {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-        ]);
-        setLessons(lessonsRes.data);
-        
-        const map: Record<string, Progress> = {};
-        progressRes.data.forEach((item: { lessonId: string; percent: number; lastTimestamp?: number }) => {
-          const key = item.lessonId.toLowerCase();
-          map[key] = {
-            percent: item.percent,
-            lastTimestamp: item.lastTimestamp || 0,
-          };
-        });
-        setProgressMap(map);
-      } catch (err) {
-        console.error("❌ Failed to fetch lessons or progress:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [token, location.pathname, navigate]);
+  const {lessons, progressMap, loading} = useLesson(token, location.pathname);
+  const {userId,myTeamIds} = useUserProfile(token);
+  const myTeamIds = useTeam(token);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
