@@ -1,18 +1,21 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { useEffect, useState, useContext, useRef } from "react";
+import { useEffect, useRef, useState, useContext } from "react";
 import axios from "axios";
 import Sidebar from "../../widgets/SidebarWidget";
 import { AuthContext } from "../../Authentication/AuthContext";
 
+// ✅ ใช้ react-pdf entry ปกติ
 import { Document, Page, pdfjs } from "react-pdf";
+import "react-pdf/dist/Page/AnnotationLayer.css";
+import "react-pdf/dist/Page/TextLayer.css";
 
+// ✅ ตั้งค่า worker ให้ตรงเวอร์ชัน pdfjs-dist
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
   import.meta.url
 ).toString();
 
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
+import "./lesson.css";
 
 interface Lesson {
   id: string;
@@ -28,6 +31,7 @@ interface Lesson {
   authorAvatarUrl?: string;
   quizAttemptLimit?: number;
 }
+
 interface Progress {
   lessonId: string;
   percent: number;
@@ -35,15 +39,18 @@ interface Progress {
   attempts: number;
   maxAttempts: number;
   lastTimestamp: number;
-  thumbnailUrl:string;
+  thumbnailUrl: string;
 }
+
 const LessonDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const { token } = useContext(AuthContext);
   const navigate = useNavigate();
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastTimestamp = useRef<number>(0);
   const lastSent = useRef<number>(0);
+
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [progressPercent, setProgressPercent] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -52,9 +59,15 @@ const LessonDetailPage = () => {
   const [attempts, setAttempts] = useState(0);
   const [maxAttempts, setMaxAttempts] = useState(1);
   const [quizPassed, setQuizPassed] = useState(false);
-  const [lastTimestampFromServer, setLastTimestampFromServer] = useState<number | null>(null);
+  const [lastTimestampFromServer, setLastTimestampFromServer] = useState<
+    number | null
+  >(null);
+
+  // สำหรับ PDF
   const [currentPage, setCurrentPage] = useState(0);
-  const [ numPages, setNumPages] = useState(0);
+  const [numPages, setNumPages] = useState(0);
+
+  // โหลด lesson
   useEffect(() => {
     axios
       .get<Lesson>(`/api/learning/${id}`)
@@ -63,8 +76,9 @@ const LessonDetailPage = () => {
       .finally(() => setLoading(false));
   }, [id]);
 
+  // โหลด progress
   useEffect(() => {
-    if (!lesson || !token ) return;
+    if (!lesson || !token) return;
 
     axios
       .get<Progress[]>(`/api/user/progress`, {
@@ -72,8 +86,8 @@ const LessonDetailPage = () => {
       })
       .then((res) => {
         const found = res.data.find((p) => p.lessonId === lesson.id);
-        if (!found){
-          setLastTimestampFromServer(0)
+        if (!found) {
+          setLastTimestampFromServer(0);
           return;
         }
 
@@ -83,50 +97,41 @@ const LessonDetailPage = () => {
         setHasTakenQuiz(found.attempts >= found.maxAttempts);
         setProgressPercent(found.percent);
 
-        if (typeof found.lastTimestamp === "number" && found.lastTimestamp > 0 ) {
+        if (
+          typeof found.lastTimestamp === "number" &&
+          found.lastTimestamp > 0
+        ) {
           setLastTimestampFromServer(found.lastTimestamp);
           lastTimestamp.current = found.lastTimestamp;
-        }else{
-          setLastTimestampFromServer(0)
+        } else {
+          setLastTimestampFromServer(0);
         }
       })
-     
-      .catch(() => 
-        console.error("❌ Failed to fetch progress"));
+      .catch(() => console.error("❌ Failed to fetch progress"));
   }, [lesson, token]);
 
-  // Seek to last position when metadata is loaded
+  // Seek video
   const handleLoadedMetadata = () => {
     const video = videoRef.current;
-    console.log("LoadedMetadata called", {
-    video,
-    lastTimestampFromServer,
-    duration: video?.duration
-  });
     if (
       video &&
       lastTimestampFromServer !== null &&
       lastTimestampFromServer > 0 &&
       lastTimestampFromServer < video.duration
     ) {
-      console.log("⏪ Seeking video to:", lastTimestampFromServer);
       video.currentTime = lastTimestampFromServer;
-       setTimeout(() => {
-      video.currentTime = lastTimestampFromServer;
-      console.log("⏪ [Timeout] Seeking video to:", lastTimestampFromServer);
-    }, 300); 
+      setTimeout(() => {
+        video.currentTime = lastTimestampFromServer;
+      }, 300);
     }
   };
 
+  // Update time
   const handleTimeUpdate = () => {
     const video = videoRef.current;
     if (!video || !video.duration) return;
 
     const currentTime = video.currentTime;
-    if (currentTime < 3 ) {
-      return;
-      
-    }
     if (Math.abs(currentTime - lastTimestamp.current) > 1) {
       lastTimestamp.current = currentTime;
     }
@@ -137,13 +142,13 @@ const LessonDetailPage = () => {
     }
   };
 
+  // ส่ง progress ไป backend ทุก 2 วิ
   useEffect(() => {
     if (!lesson || !token) return;
 
     const timer = setInterval(() => {
       const video = videoRef.current;
       const currentPercent = Math.floor(progressPercent);
-      console.log("Current Timing: ",currentPercent)
       const currentTime = Math.floor(video?.currentTime || 0);
 
       if (
@@ -152,12 +157,11 @@ const LessonDetailPage = () => {
         progressPercent <= 100 &&
         currentPercent !== lastSent.current &&
         currentTime > 0 &&
-        (lastTimestampFromServer === null || currentTime >= lastTimestampFromServer)
-
+        (lastTimestampFromServer === null ||
+          currentTime >= lastTimestampFromServer)
       ) {
         lastSent.current = currentPercent;
         lastTimestamp.current = currentTime;
-        console.log("thumbnailUrl: ",lesson.thumbnailUrl)
 
         axios
           .put(
@@ -165,7 +169,7 @@ const LessonDetailPage = () => {
             {
               percent: currentPercent,
               lastTimestamp: Math.floor(video.currentTime),
-              thumbnailUrl: lesson.thumbnailUrl || "",               
+              thumbnailUrl: lesson.thumbnailUrl || "",
             },
             {
               headers: {
@@ -179,26 +183,34 @@ const LessonDetailPage = () => {
     }, 2000);
 
     return () => clearInterval(timer);
-  }, [lesson, token, progressPercent,lastTimestampFromServer]);
+  }, [lesson, token, progressPercent, lastTimestampFromServer]);
 
+  // Show quiz
   useEffect(() => {
-    if (progressPercent >= 100 && !showQuiz) {
+    if (
+      progressPercent >= 100 &&
+      !showQuiz &&
+      lesson &&
+      lesson.quizAttemptLimit
+    ) {
       setShowQuiz(true);
     }
-  }, [progressPercent, showQuiz]);
-    
+  }, [progressPercent, showQuiz, lesson]);
+
   if (loading || !lesson) {
     return <div className="p-6 text-gray-400">⏳ Loading lesson…</div>;
   }
 
   const filename = lesson.videoUrl?.split("/").pop() || "";
-  const documentfile = lesson.documentUrl?.split("/").pop() || "Can't file the document name";
+  const documentfile =
+    lesson.documentUrl?.split("/").pop() || "Can't find document";
+
+  // Render video หรือ document
   const renderContent = () => {
     if (lesson.contentType === "video") {
-
       if (lastTimestampFromServer === null) {
-        return <div className="p-6 text-gray-400">⏳ Loading video…</div>
-      };
+        return <div className="p-6 text-gray-400">⏳ Loading video…</div>;
+      }
 
       return (
         <video
@@ -211,69 +223,70 @@ const LessonDetailPage = () => {
           src={`/api/learning/video/v2/${filename}`}
         />
       );
-    } 
-else if (lesson.contentType === "document") {
-  return (
-    
-<div className="bg-white p-4 rounded shadow w-full">
-      <Document
-        file={`/api/learning/document/${documentfile}`}
-        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-        onLoadError={(error) => console.error("Error loading PDF:", error)}
-        loading={<p>Loading PDF...</p>}
-      >
-        <Page
-          pageNumber={currentPage + 1}
-          renderAnnotationLayer={true}
-          renderTextLayer={true}
-        />
-      </Document>
+    } else if (lesson.contentType === "document") {
+      return (
+        <div className="bg-white p-4 rounded shadow w-full">
+          <Document
+            file={`/api/learning/document/${documentfile}`}
+            onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+            onLoadError={(error) =>
+              console.error("Error loading PDF:", error)
+            }
+            loading={<p>Loading PDF...</p>}
+          >
+            <Page
+              pageNumber={currentPage + 1}
+              renderAnnotationLayer={true}
+              renderTextLayer={true}
+            />
+          </Document>
 
-      <div className="flex justify-between items-center mt-4">
-        <button
-          onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
-          disabled={currentPage <= 0}
-          className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-        >
-          ◀️ Previous
-        </button>
-        <p className="text-sm text-gray-600">
-          Page {currentPage + 1} of {numPages}
-        </p>
-        <button
-          onClick={() => setCurrentPage((prev) => Math.min(prev + 1, numPages - 1))}
-          disabled={currentPage >= numPages - 1}
-          className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-        >
-          Next ▶️
-        </button>
-      </div>
-    </div>
-  );
-}
+          {/* PDF Pagination */}
+          <div className="flex justify-between items-center mt-4">
+            <button
+              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
+              disabled={currentPage <= 0}
+              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+            >
+              ◀️ Previous
+            </button>
+            <p className="text-sm text-gray-600">
+              Page {currentPage + 1} of {numPages}
+            </p>
+            <button
+              onClick={() =>
+                setCurrentPage((prev) => Math.min(prev + 1, numPages - 1))
+              }
+              disabled={currentPage >= numPages - 1}
+              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+            >
+              Next ▶️
+            </button>
+          </div>
+        </div>
+      );
+    }
     return null;
   };
 
-  const filteringProgress = () =>{
+  const filteringProgress = () => {
     if (lesson.contentType === "video") {
-      return(
+      return (
         <div className="h-1 bg-gray-300">
-                <div
-                  className="h-full bg-blue-600 transition-all"
-                  style={{ width: `${progressPercent}%` }}
-                />
-                <div>
-                   <p className="text-sm text-gray-500">
-                Attempts: {attempts}/{maxAttempts || lesson.quizAttemptLimit || 1}
-              </p>
-                </div>
+          <div
+            className="h-full bg-blue-600 transition-all"
+            style={{ width: `${progressPercent}%` }}
+          />
+          <div>
+            <p className="text-sm text-gray-500">
+              Attempts: {attempts}/{maxAttempts || lesson.quizAttemptLimit || 1}
+            </p>
+          </div>
         </div>
-        
-      )
+      );
     }
     return null;
-  }
-
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -286,8 +299,12 @@ else if (lesson.contentType === "document") {
             </div>
 
             <section className="bg-white rounded-xl shadow p-6 space-y-4">
-              <h1 className="text-2xl font-bold text-gray-800">{lesson.title}</h1>
-              <span className="text-xs font-semibold uppercase text-purple-600">{lesson.category}</span>
+              <h1 className="text-2xl font-bold text-gray-800">
+                {lesson.title}
+              </h1>
+              <span className="text-xs font-semibold uppercase text-purple-600">
+                {lesson.category}
+              </span>
               <p className="text-gray-700">{lesson.description}</p>
 
               <div className="flex items-center gap-4">
@@ -296,7 +313,9 @@ else if (lesson.contentType === "document") {
                     src={lesson.authorAvatarUrl}
                     alt="Author Avatar"
                     className="w-10 h-10 rounded-full object-cover border"
-                    onError={(e) => ((e.currentTarget.style.display = "none"))}
+                    onError={(e) =>
+                      ((e.currentTarget.style.display = "none"))
+                    }
                   />
                 ) : (
                   <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-sm text-white">
@@ -304,28 +323,38 @@ else if (lesson.contentType === "document") {
                   </div>
                 )}
                 <div>
-                  <p className="text-sm font-medium text-gray-800">{lesson.authorName || "Unknown"}</p>
-                  <p className="text-xs text-gray-500">{lesson.authorEmail || ""}</p>
+                  <p className="text-sm font-medium text-gray-800">
+                    {lesson.authorName || "Unknown"}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {lesson.authorEmail || ""}
+                  </p>
                 </div>
               </div>
               {filteringProgress()}
-
-            
             </section>
           </div>
 
           <aside className="space-y-6 mt-4 xl:mt-0">
             <div className="bg-white p-4 rounded-xl shadow">
-              <h3 className="text-sm font-semibold mb-4 text-gray-700">Schedule</h3>
-              {["What is Scrum?", "Scrum Events", "Scrum Artifacts", "Agile Estimation"].map((item, i) => (
-                <div key={i} className="flex items-start space-x-2 mb-4">
-                  <div className="w-2 h-2 mt-1 bg-blue-600 rounded-full" />
-                  <div>
-                    <div className="text-sm font-medium text-gray-800">{item}</div>
-                    <div className="text-xs text-gray-500">Tika Sarak S.Pd</div>
+              <h3 className="text-sm font-semibold mb-4 text-gray-700">
+                Schedule
+              </h3>
+              {["What is Scrum?", "Scrum Events", "Scrum Artifacts", "Agile Estimation"].map(
+                (item, i) => (
+                  <div key={i} className="flex items-start space-x-2 mb-4">
+                    <div className="w-2 h-2 mt-1 bg-blue-600 rounded-full" />
+                    <div>
+                      <div className="text-sm font-medium text-gray-800">
+                        {item}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Tika Sarak S.Pd
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              )}
             </div>
           </aside>
         </div>
@@ -336,7 +365,9 @@ else if (lesson.contentType === "document") {
           <div className="bg-white p-6 rounded-xl shadow-xl w-[90%] max-w-md text-center">
             {hasTakenQuiz ? (
               <>
-                <h2 className="text-xl font-bold text-red-600 mb-4">❌ Quiz unavailable</h2>
+                <h2 className="text-xl font-bold text-red-600 mb-4">
+                  ❌ Quiz unavailable
+                </h2>
                 <p className="text-gray-700 mb-6">
                   {quizPassed
                     ? "You have already passed the quiz."
@@ -354,8 +385,12 @@ else if (lesson.contentType === "document") {
               </>
             ) : (
               <>
-                <h2 className="text-xl font-bold mb-4">🎉 Lesson Completed!</h2>
-                <p className="text-gray-700 mb-2">Take a quiz to test your knowledge.</p>
+                <h2 className="text-xl font-bold mb-4">
+                  🎉 Lesson Completed!
+                </h2>
+                <p className="text-gray-700 mb-2">
+                  Take a quiz to test your knowledge.
+                </p>
                 <button
                   onClick={() => {
                     setShowQuiz(false);
@@ -373,111 +408,5 @@ else if (lesson.contentType === "document") {
     </div>
   );
 };
+
 export default LessonDetailPage;
-Download the React DevTools for a better development experience: https://react.dev/link/react-devtools
-pdf.worker.min.mjs:1  Failed to load module script: The server responded with a non-JavaScript MIME type of "text/html". Strict MIME type checking is enforced for module scripts per HTML spec.
-react-pdf.js?v=9f5a3466:361 Warning: Setting up fake worker.
-pdf.worker.min.mjs:1   Failed to load resource: the server responded with a status of 404 (Not Found)
-react-pdf.js?v=9f5a3466:44  Warning: Error: Setting up fake worker failed: "Failed to fetch dynamically imported module: http://localhost:5173/src/pages/Lesson/pdfjs-dist/build/pdf.worker.min.mjs".
-printWarning2 @ react-pdf.js?v=9f5a3466:44
-warning9 @ react-pdf.js?v=9f5a3466:63
-onLoadError @ react-pdf.js?v=9f5a3466:23863
-(anonymous) @ react-pdf.js?v=9f5a3466:23901
-react_stack_bottom_frame @ react-dom_client.js?v=9f5a3466:17486
-runWithFiberInDEV @ react-dom_client.js?v=9f5a3466:1485
-commitHookEffectListMount @ react-dom_client.js?v=9f5a3466:8460
-commitHookPassiveMountEffects @ react-dom_client.js?v=9f5a3466:8518
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9887
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9899
-flushPassiveEffects @ react-dom_client.js?v=9f5a3466:11302
-(anonymous) @ react-dom_client.js?v=9f5a3466:11060
-performWorkUntilDeadline @ react-dom_client.js?v=9f5a3466:36
-LessonDetailPage.tsx:219  Error loading PDF: Error: Setting up fake worker failed: "Failed to fetch dynamically imported module: http://localhost:5173/src/pages/Lesson/pdfjs-dist/build/pdf.worker.min.mjs".
-    at react-pdf.js?v=9f5a3466:12695:45
-onLoadError @ LessonDetailPage.tsx:219
-onLoadError @ react-pdf.js?v=9f5a3466:23865
-(anonymous) @ react-pdf.js?v=9f5a3466:23901
-react_stack_bottom_frame @ react-dom_client.js?v=9f5a3466:17486
-runWithFiberInDEV @ react-dom_client.js?v=9f5a3466:1485
-commitHookEffectListMount @ react-dom_client.js?v=9f5a3466:8460
-commitHookPassiveMountEffects @ react-dom_client.js?v=9f5a3466:8518
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9887
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
-recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
-commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9899
-flushPassiveEffects @ react-dom_client.js?v=9f5a3466:11302
-(anonymous) @ react-dom_client.js?v=9f5a3466:11060
-performWorkUntilDeadline @ react-dom_client.js?v=9f5a3466:36
-14LessonDetailPage.tsx:143 Current Timing:  1
