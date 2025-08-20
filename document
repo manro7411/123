@@ -1,17 +1,77 @@
- @GET
-    @Path("/video/{filename}")
-    @Produces("video/mp4")
-    public Response getVideo(@PathParam("filename") String filename ,@Context Request request) {
-        try {
-            java.nio.file.Path videoPath = java.nio.file.Paths.get("uploads/video", filename);
-            if (!Files.exists(videoPath)) {
-                throw new NotFoundException("Video not found.");
-            }
-
-            return Response.ok(Files.newInputStream(videoPath))
-                    .header("Content-Disposition", "inline; filename=\"" + filename + "\"")
-                    .build();
-        } catch (Exception e) {
-            throw new InternalServerErrorException("Failed to load video.");
+@GET
+@Path("/video/{filename}")
+@Produces("video/mp4")
+public Response getVideo(@PathParam("filename") String filename,
+                         @HeaderParam("Range") String range) {
+    try {
+        Path videoPath = Paths.get("uploads/video", filename);
+        if (!Files.exists(videoPath)) {
+            throw new NotFoundException("Video not found.");
         }
+
+        long fileSize = Files.size(videoPath);
+
+        if (range == null) {
+            // ไม่ได้ขอ range -> ส่งทั้งไฟล์
+            return Response.ok((StreamingOutput) output -> {
+                try (InputStream in = Files.newInputStream(videoPath)) {
+                    in.transferTo(output);
+                }
+            })
+            .header("Content-Length", fileSize)
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Disposition", "inline; filename=\"" + filename + "\"")
+            .build();
+        }
+
+        // parse range: "bytes=start-end"
+        String[] parts = range.replace("bytes=", "").split("-");
+        long start = Long.parseLong(parts[0]);
+        long end = parts.length > 1 && !parts[1].isEmpty()
+                   ? Long.parseLong(parts[1])
+                   : fileSize - 1;
+
+        if (end >= fileSize) {
+            end = fileSize - 1;
+        }
+        if (start > end) {
+            return Response.status(Response.Status.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    .header("Content-Range", "bytes */" + fileSize)
+                    .build();
+        }
+
+        long contentLength = end - start + 1;
+        long finalStart = start, finalEnd = end;
+
+        StreamingOutput stream = output -> {
+            try (SeekableByteChannel sbc = Files.newByteChannel(videoPath, StandardOpenOption.READ)) {
+                sbc.position(finalStart);
+                ByteBuffer buffer = ByteBuffer.allocate(8192);
+                long bytesToRead = contentLength;
+
+                while (bytesToRead > 0) {
+                    int bytesRead = sbc.read(buffer);
+                    if (bytesRead == -1) break;
+                    buffer.flip();
+
+                    int bytesToWrite = (int) Math.min(bytesRead, bytesToRead);
+                    output.write(buffer.array(), 0, bytesToWrite);
+                    buffer.clear();
+
+                    bytesToRead -= bytesToWrite;
+                }
+            }
+        };
+
+        return Response.status(Response.Status.PARTIAL_CONTENT)
+                .entity(stream)
+                .header("Content-Range", String.format("bytes %d-%d/%d", finalStart, finalEnd, fileSize))
+                .header("Accept-Ranges", "bytes")
+                .header("Content-Length", contentLength)
+                .header("Content-Disposition", "inline; filename=\"" + filename + "\"")
+                .build();
+
+    } catch (IOException e) {
+        throw new InternalServerErrorException("Failed to load video.");
     }
+}
