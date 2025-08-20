@@ -1,13 +1,2 @@
-Download the React DevTools for a better development experience: https://react.dev/link/react-devtools
-pdf.worker.min.mjs:1  Failed to load module script: The server responded with a non-JavaScript MIME type of "text/html". Strict MIME type checking is enforced for module scripts per HTML spec.
-util.js:384 Warning: Setting up fake worker.
-pdf.worker.min.mjs:1   Failed to load resource: the server responded with a status of 404 (Not Found)
-warning.js:34  Warning: Error: Setting up fake worker failed: "Failed to fetch dynamically imported module: http://localhost:5173/src/pages/Lesson/pdfjs-dist/build/pdf.worker.min.mjs".
-printWarning2 @ warning.js:34
-LessonDetailPage.tsx:229  Error loading PDF: Error: Setting up fake worker failed: "Failed to fetch dynamically imported module: http://localhost:5173/src/pages/Lesson/pdfjs-dist/build/pdf.worker.min.mjs".
-    at api.js:2216:11
-onLoadError @ LessonDetailPage.tsx:229
-C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend>npm ls pdfjs-dist
-frontend@0.0.0 C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend
-└─┬ react-pdf@10.1.0
-  └── pdfjs-dist@5.3.93
+pdfjs.GlobalWorkerOptions.workerSrc = 
+  `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
