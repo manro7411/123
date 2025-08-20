@@ -1,106 +1,17 @@
-
-    @GET
-    @Path("/{filename}")
+ @GET
+    @Path("/video/{filename}")
     @Produces("video/mp4")
-    public Response getVideo(
-            @PathParam("filename") String filename,
-            @HeaderParam("Range") String rangeHeader,
-            @Context Request request
-    ) {
+    public Response getVideo(@PathParam("filename") String filename ,@Context Request request) {
         try {
-            Path videoPath = Paths.get("uploads/video").resolve(filename).normalize();
-
-            if (!Files.exists(videoPath) || !Files.isRegularFile(videoPath)) {
+            java.nio.file.Path videoPath = java.nio.file.Paths.get("uploads/video", filename);
+            if (!Files.exists(videoPath)) {
                 throw new NotFoundException("Video not found.");
             }
 
-            long fileSize = Files.size(videoPath);
-
-            // Always advertise support for ranges
-            Response.ResponseBuilder builder;
-
-            if (rangeHeader == null || !rangeHeader.startsWith("bytes=")) {
-                // No range requested -> send whole file (still include Accept-Ranges + Content-Length)
-                StreamingOutput stream = output -> {
-                    try (InputStream in = Files.newInputStream(videoPath)) {
-                        byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
-                        int len;
-                        while ((len = in.read(buffer)) != -1) {
-                            output.write(buffer, 0, len);
-                        }
-                    }
-                };
-
-                builder = Response.ok(stream)
-                        .header("Content-Length", fileSize)
-                        .header("Accept-Ranges", "bytes")
-                        .header("Content-Disposition", "inline; filename=\"" + filename + "\"");
-
-            } else {
-                // Parse single range: bytes=start-end
-                String rangeValue = rangeHeader.replace("bytes=", "").trim();
-                String[] parts = rangeValue.split("-", 2);
-
-                long start = parts[0].isEmpty() ? -1 : Long.parseLong(parts[0]);
-                long end   = (parts.length > 1 && !parts[1].isEmpty()) ? Long.parseLong(parts[1]) : -1;
-
-                // Suffix range: bytes=-500 (last 500 bytes)
-                if (start == -1 && end > 0) {
-                    start = Math.max(fileSize - end, 0);
-                    end = fileSize - 1;
-                } else {
-                    // Normalize open-ended end: bytes=500-
-                    if (end == -1 || end >= fileSize) end = fileSize - 1;
-                    if (start < 0) start = 0;
-                }
-
-                // Validate
-                if (start > end || start >= fileSize) {
-                    return Response.status(Response.Status.REQUESTED_RANGE_NOT_SATISFIABLE)
-                            .header("Content-Range", "bytes */" + fileSize) // required for 416
-                            .build();
-                }
-
-                final long contentLength = end - start + 1;
-                final long from = start;
-                final long to = end;
-
-                StreamingOutput stream = output -> {
-                    try (SeekableByteChannel sbc = Files.newByteChannel(videoPath, StandardOpenOption.READ)) {
-                        sbc.position(from);
-                        ByteBuffer buffer = ByteBuffer.allocate(DEFAULT_BUFFER_SIZE);
-                        long remaining = contentLength;
-
-                        while (remaining > 0) {
-                            int bytesToRead = (int) Math.min(buffer.capacity(), remaining);
-                            buffer.limit(bytesToRead);
-                            int read = sbc.read(buffer);
-                            if (read == -1) break;
-                            output.write(buffer.array(), 0, read);
-                            buffer.clear();
-                            remaining -= read;
-                        }
-                    }
-                };
-
-                builder = Response.status(Response.Status.PARTIAL_CONTENT)
-                        .entity(stream)
-                        .header("Content-Range", String.format("bytes %d-%d/%d", from, to, fileSize))
-                        .header("Content-Length", contentLength)
-                        .header("Accept-Ranges", "bytes")
-                        .header("Content-Disposition", "inline; filename=\"" + filename + "\"");
-            }
-
-            // (ออปชัน) เพิ่ม caching header ตามนโยบายของคุณ
-            builder.header("Cache-Control", "public, max-age=86400");
-
-            return builder.build();
-
-        } catch (NumberFormatException nfe) {
-            // malformed range
-            return Response.status(Response.Status.REQUESTED_RANGE_NOT_SATISFIABLE).build();
-        } catch (IOException ioe) {
+            return Response.ok(Files.newInputStream(videoPath))
+                    .header("Content-Disposition", "inline; filename=\"" + filename + "\"")
+                    .build();
+        } catch (Exception e) {
             throw new InternalServerErrorException("Failed to load video.");
         }
     }
-
