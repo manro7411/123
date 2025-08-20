@@ -50,3 +50,10 @@ import "react-pdf/dist/Page/TextLayer.css";
         </button>
       </div>
     </div>
+
+
+C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend>npm ls pdfjs-dist
+frontend@0.0.0 C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend
+├── pdfjs-dist@5.4.54
+└─┬ react-pdf@10.1.0
+  └── pdfjs-dist@5.3.93
