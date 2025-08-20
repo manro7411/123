@@ -41,9 +41,10 @@ const LessonDetailPage = () => {
   const navigate = useNavigate();
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const lastTimestamp = useRef<number>(0);
-  const lastSent = useRef<number>(0);
-  const hasSeekedRef = useRef<boolean>(false);
+  const lastTimestamp = useRef<number>(0);     // in-memory (client)
+  const lastSent = useRef<number>(0);          // last percent persisted
+  const hasSeekedRef = useRef<boolean>(false); // prevent double-seek
+  const wasPlayingRef = useRef<boolean>(false);// remember play state during seek
 
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [progressPercent, setProgressPercent] = useState(0);
@@ -68,7 +69,7 @@ const LessonDetailPage = () => {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // Fetch progress for this lesson
+  // Fetch progress
   useEffect(() => {
     if (!lesson || !token) return;
 
@@ -89,49 +90,84 @@ const LessonDetailPage = () => {
         if (typeof found.lastTimestamp === "number" && found.lastTimestamp > 0) {
           setLastTimestampFromServer(found.lastTimestamp);
           lastTimestamp.current = found.lastTimestamp;
-          hasSeekedRef.current = false; // allow seeking once we know server ts
+          hasSeekedRef.current = false; // allow one seek with fresh server ts
         }
       })
       .catch(() => console.error("❌ Failed to fetch progress"));
   }, [lesson, token]);
 
-  // Helper: seek when both metadata and server timestamp are ready
-  const seekToLast = () => {
+  // ---- SEEK LOGIC (robust) ----
+  const doSeek = (target: number) => {
     const video = videoRef.current;
-    const ts = lastTimestampFromServer;
-
-    if (!video || ts == null) return;
-
-    // Need metadata to know duration
-    if (video.readyState < 1 /* HAVE_METADATA */) return;
+    if (!video) return;
 
     const dur = Number.isFinite(video.duration) ? video.duration : undefined;
-    const margin = 0.25; // avoid exact end
-    const target =
-      dur !== undefined ? Math.max(0, Math.min(ts, Math.max(0, dur - margin))) : Math.max(0, ts);
+    const margin = 0.25; // avoid exact end frame
+    const clamped =
+      dur !== undefined ? Math.max(0, Math.min(target, Math.max(0, dur - margin))) : Math.max(0, target);
 
-    if (hasSeekedRef.current && Math.abs(video.currentTime - target) < 0.5) return;
+    // If we're already near the spot, skip
+    if (hasSeekedRef.current && Math.abs(video.currentTime - clamped) < 0.5) return;
 
-    video.currentTime = target;
-    hasSeekedRef.current = true;
+    // Remember play state and pause during seek to avoid flashing frame 0
+    wasPlayingRef.current = !video.paused && !video.ended;
+    if (wasPlayingRef.current) video.pause();
+
+    // Some browsers need a tiny delay before setting currentTime
+    setTimeout(() => {
+      const v = videoRef.current;
+      if (!v) return;
+
+      const onSeeked = () => {
+        v.removeEventListener("seeked", onSeeked);
+        // resume only if user was playing
+        if (wasPlayingRef.current && v.paused) {
+          // catch autoplay restrictions: resume only after a user gesture (onPlay hook will handle)
+          v.play().catch(() => {});
+        }
+      };
+
+      v.addEventListener("seeked", onSeeked, { once: true });
+      v.currentTime = clamped;
+      hasSeekedRef.current = true;
+    }, 0);
   };
 
-  // When metadata loads, attempt seek
+  const trySeekToServerTime = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.readyState < 1 /* HAVE_METADATA */) return;
+    if (lastTimestampFromServer == null) return;
+
+    doSeek(lastTimestampFromServer);
+  };
+
   const handleLoadedMetadata = () => {
-    seekToLast();
+    trySeekToServerTime();
   };
 
-  // Backup: when first frame/data is available, attempt seek again
   const handleLoadedData = () => {
-    seekToLast();
+    // backup for browsers that fire this later
+    trySeekToServerTime();
   };
 
-  // If server timestamp arrives AFTER metadata, attempt seek
+  // If server timestamp arrives after metadata
   useEffect(() => {
-    seekToLast();
+    trySeekToServerTime();
   }, [lastTimestampFromServer]);
 
-  // Update in-memory progress as the user watches
+  // If user presses play before we managed to seek, intercept once
+  const handlePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    // If we have a valid ts and haven't seeked yet, stop starting at 0
+    if (!hasSeekedRef.current && lastTimestampFromServer && video.currentTime < lastTimestampFromServer - 0.5) {
+      video.pause();
+      doSeek(lastTimestampFromServer);
+    }
+  };
+
+  // Progress update while watching
   const handleTimeUpdate = () => {
     const video = videoRef.current;
     if (!video || !video.duration) return;
@@ -147,7 +183,7 @@ const LessonDetailPage = () => {
     }
   };
 
-  // Periodically persist progress
+  // Persist progress every 2s (only forward)
   useEffect(() => {
     if (!lesson || !token) return;
 
@@ -156,7 +192,6 @@ const LessonDetailPage = () => {
       const currentPercent = Math.floor(progressPercent);
       const currentTime = Math.floor(video?.currentTime || 0);
 
-      // persist only when moving forward and we have valid time
       if (
         video &&
         progressPercent > 0 &&
@@ -190,7 +225,7 @@ const LessonDetailPage = () => {
     return () => clearInterval(timer);
   }, [lesson, token, progressPercent, lastTimestampFromServer]);
 
-  // Auto-open quiz gate when finished
+  // Open quiz when done
   useEffect(() => {
     if (progressPercent >= 100 && !showQuiz && lesson && lesson.quizAttemptLimit) {
       setShowQuiz(true);
@@ -204,20 +239,30 @@ const LessonDetailPage = () => {
   const filename = lesson.videoUrl?.split("/").pop() || "";
   const documentfile = lesson.documentUrl?.split("/").pop() || "Can't file the document name";
 
+  // เพิ่ม fragment #t=second ถ้ามี timestamp แล้ว
+  const srcWithStart =
+    lesson.contentType === "video"
+      ? `/api/learning/video/${filename}${
+          lastTimestampFromServer && lastTimestampFromServer > 0 ? `#t=${Math.floor(lastTimestampFromServer)}` : ""
+        }`
+      : undefined;
+
   const renderContent = () => {
     if (lesson.contentType === "video") {
       return (
         <video
+          key={filename}             // คง element เดิมถ้าไฟล์เดิม
           ref={videoRef}
           controls
           playsInline
           preload="metadata"
+          onPlay={handlePlay}
           onLoadedMetadata={handleLoadedMetadata}
           onLoadedData={handleLoadedData}
           onTimeUpdate={handleTimeUpdate}
           poster={lesson.thumbnailUrl}
           className="w-full h-auto bg-black"
-          src={`/api/learning/video/${filename}`}
+          src={srcWithStart}
         />
       );
     } else if (lesson.contentType === "document") {
@@ -229,7 +274,7 @@ const LessonDetailPage = () => {
             onLoadError={(error) => console.error("Error loading PDF:", error)}
             loading={<p>Loading PDF...</p>}
           >
-            <Page pageNumber={currentPage + 1} renderAnnotationLayer={true} renderTextLayer={true} />
+            <Page pageNumber={currentPage + 1} renderAnnotationLayer renderTextLayer />
           </Document>
 
           <div className="flex justify-between items-center mt-4">
