@@ -3,13 +3,11 @@ import { useEffect, useRef, useState, useContext } from "react";
 import axios from "axios";
 import Sidebar from "../../widgets/SidebarWidget";
 import { AuthContext } from "../../Authentication/AuthContext";
-import { Document, Page, pdfjs } from "react-pdf";
-import pdfWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
-import "react-pdf/dist/Page/TextLayer.css";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-
+import {Document,Page,pdfjs} from 'react-pdf'
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
+import 'react-pdf/dist/Page/TextLayer.css';
+import 'react-pdf/dist/Page/AnnotationLayer.css'; 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
-
 interface Lesson {
   id: string;
   title: string;
@@ -24,7 +22,6 @@ interface Lesson {
   authorAvatarUrl?: string;
   quizAttemptLimit?: number;
 }
-
 interface Progress {
   lessonId: string;
   percent: number;
@@ -32,20 +29,15 @@ interface Progress {
   attempts: number;
   maxAttempts: number;
   lastTimestamp: number;
-  thumbnailUrl: string;
+  thumbnailUrl:string;
 }
-
 const LessonDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const { token } = useContext(AuthContext);
   const navigate = useNavigate();
-
   const videoRef = useRef<HTMLVideoElement>(null);
-  const lastTimestamp = useRef<number>(0);     // in-memory (client)
-  const lastSent = useRef<number>(0);          // last percent persisted
-  const hasSeekedRef = useRef<boolean>(false); // prevent double-seek
-  const wasPlayingRef = useRef<boolean>(false);// remember play state during seek
-
+  const lastTimestamp = useRef<number>(0);
+  const lastSent = useRef<number>(0);
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [progressPercent, setProgressPercent] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -55,13 +47,9 @@ const LessonDetailPage = () => {
   const [maxAttempts, setMaxAttempts] = useState(1);
   const [quizPassed, setQuizPassed] = useState(false);
   const [lastTimestampFromServer, setLastTimestampFromServer] = useState<number | null>(null);
-
   const [currentPage, setCurrentPage] = useState(0);
-  const [numPages, setNumPages] = useState(0);
-
-  // Fetch lesson
+  const [ numPages, setNumPages] = useState(0);
   useEffect(() => {
-    setLoading(true);
     axios
       .get<Lesson>(`/api/learning/${id}`)
       .then((res) => setLesson(res.data))
@@ -69,9 +57,8 @@ const LessonDetailPage = () => {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // Fetch progress
   useEffect(() => {
-    if (!lesson || !token) return;
+    if (!lesson || !token ) return;
 
     axios
       .get<Progress[]>(`/api/user/progress`, {
@@ -79,7 +66,10 @@ const LessonDetailPage = () => {
       })
       .then((res) => {
         const found = res.data.find((p) => p.lessonId === lesson.id);
-        if (!found) return;
+        if (!found){
+          setLastTimestampFromServer(0)
+          return;
+        }
 
         setAttempts(found.attempts);
         setMaxAttempts(found.maxAttempts);
@@ -87,87 +77,41 @@ const LessonDetailPage = () => {
         setHasTakenQuiz(found.attempts >= found.maxAttempts);
         setProgressPercent(found.percent);
 
-        if (typeof found.lastTimestamp === "number" && found.lastTimestamp > 0) {
+        if (typeof found.lastTimestamp === "number" && found.lastTimestamp > 0 ) {
           setLastTimestampFromServer(found.lastTimestamp);
           lastTimestamp.current = found.lastTimestamp;
-          hasSeekedRef.current = false; // allow one seek with fresh server ts
+        }else{
+          setLastTimestampFromServer(0)
         }
       })
-      .catch(() => console.error("❌ Failed to fetch progress"));
+     
+      .catch(() => 
+        console.error("❌ Failed to fetch progress"));
   }, [lesson, token]);
 
-  // ---- SEEK LOGIC (robust) ----
-  const doSeek = (target: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const dur = Number.isFinite(video.duration) ? video.duration : undefined;
-    const margin = 0.25; // avoid exact end frame
-    const clamped =
-      dur !== undefined ? Math.max(0, Math.min(target, Math.max(0, dur - margin))) : Math.max(0, target);
-
-    // If we're already near the spot, skip
-    if (hasSeekedRef.current && Math.abs(video.currentTime - clamped) < 0.5) return;
-
-    // Remember play state and pause during seek to avoid flashing frame 0
-    wasPlayingRef.current = !video.paused && !video.ended;
-    if (wasPlayingRef.current) video.pause();
-
-    // Some browsers need a tiny delay before setting currentTime
-    setTimeout(() => {
-      const v = videoRef.current;
-      if (!v) return;
-
-      const onSeeked = () => {
-        v.removeEventListener("seeked", onSeeked);
-        // resume only if user was playing
-        if (wasPlayingRef.current && v.paused) {
-          // catch autoplay restrictions: resume only after a user gesture (onPlay hook will handle)
-          v.play().catch(() => {});
-        }
-      };
-
-      v.addEventListener("seeked", onSeeked, { once: true });
-      v.currentTime = clamped;
-      hasSeekedRef.current = true;
-    }, 0);
-  };
-
-  const trySeekToServerTime = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.readyState < 1 /* HAVE_METADATA */) return;
-    if (lastTimestampFromServer == null) return;
-
-    doSeek(lastTimestampFromServer);
-  };
-
+  // Seek to last position when metadata is loaded
   const handleLoadedMetadata = () => {
-    trySeekToServerTime();
-  };
-
-  const handleLoadedData = () => {
-    // backup for browsers that fire this later
-    trySeekToServerTime();
-  };
-
-  // If server timestamp arrives after metadata
-  useEffect(() => {
-    trySeekToServerTime();
-  }, [lastTimestampFromServer]);
-
-  // If user presses play before we managed to seek, intercept once
-  const handlePlay = () => {
     const video = videoRef.current;
-    if (!video) return;
-    // If we have a valid ts and haven't seeked yet, stop starting at 0
-    if (!hasSeekedRef.current && lastTimestampFromServer && video.currentTime < lastTimestampFromServer - 0.5) {
-      video.pause();
-      doSeek(lastTimestampFromServer);
+    console.log("LoadedMetadata called", {
+    video,
+    lastTimestampFromServer,
+    duration: video?.duration
+  });
+    if (
+      video &&
+      lastTimestampFromServer !== null &&
+      lastTimestampFromServer > 0 &&
+      lastTimestampFromServer < video.duration
+    ) {
+      console.log("⏪ Seeking video to:", lastTimestampFromServer);
+      video.currentTime = lastTimestampFromServer;
+       setTimeout(() => {
+      video.currentTime = lastTimestampFromServer;
+      console.log("⏪ [Timeout] Seeking video to:", lastTimestampFromServer);
+    }, 300); 
     }
   };
 
-  // Progress update while watching
   const handleTimeUpdate = () => {
     const video = videoRef.current;
     if (!video || !video.duration) return;
@@ -183,13 +127,13 @@ const LessonDetailPage = () => {
     }
   };
 
-  // Persist progress every 2s (only forward)
   useEffect(() => {
     if (!lesson || !token) return;
 
     const timer = setInterval(() => {
       const video = videoRef.current;
       const currentPercent = Math.floor(progressPercent);
+      console.log("Current Timing: ",currentPercent)
       const currentTime = Math.floor(video?.currentTime || 0);
 
       if (
@@ -199,9 +143,11 @@ const LessonDetailPage = () => {
         currentPercent !== lastSent.current &&
         currentTime > 0 &&
         (lastTimestampFromServer === null || currentTime >= lastTimestampFromServer)
+
       ) {
         lastSent.current = currentPercent;
         lastTimestamp.current = currentTime;
+        console.log("thumbnailUrl: ",lesson.thumbnailUrl)
 
         axios
           .put(
@@ -209,7 +155,7 @@ const LessonDetailPage = () => {
             {
               percent: currentPercent,
               lastTimestamp: Math.floor(video.currentTime),
-              thumbnailUrl: lesson.thumbnailUrl || "",
+              thumbnailUrl: lesson.thumbnailUrl || "",               
             },
             {
               headers: {
@@ -223,100 +169,100 @@ const LessonDetailPage = () => {
     }, 2000);
 
     return () => clearInterval(timer);
-  }, [lesson, token, progressPercent, lastTimestampFromServer]);
+  }, [lesson, token, progressPercent,lastTimestampFromServer]);
 
-  // Open quiz when done
   useEffect(() => {
     if (progressPercent >= 100 && !showQuiz && lesson && lesson.quizAttemptLimit) {
       setShowQuiz(true);
     }
-  }, [progressPercent, showQuiz, lesson]);
-
+  }, [progressPercent, showQuiz]);
+    
   if (loading || !lesson) {
     return <div className="p-6 text-gray-400">⏳ Loading lesson…</div>;
   }
 
   const filename = lesson.videoUrl?.split("/").pop() || "";
   const documentfile = lesson.documentUrl?.split("/").pop() || "Can't file the document name";
-
-  // เพิ่ม fragment #t=second ถ้ามี timestamp แล้ว
-  const srcWithStart =
-    lesson.contentType === "video"
-      ? `/api/learning/video/${filename}${
-          lastTimestampFromServer && lastTimestampFromServer > 0 ? `#t=${Math.floor(lastTimestampFromServer)}` : ""
-        }`
-      : undefined;
-
   const renderContent = () => {
     if (lesson.contentType === "video") {
+
+      if (lastTimestampFromServer === null) {
+        return <div className="p-6 text-gray-400">⏳ Loading video…</div>
+      };
+
       return (
         <video
-          key={filename}             // คง element เดิมถ้าไฟล์เดิม
           ref={videoRef}
           controls
-          playsInline
-          preload="metadata"
-          onPlay={handlePlay}
           onLoadedMetadata={handleLoadedMetadata}
-          onLoadedData={handleLoadedData}
           onTimeUpdate={handleTimeUpdate}
           poster={lesson.thumbnailUrl}
           className="w-full h-auto bg-black"
-          src={srcWithStart}
+          src={`/api/learning/video/${filename}`}
         />
       );
-    } else if (lesson.contentType === "document") {
-      return (
-        <div className="bg-white p-4 rounded shadow w-full">
-          <Document
-            file={`/api/learning/document/${documentfile}`}
-            onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-            onLoadError={(error) => console.error("Error loading PDF:", error)}
-            loading={<p>Loading PDF...</p>}
-          >
-            <Page pageNumber={currentPage + 1} renderAnnotationLayer renderTextLayer />
-          </Document>
+    } 
+else if (lesson.contentType === "document") {
+  return (
+    <div className="bg-white p-4 rounded shadow w-full">
+      <Document
+        file={`/api/learning/document/${documentfile}`}
+        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+        onLoadError={(error) => console.error("Error loading PDF:", error)}
+        loading={<p>Loading PDF...</p>}
+      >
+        <Page
+          pageNumber={currentPage + 1}
+          renderAnnotationLayer={true}
+          renderTextLayer={true}
+        />
+      </Document>
 
-          <div className="flex justify-between items-center mt-4">
-            <button
-              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
-              disabled={currentPage <= 0}
-              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-            >
-              ◀️ Previous
-            </button>
-            <p className="text-sm text-gray-600">
-              Page {currentPage + 1} of {numPages}
-            </p>
-            <button
-              onClick={() => setCurrentPage((prev) => Math.min(prev + 1, numPages - 1))}
-              disabled={currentPage >= numPages - 1}
-              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-            >
-              Next ▶️
-            </button>
-          </div>
-        </div>
-      );
-    }
+      <div className="flex justify-between items-center mt-4">
+        <button
+          onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
+          disabled={currentPage <= 0}
+          className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+        >
+          ◀️ Previous
+        </button>
+        <p className="text-sm text-gray-600">
+          Page {currentPage + 1} of {numPages}
+        </p>
+        <button
+          onClick={() => setCurrentPage((prev) => Math.min(prev + 1, numPages - 1))}
+          disabled={currentPage >= numPages - 1}
+          className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+        >
+          Next ▶️
+        </button>
+      </div>
+    </div>
+  );
+}
     return null;
   };
 
-  const filteringProgress = () => {
+  const filteringProgress = () =>{
     if (lesson.contentType === "video") {
-      return (
-        <div className="space-y-2">
-          <div className="h-1 bg-gray-300">
-            <div className="h-full bg-blue-600 transition-all" style={{ width: `${progressPercent}%` }} />
-          </div>
-          <p className="text-sm text-gray-500">
-            Attempts: {attempts}/{maxAttempts || lesson.quizAttemptLimit || 1}
-          </p>
+      return(
+        <div className="h-1 bg-gray-300">
+                <div
+                  className="h-full bg-blue-600 transition-all"
+                  style={{ width: `${progressPercent}%` }}
+                />
+                <div>
+                   <p className="text-sm text-gray-500">
+                Attempts: {attempts}/{maxAttempts || lesson.quizAttemptLimit || 1}
+              </p>
+                </div>
         </div>
-      );
+        
+      )
     }
     return null;
-  };
+  }
+
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -324,7 +270,9 @@ const LessonDetailPage = () => {
       <main className="flex-1 p-8">
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
           <div className="xl:col-span-2 space-y-8">
-            <div className="w-full rounded-xl overflow-hidden shadow">{renderContent()}</div>
+            <div className="w-full rounded-xl overflow-hidden shadow">
+              {renderContent()}
+            </div>
 
             <section className="bg-white rounded-xl shadow p-6 space-y-4">
               <h1 className="text-2xl font-bold text-gray-800">{lesson.title}</h1>
@@ -337,9 +285,7 @@ const LessonDetailPage = () => {
                     src={lesson.authorAvatarUrl}
                     alt="Author Avatar"
                     className="w-10 h-10 rounded-full object-cover border"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display = "none";
-                    }}
+                    onError={(e) => ((e.currentTarget.style.display = "none"))}
                   />
                 ) : (
                   <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-sm text-white">
@@ -351,8 +297,9 @@ const LessonDetailPage = () => {
                   <p className="text-xs text-gray-500">{lesson.authorEmail || ""}</p>
                 </div>
               </div>
-
               {filteringProgress()}
+
+            
             </section>
           </div>
 
@@ -380,7 +327,9 @@ const LessonDetailPage = () => {
               <>
                 <h2 className="text-xl font-bold text-red-600 mb-4">❌ Quiz unavailable</h2>
                 <p className="text-gray-700 mb-6">
-                  {quizPassed ? "You have already passed the quiz." : "You have reached the maximum number of attempts."}
+                  {quizPassed
+                    ? "You have already passed the quiz."
+                    : "You have reached the maximum number of attempts."}
                 </p>
                 <button
                   onClick={() => {
@@ -413,5 +362,8 @@ const LessonDetailPage = () => {
     </div>
   );
 };
-
 export default LessonDetailPage;
+LoadedMetadata called {video: video.w-full.h-auto.bg-black, lastTimestampFromServer: 25, duration: 134.200733}
+LessonDetailPage.tsx:106 ⏪ Seeking video to: 25
+LessonDetailPage.tsx:110 ⏪ [Timeout] Seeking video to: 25
+9LessonDetailPage.tsx:136 Current Timing:  18
