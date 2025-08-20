@@ -3,11 +3,13 @@ import { useEffect, useRef, useState, useContext } from "react";
 import axios from "axios";
 import Sidebar from "../../widgets/SidebarWidget";
 import { AuthContext } from "../../Authentication/AuthContext";
-import {Document,Page,pdfjs} from 'react-pdf'
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
-import 'react-pdf/dist/Page/TextLayer.css';
-import 'react-pdf/dist/Page/AnnotationLayer.css'; 
+import { Document, Page, pdfjs } from "react-pdf";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
+import "react-pdf/dist/Page/TextLayer.css";
+import "react-pdf/dist/Page/AnnotationLayer.css";
+
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
+
 interface Lesson {
   id: string;
   title: string;
@@ -22,6 +24,7 @@ interface Lesson {
   authorAvatarUrl?: string;
   quizAttemptLimit?: number;
 }
+
 interface Progress {
   lessonId: string;
   percent: number;
@@ -29,15 +32,19 @@ interface Progress {
   attempts: number;
   maxAttempts: number;
   lastTimestamp: number;
-  thumbnailUrl:string;
+  thumbnailUrl: string;
 }
+
 const LessonDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const { token } = useContext(AuthContext);
   const navigate = useNavigate();
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastTimestamp = useRef<number>(0);
   const lastSent = useRef<number>(0);
+  const hasSeekedRef = useRef<boolean>(false);
+
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [progressPercent, setProgressPercent] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -47,9 +54,13 @@ const LessonDetailPage = () => {
   const [maxAttempts, setMaxAttempts] = useState(1);
   const [quizPassed, setQuizPassed] = useState(false);
   const [lastTimestampFromServer, setLastTimestampFromServer] = useState<number | null>(null);
+
   const [currentPage, setCurrentPage] = useState(0);
-  const [ numPages, setNumPages] = useState(0);
+  const [numPages, setNumPages] = useState(0);
+
+  // Fetch lesson
   useEffect(() => {
+    setLoading(true);
     axios
       .get<Lesson>(`/api/learning/${id}`)
       .then((res) => setLesson(res.data))
@@ -57,6 +68,7 @@ const LessonDetailPage = () => {
       .finally(() => setLoading(false));
   }, [id]);
 
+  // Fetch progress for this lesson
   useEffect(() => {
     if (!lesson || !token) return;
 
@@ -74,33 +86,52 @@ const LessonDetailPage = () => {
         setHasTakenQuiz(found.attempts >= found.maxAttempts);
         setProgressPercent(found.percent);
 
-        if (typeof found.lastTimestamp === "number" && found.lastTimestamp > 0 ) {
+        if (typeof found.lastTimestamp === "number" && found.lastTimestamp > 0) {
           setLastTimestampFromServer(found.lastTimestamp);
           lastTimestamp.current = found.lastTimestamp;
+          hasSeekedRef.current = false; // allow seeking once we know server ts
         }
       })
       .catch(() => console.error("❌ Failed to fetch progress"));
   }, [lesson, token]);
 
-  // Seek to last position when metadata is loaded
-  const handleLoadedMetadata = () => {
+  // Helper: seek when both metadata and server timestamp are ready
+  const seekToLast = () => {
     const video = videoRef.current;
-    console.log("LoadedMetadata called", {
-    video,
-    lastTimestampFromServer,
-    duration: video?.duration
-  });
-    if (
-      video &&
-      lastTimestampFromServer !== null &&
-      lastTimestampFromServer > 0 &&
-      lastTimestampFromServer < video.duration
-    ) {
-      console.log("⏪ Seeking video to:", lastTimestampFromServer);
-      video.currentTime = lastTimestampFromServer;
-    }
+    const ts = lastTimestampFromServer;
+
+    if (!video || ts == null) return;
+
+    // Need metadata to know duration
+    if (video.readyState < 1 /* HAVE_METADATA */) return;
+
+    const dur = Number.isFinite(video.duration) ? video.duration : undefined;
+    const margin = 0.25; // avoid exact end
+    const target =
+      dur !== undefined ? Math.max(0, Math.min(ts, Math.max(0, dur - margin))) : Math.max(0, ts);
+
+    if (hasSeekedRef.current && Math.abs(video.currentTime - target) < 0.5) return;
+
+    video.currentTime = target;
+    hasSeekedRef.current = true;
   };
 
+  // When metadata loads, attempt seek
+  const handleLoadedMetadata = () => {
+    seekToLast();
+  };
+
+  // Backup: when first frame/data is available, attempt seek again
+  const handleLoadedData = () => {
+    seekToLast();
+  };
+
+  // If server timestamp arrives AFTER metadata, attempt seek
+  useEffect(() => {
+    seekToLast();
+  }, [lastTimestampFromServer]);
+
+  // Update in-memory progress as the user watches
   const handleTimeUpdate = () => {
     const video = videoRef.current;
     if (!video || !video.duration) return;
@@ -116,15 +147,16 @@ const LessonDetailPage = () => {
     }
   };
 
+  // Periodically persist progress
   useEffect(() => {
     if (!lesson || !token) return;
 
     const timer = setInterval(() => {
       const video = videoRef.current;
       const currentPercent = Math.floor(progressPercent);
-      console.log("Current Timing: ",currentPercent)
       const currentTime = Math.floor(video?.currentTime || 0);
 
+      // persist only when moving forward and we have valid time
       if (
         video &&
         progressPercent > 0 &&
@@ -132,11 +164,9 @@ const LessonDetailPage = () => {
         currentPercent !== lastSent.current &&
         currentTime > 0 &&
         (lastTimestampFromServer === null || currentTime >= lastTimestampFromServer)
-
       ) {
         lastSent.current = currentPercent;
         lastTimestamp.current = currentTime;
-        console.log("thumbnailUrl: ",lesson.thumbnailUrl)
 
         axios
           .put(
@@ -144,7 +174,7 @@ const LessonDetailPage = () => {
             {
               percent: currentPercent,
               lastTimestamp: Math.floor(video.currentTime),
-              thumbnailUrl: lesson.thumbnailUrl || "",               
+              thumbnailUrl: lesson.thumbnailUrl || "",
             },
             {
               headers: {
@@ -158,100 +188,90 @@ const LessonDetailPage = () => {
     }, 2000);
 
     return () => clearInterval(timer);
-  }, [lesson, token, progressPercent,lastTimestampFromServer]);
+  }, [lesson, token, progressPercent, lastTimestampFromServer]);
 
+  // Auto-open quiz gate when finished
   useEffect(() => {
     if (progressPercent >= 100 && !showQuiz && lesson && lesson.quizAttemptLimit) {
       setShowQuiz(true);
     }
-  }, [progressPercent, showQuiz]);
-    
+  }, [progressPercent, showQuiz, lesson]);
+
   if (loading || !lesson) {
     return <div className="p-6 text-gray-400">⏳ Loading lesson…</div>;
   }
 
   const filename = lesson.videoUrl?.split("/").pop() || "";
   const documentfile = lesson.documentUrl?.split("/").pop() || "Can't file the document name";
+
   const renderContent = () => {
     if (lesson.contentType === "video") {
-
-      if (lastTimestampFromServer === undefined) {
-        return <div className="p-6 text-gray-400">⏳ Loading video…</div>
-      };
-
       return (
         <video
           ref={videoRef}
           controls
+          playsInline
+          preload="metadata"
           onLoadedMetadata={handleLoadedMetadata}
+          onLoadedData={handleLoadedData}
           onTimeUpdate={handleTimeUpdate}
           poster={lesson.thumbnailUrl}
           className="w-full h-auto bg-black"
           src={`/api/learning/video/${filename}`}
         />
       );
-    } 
-else if (lesson.contentType === "document") {
-  return (
-    <div className="bg-white p-4 rounded shadow w-full">
-      <Document
-        file={`/api/learning/document/${documentfile}`}
-        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-        onLoadError={(error) => console.error("Error loading PDF:", error)}
-        loading={<p>Loading PDF...</p>}
-      >
-        <Page
-          pageNumber={currentPage + 1}
-          renderAnnotationLayer={true}
-          renderTextLayer={true}
-        />
-      </Document>
+    } else if (lesson.contentType === "document") {
+      return (
+        <div className="bg-white p-4 rounded shadow w-full">
+          <Document
+            file={`/api/learning/document/${documentfile}`}
+            onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+            onLoadError={(error) => console.error("Error loading PDF:", error)}
+            loading={<p>Loading PDF...</p>}
+          >
+            <Page pageNumber={currentPage + 1} renderAnnotationLayer={true} renderTextLayer={true} />
+          </Document>
 
-      <div className="flex justify-between items-center mt-4">
-        <button
-          onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
-          disabled={currentPage <= 0}
-          className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-        >
-          ◀️ Previous
-        </button>
-        <p className="text-sm text-gray-600">
-          Page {currentPage + 1} of {numPages}
-        </p>
-        <button
-          onClick={() => setCurrentPage((prev) => Math.min(prev + 1, numPages - 1))}
-          disabled={currentPage >= numPages - 1}
-          className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-        >
-          Next ▶️
-        </button>
-      </div>
-    </div>
-  );
-}
+          <div className="flex justify-between items-center mt-4">
+            <button
+              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 0))}
+              disabled={currentPage <= 0}
+              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+            >
+              ◀️ Previous
+            </button>
+            <p className="text-sm text-gray-600">
+              Page {currentPage + 1} of {numPages}
+            </p>
+            <button
+              onClick={() => setCurrentPage((prev) => Math.min(prev + 1, numPages - 1))}
+              disabled={currentPage >= numPages - 1}
+              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
+            >
+              Next ▶️
+            </button>
+          </div>
+        </div>
+      );
+    }
     return null;
   };
 
-  const filteringProgress = () =>{
+  const filteringProgress = () => {
     if (lesson.contentType === "video") {
-      return(
-        <div className="h-1 bg-gray-300">
-                <div
-                  className="h-full bg-blue-600 transition-all"
-                  style={{ width: `${progressPercent}%` }}
-                />
-                <div>
-                   <p className="text-sm text-gray-500">
-                Attempts: {attempts}/{maxAttempts || lesson.quizAttemptLimit || 1}
-              </p>
-                </div>
+      return (
+        <div className="space-y-2">
+          <div className="h-1 bg-gray-300">
+            <div className="h-full bg-blue-600 transition-all" style={{ width: `${progressPercent}%` }} />
+          </div>
+          <p className="text-sm text-gray-500">
+            Attempts: {attempts}/{maxAttempts || lesson.quizAttemptLimit || 1}
+          </p>
         </div>
-        
-      )
+      );
     }
     return null;
-  }
-
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -259,9 +279,7 @@ else if (lesson.contentType === "document") {
       <main className="flex-1 p-8">
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
           <div className="xl:col-span-2 space-y-8">
-            <div className="w-full rounded-xl overflow-hidden shadow">
-              {renderContent()}
-            </div>
+            <div className="w-full rounded-xl overflow-hidden shadow">{renderContent()}</div>
 
             <section className="bg-white rounded-xl shadow p-6 space-y-4">
               <h1 className="text-2xl font-bold text-gray-800">{lesson.title}</h1>
@@ -274,7 +292,9 @@ else if (lesson.contentType === "document") {
                     src={lesson.authorAvatarUrl}
                     alt="Author Avatar"
                     className="w-10 h-10 rounded-full object-cover border"
-                    onError={(e) => ((e.currentTarget.style.display = "none"))}
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = "none";
+                    }}
                   />
                 ) : (
                   <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-sm text-white">
@@ -286,9 +306,8 @@ else if (lesson.contentType === "document") {
                   <p className="text-xs text-gray-500">{lesson.authorEmail || ""}</p>
                 </div>
               </div>
-              {filteringProgress()}
 
-            
+              {filteringProgress()}
             </section>
           </div>
 
@@ -316,9 +335,7 @@ else if (lesson.contentType === "document") {
               <>
                 <h2 className="text-xl font-bold text-red-600 mb-4">❌ Quiz unavailable</h2>
                 <p className="text-gray-700 mb-6">
-                  {quizPassed
-                    ? "You have already passed the quiz."
-                    : "You have reached the maximum number of attempts."}
+                  {quizPassed ? "You have already passed the quiz." : "You have reached the maximum number of attempts."}
                 </p>
                 <button
                   onClick={() => {
@@ -351,15 +368,5 @@ else if (lesson.contentType === "document") {
     </div>
   );
 };
+
 export default LessonDetailPage;
-LoadedMetadata called 
-{video: video.w-full.h-auto.bg-black, lastTimestampFromServer: 30, duration: 134.200733}
-duration
-: 
-134.200733
-lastTimestampFromServer
-: 
-30
-video
-: 
-video.w-full.h-auto.bg-black
