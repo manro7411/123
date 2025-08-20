@@ -14,8 +14,207 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
+interface Lesson {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  contentType: "video" | "document";
+  thumbnailUrl?: string;
+  videoUrl?: string;
+  documentUrl?: string;
+  authorName?: string;
+  authorEmail?: string;
+  authorAvatarUrl?: string;
+  quizAttemptLimit?: number;
+}
+interface Progress {
+  lessonId: string;
+  percent: number;
+  score: number;
+  attempts: number;
+  maxAttempts: number;
+  lastTimestamp: number;
+  thumbnailUrl:string;
+}
+const LessonDetailPage = () => {
+  const { id } = useParams<{ id: string }>();
+  const { token } = useContext(AuthContext);
+  const navigate = useNavigate();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const lastTimestamp = useRef<number>(0);
+  const lastSent = useRef<number>(0);
+  const [lesson, setLesson] = useState<Lesson | null>(null);
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [showQuiz, setShowQuiz] = useState(false);
+  const [hasTakenQuiz, setHasTakenQuiz] = useState(false);
+  const [attempts, setAttempts] = useState(0);
+  const [maxAttempts, setMaxAttempts] = useState(1);
+  const [quizPassed, setQuizPassed] = useState(false);
+  const [lastTimestampFromServer, setLastTimestampFromServer] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [ numPages, setNumPages] = useState(0);
+  useEffect(() => {
+    axios
+      .get<Lesson>(`/api/learning/${id}`)
+      .then((res) => setLesson(res.data))
+      .catch(() => alert("Lesson not found"))
+      .finally(() => setLoading(false));
+  }, [id]);
 
+  useEffect(() => {
+    if (!lesson || !token ) return;
 
+    axios
+      .get<Progress[]>(`/api/user/progress`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      .then((res) => {
+        const found = res.data.find((p) => p.lessonId === lesson.id);
+        if (!found){
+          setLastTimestampFromServer(0)
+          return;
+        }
+
+        setAttempts(found.attempts);
+        setMaxAttempts(found.maxAttempts);
+        setQuizPassed(found.score > 0);
+        setHasTakenQuiz(found.attempts >= found.maxAttempts);
+        setProgressPercent(found.percent);
+
+        if (typeof found.lastTimestamp === "number" && found.lastTimestamp > 0 ) {
+          setLastTimestampFromServer(found.lastTimestamp);
+          lastTimestamp.current = found.lastTimestamp;
+        }else{
+          setLastTimestampFromServer(0)
+        }
+      })
+     
+      .catch(() => 
+        console.error("❌ Failed to fetch progress"));
+  }, [lesson, token]);
+
+  // Seek to last position when metadata is loaded
+  const handleLoadedMetadata = () => {
+    const video = videoRef.current;
+    console.log("LoadedMetadata called", {
+    video,
+    lastTimestampFromServer,
+    duration: video?.duration
+  });
+    if (
+      video &&
+      lastTimestampFromServer !== null &&
+      lastTimestampFromServer > 0 &&
+      lastTimestampFromServer < video.duration
+    ) {
+      console.log("⏪ Seeking video to:", lastTimestampFromServer);
+      video.currentTime = lastTimestampFromServer;
+       setTimeout(() => {
+      video.currentTime = lastTimestampFromServer;
+      console.log("⏪ [Timeout] Seeking video to:", lastTimestampFromServer);
+    }, 300); 
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    const video = videoRef.current;
+    if (!video || !video.duration) return;
+
+    const currentTime = video.currentTime;
+    if (currentTime < 3 ) {
+      return;
+      
+    }
+    if (Math.abs(currentTime - lastTimestamp.current) > 1) {
+      lastTimestamp.current = currentTime;
+    }
+
+    const percent = (currentTime / video.duration) * 100;
+    if (percent > progressPercent) {
+      setProgressPercent(percent);
+    }
+  };
+
+  useEffect(() => {
+    if (!lesson || !token) return;
+
+    const timer = setInterval(() => {
+      const video = videoRef.current;
+      const currentPercent = Math.floor(progressPercent);
+      console.log("Current Timing: ",currentPercent)
+      const currentTime = Math.floor(video?.currentTime || 0);
+
+      if (
+        video &&
+        progressPercent > 0 &&
+        progressPercent <= 100 &&
+        currentPercent !== lastSent.current &&
+        currentTime > 0 &&
+        (lastTimestampFromServer === null || currentTime >= lastTimestampFromServer)
+
+      ) {
+        lastSent.current = currentPercent;
+        lastTimestamp.current = currentTime;
+        console.log("thumbnailUrl: ",lesson.thumbnailUrl)
+
+        axios
+          .put(
+            `/api/user/progress/${lesson.id}`,
+            {
+              percent: currentPercent,
+              lastTimestamp: Math.floor(video.currentTime),
+              thumbnailUrl: lesson.thumbnailUrl || "",               
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+            }
+          )
+          .catch((err) => console.error("❌ PUT failed:", err));
+      }
+    }, 2000);
+
+    return () => clearInterval(timer);
+  }, [lesson, token, progressPercent,lastTimestampFromServer]);
+
+  useEffect(() => {
+    if (progressPercent >= 100 && !showQuiz) {
+      setShowQuiz(true);
+    }
+  }, [progressPercent, showQuiz]);
+    
+  if (loading || !lesson) {
+    return <div className="p-6 text-gray-400">⏳ Loading lesson…</div>;
+  }
+
+  const filename = lesson.videoUrl?.split("/").pop() || "";
+  const documentfile = lesson.documentUrl?.split("/").pop() || "Can't file the document name";
+  const renderContent = () => {
+    if (lesson.contentType === "video") {
+
+      if (lastTimestampFromServer === null) {
+        return <div className="p-6 text-gray-400">⏳ Loading video…</div>
+      };
+
+      return (
+        <video
+          ref={videoRef}
+          controls
+          onLoadedMetadata={handleLoadedMetadata}
+          onTimeUpdate={handleTimeUpdate}
+          poster={lesson.thumbnailUrl}
+          className="w-full h-auto bg-black noscrub"
+          src={`/api/learning/video/v2/${filename}`}
+        />
+      );
+    } 
+else if (lesson.contentType === "document") {
+  return (
+    
 <div className="bg-white p-4 rounded shadow w-full">
       <Document
         file={`/api/learning/document/${documentfile}`}
@@ -50,10 +249,235 @@ import "react-pdf/dist/Page/TextLayer.css";
         </button>
       </div>
     </div>
+  );
+}
+    return null;
+  };
+
+  const filteringProgress = () =>{
+    if (lesson.contentType === "video") {
+      return(
+        <div className="h-1 bg-gray-300">
+                <div
+                  className="h-full bg-blue-600 transition-all"
+                  style={{ width: `${progressPercent}%` }}
+                />
+                <div>
+                   <p className="text-sm text-gray-500">
+                Attempts: {attempts}/{maxAttempts || lesson.quizAttemptLimit || 1}
+              </p>
+                </div>
+        </div>
+        
+      )
+    }
+    return null;
+  }
 
 
-C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend>npm ls pdfjs-dist
-frontend@0.0.0 C:\Users\S_Tratchanon\Documents\GitHub\IT_Learning_hub\frontend
-├── pdfjs-dist@5.4.54
-└─┬ react-pdf@10.1.0
-  └── pdfjs-dist@5.3.93
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      <Sidebar />
+      <main className="flex-1 p-8">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+          <div className="xl:col-span-2 space-y-8">
+            <div className="w-full rounded-xl overflow-hidden shadow">
+              {renderContent()}
+            </div>
+
+            <section className="bg-white rounded-xl shadow p-6 space-y-4">
+              <h1 className="text-2xl font-bold text-gray-800">{lesson.title}</h1>
+              <span className="text-xs font-semibold uppercase text-purple-600">{lesson.category}</span>
+              <p className="text-gray-700">{lesson.description}</p>
+
+              <div className="flex items-center gap-4">
+                {lesson.authorAvatarUrl ? (
+                  <img
+                    src={lesson.authorAvatarUrl}
+                    alt="Author Avatar"
+                    className="w-10 h-10 rounded-full object-cover border"
+                    onError={(e) => ((e.currentTarget.style.display = "none"))}
+                  />
+                ) : (
+                  <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-sm text-white">
+                    {lesson.authorName?.charAt(0) ?? "?"}
+                  </div>
+                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-800">{lesson.authorName || "Unknown"}</p>
+                  <p className="text-xs text-gray-500">{lesson.authorEmail || ""}</p>
+                </div>
+              </div>
+              {filteringProgress()}
+
+            
+            </section>
+          </div>
+
+          <aside className="space-y-6 mt-4 xl:mt-0">
+            <div className="bg-white p-4 rounded-xl shadow">
+              <h3 className="text-sm font-semibold mb-4 text-gray-700">Schedule</h3>
+              {["What is Scrum?", "Scrum Events", "Scrum Artifacts", "Agile Estimation"].map((item, i) => (
+                <div key={i} className="flex items-start space-x-2 mb-4">
+                  <div className="w-2 h-2 mt-1 bg-blue-600 rounded-full" />
+                  <div>
+                    <div className="text-sm font-medium text-gray-800">{item}</div>
+                    <div className="text-xs text-gray-500">Tika Sarak S.Pd</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </aside>
+        </div>
+      </main>
+
+      {showQuiz && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-xl shadow-xl w-[90%] max-w-md text-center">
+            {hasTakenQuiz ? (
+              <>
+                <h2 className="text-xl font-bold text-red-600 mb-4">❌ Quiz unavailable</h2>
+                <p className="text-gray-700 mb-6">
+                  {quizPassed
+                    ? "You have already passed the quiz."
+                    : "You have reached the maximum number of attempts."}
+                </p>
+                <button
+                  onClick={() => {
+                    setShowQuiz(false);
+                    navigate("/lesson");
+                  }}
+                  className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-lg"
+                >
+                  Back to Lessons
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 className="text-xl font-bold mb-4">🎉 Lesson Completed!</h2>
+                <p className="text-gray-700 mb-2">Take a quiz to test your knowledge.</p>
+                <button
+                  onClick={() => {
+                    setShowQuiz(false);
+                    navigate(`/quiz/${lesson.id}`);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg"
+                >
+                  Start Quiz
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+export default LessonDetailPage;
+Download the React DevTools for a better development experience: https://react.dev/link/react-devtools
+pdf.worker.min.mjs:1  Failed to load module script: The server responded with a non-JavaScript MIME type of "text/html". Strict MIME type checking is enforced for module scripts per HTML spec.
+react-pdf.js?v=9f5a3466:361 Warning: Setting up fake worker.
+pdf.worker.min.mjs:1   Failed to load resource: the server responded with a status of 404 (Not Found)
+react-pdf.js?v=9f5a3466:44  Warning: Error: Setting up fake worker failed: "Failed to fetch dynamically imported module: http://localhost:5173/src/pages/Lesson/pdfjs-dist/build/pdf.worker.min.mjs".
+printWarning2 @ react-pdf.js?v=9f5a3466:44
+warning9 @ react-pdf.js?v=9f5a3466:63
+onLoadError @ react-pdf.js?v=9f5a3466:23863
+(anonymous) @ react-pdf.js?v=9f5a3466:23901
+react_stack_bottom_frame @ react-dom_client.js?v=9f5a3466:17486
+runWithFiberInDEV @ react-dom_client.js?v=9f5a3466:1485
+commitHookEffectListMount @ react-dom_client.js?v=9f5a3466:8460
+commitHookPassiveMountEffects @ react-dom_client.js?v=9f5a3466:8518
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9887
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9899
+flushPassiveEffects @ react-dom_client.js?v=9f5a3466:11302
+(anonymous) @ react-dom_client.js?v=9f5a3466:11060
+performWorkUntilDeadline @ react-dom_client.js?v=9f5a3466:36
+LessonDetailPage.tsx:219  Error loading PDF: Error: Setting up fake worker failed: "Failed to fetch dynamically imported module: http://localhost:5173/src/pages/Lesson/pdfjs-dist/build/pdf.worker.min.mjs".
+    at react-pdf.js?v=9f5a3466:12695:45
+onLoadError @ LessonDetailPage.tsx:219
+onLoadError @ react-pdf.js?v=9f5a3466:23865
+(anonymous) @ react-pdf.js?v=9f5a3466:23901
+react_stack_bottom_frame @ react-dom_client.js?v=9f5a3466:17486
+runWithFiberInDEV @ react-dom_client.js?v=9f5a3466:1485
+commitHookEffectListMount @ react-dom_client.js?v=9f5a3466:8460
+commitHookPassiveMountEffects @ react-dom_client.js?v=9f5a3466:8518
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9887
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9881
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9984
+recursivelyTraversePassiveMountEffects @ react-dom_client.js?v=9f5a3466:9868
+commitPassiveMountOnFiber @ react-dom_client.js?v=9f5a3466:9899
+flushPassiveEffects @ react-dom_client.js?v=9f5a3466:11302
+(anonymous) @ react-dom_client.js?v=9f5a3466:11060
+performWorkUntilDeadline @ react-dom_client.js?v=9f5a3466:36
+14LessonDetailPage.tsx:143 Current Timing:  1
