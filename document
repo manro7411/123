@@ -2,11 +2,13 @@ useEffect(() => {
   const video = videoRef.current;
   if (!video) return;
 
-  Object.defineProperty(video, "playbackRate", {
-    get: () => 1.0, // บังคับให้คืนค่าเป็น 1.0
-    set: () => {},  // ไม่ทำงานเวลา set
-    configurable: false
-  });
+  const enforce = () => {
+    if (video.playbackRate !== 1) {
+      console.warn("⛔ speed hack blocked");
+      video.playbackRate = 1;
+    }
+  };
 
-  video.playbackRate = 1.0; // reset กลับไปที่ 1
+  video.addEventListener("ratechange", enforce);
+  return () => video.removeEventListener("ratechange", enforce);
 }, []);
