@@ -1,57 +1,6 @@
-
-
-    @PUT
-    @Path("/{lessonId}")
-    @Transactional
-    public Response updateProgress(@PathParam("lessonId") String lessonId, UpdateProgressRequest req) {
-        String userEmail = jwt.getSubject();
-
-        var progress = em.createQuery("""
-                SELECT p FROM UserLessonProgress p
-                WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
-                """, UserLessonProgress.class)
-                .setParameter("lessonId", lessonId)
-                .setParameter("userEmail", userEmail)
-                .getResultStream()
-                .findFirst()
-                .orElseGet(() -> {
-                    var newProgress = new UserLessonProgress();
-                    newProgress.setLessonId(lessonId);
-                    newProgress.setUserEmail(userEmail);
-                    em.persist(newProgress);
-                    return newProgress;
-                });
-
-        progress.setPercent(Math.max(progress.getPercent(), req.percent));
-        progress.setLastTimestamp(Optional.ofNullable(req.lastTimestamp).orElse(0));
-        progress.setUpdatedAt(LocalDateTime.now());
-        progress.setThumbnailUrl(req.thumbnailUrl);
-        progress.setScreenTime(req.screenTime);
-
-
-        System.out.println("Progress updated: " + progress.getPercent());
-        if (req.percent == 100 ) {
-            boolean scoreExists = em.createQuery("""
-            SELECT COUNT(ls) FROM LearningScoreEntity ls
-            WHERE ls.userEmail = :userEmail AND ls.lessonId = :lessonId
-            """, Long.class)
-                    .setParameter("userEmail", userEmail)
-                    .setParameter("lessonId", lessonId)
-                    .getSingleResult() > 0;
-
-            if (!scoreExists) {
-                LearningScoreEntity learningScore = new LearningScoreEntity();
-                learningScore.setUserEmail(userEmail);
-                learningScore.setLessonId(lessonId);
-                learningScore.setOverallScore(1);
-                learningScore.setUpdatedAt(LocalDateTime.now());
-                em.persist(learningScore);
-                System.out.println("Learning score added for completed lesson.");
-            } else {
-                System.out.println("Learning score already exists. Skipping insert.");
-            }
-        }
-
-
-        return Response.ok().build();
-    }
+Failed to load module script: The server responded with a non-JavaScript MIME type of "application/octet-stream". Strict MIME type checking is enforced for module scripts per HTML spec.
+index-BTc8uIRg.js:285 Warning: Setting up fake worker.
+pdf.worker.min--PgD6g2g.mjs:1  Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "application/octet-stream". Strict MIME type checking is enforced for module scripts per HTML spec.
+index-BTc8uIRg.js:296  Error loading PDF: Error: Setting up fake worker failed: "Failed to fetch dynamically imported module: http://10.136.93.58:5173/assets/pdf.worker.min--PgD6g2g.mjs".
+    at index-BTc8uIRg.js:286:192466
+onLoadError @ index-BTc8uIRg.js:296
