@@ -1,503 +1,343 @@
-import { useParams, useNavigate, Navigate } from "react-router-dom";
-import { useEffect, useRef, useState, useContext } from "react";
+import { useContext, useEffect, useState } from "react";
 import axios from "axios";
-import Sidebar from "../../widgets/SidebarWidget";
-import { AuthContext } from "../../Authentication/AuthContext";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import AdminSidebarWidget from "../Widgets/AdminSideBar";
+import { useNavigate } from "react-router-dom";
+import { Pencil } from "lucide-react";
+import EditLessonModal, { type Lesson } from "./EditLessonModal";
+import { sendLessonNotification } from "../Widgets/notificationServices";
 
-import { Document, Page, pdfjs } from "react-pdf";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
-
-
-
-// pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-//   "pdfjs-dist/build/pdf.worker.min.mjs",
-//   import.meta.url
-// ).toString();
-
-import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
-// pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-
-
-import "./lesson.css";
-import FeedbackWidget from "../../widgets/Feedback";
-
-interface Lesson {
-  id: string;
-  title: string;
-  description: string;
-  category: string;
-  contentType: "video" | "document";
-  thumbnailUrl?: string;
-  videoUrl?: string;
-  documentUrl?: string;
-  authorName?: string;
-  authorEmail?: string;
-  authorAvatarUrl?: string;
-  quizAttemptLimit?: number;
-}
-
-interface Progress {
-  lessonId: string;
+interface UserProgress {
+  userEmail: string;
   percent: number;
+  lessonId: number;
   score: number;
-  attempts: number;
-  maxAttempts: number;
-  lastTimestamp: number;
-  thumbnailUrl: string;
-  screenTime: number
+  quizAvailable: boolean;
+  feedback?: string;
 }
 
-const LessonDetailPage = () => {
-  const { id } = useParams<{ id: string }>();
-  const { token } = useContext(AuthContext);
+const AdminTaskManagementPage = () => {
+  const { token ,user } = useContext(AuthContext);
   const navigate = useNavigate();
+  const adminEmail = user?.email;
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const lastTimestamp = useRef<number>(0);
-  const lastSent = useRef<number>(0);
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
+  const [progressList, setProgressList] = useState<UserProgress[]>([]);
+  const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [feedback,setFeedback] = useState<string>("")
 
-  const [lesson, setLesson] = useState<Lesson | null>(null);
-  const [progressPercent, setProgressPercent] = useState(0);
-  const [docprogress,setDocProgress] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [showQuiz, setShowQuiz] = useState(false);
-  const [hasTakenQuiz, setHasTakenQuiz] = useState(false);
-  const [attempts, setAttempts] = useState(0);
-  const [maxAttempts, setMaxAttempts] = useState(1);
-  const [quizPassed, setQuizPassed] = useState(false);
-  const [lastTimestampFromServer, setLastTimestampFromServer] = useState<number | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
 
-  const [currentPage, setCurrentPage] = useState(0);
-  const [numPages, setNumPages] = useState(0);
+  const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
 
-  const [documentScreenTime,setDocumentScreenTime] = useState(0)
-  const [videoScreenTime,setVideoScreenTime] = useState(0)
-
-  const [, setTimeSpentOnCurrentPage] = useState(0);
-  const [canSwitchPage, setCanSwitchPage] = useState(false);
-
-  useEffect(() => {
-    axios
-      .get<Lesson>(`/api/learning/${id}`)
-      .then((res) => setLesson(res.data))
-      .catch(() => alert("Lesson not found"))
-      .finally(() => setLoading(false));
-  }, [id]);
-
-  useEffect(() => {
-    if (!lesson || !token) return;
-
-    axios
-      .get<Progress[]>(`/api/user/progress`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      .then((res) => {
-        const found = res.data.find((p) => p.lessonId === lesson.id);
-        if (!found) {
-          setLastTimestampFromServer(0);
-          setDocProgress(0); // Set progress to 0 if no progress is found
-          setDocumentScreenTime(0); 
-          return;
-        }
-
-        console.log(found.percent)
-        console.log(found.screenTime || 0)
-        console.log("found:", found)
-
-        setAttempts(found.attempts);
-        setMaxAttempts(found.maxAttempts);
-        setQuizPassed(found.score > 0);
-        setHasTakenQuiz(found.attempts >= found.maxAttempts);
-        setProgressPercent(found.percent);
-        setDocProgress(found.percent); // Set document progress
-        setDocumentScreenTime(found.screenTime || 0); // Set document screen time
-        setDocumentScreenTime(found.screenTime || 0)
-
-
-        if (
-          typeof found.lastTimestamp === "number" &&
-          found.lastTimestamp > 0
-        ) {
-          setLastTimestampFromServer(found.lastTimestamp);
-          lastTimestamp.current = found.lastTimestamp;
-        } else {
-          setLastTimestampFromServer(0);
-        }
-      })
-      .catch(() => console.error("❌ Failed to fetch progress"));
-  }, [lesson, token]);
-
-  const handleLoadedMetadata = () => {
-    const video = videoRef.current;
-    if (
-      video &&
-      lastTimestampFromServer !== null &&
-      lastTimestampFromServer > 0 &&
-      lastTimestampFromServer < video.duration
-    ) {
-      video.currentTime = lastTimestampFromServer;
-      setTimeout(() => {
-        video.currentTime = lastTimestampFromServer;
-      }, 300);
+  const fetchLessons = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get<Lesson[]>("/api/learning?mine=true", {
+        headers: authHeader,
+      });
+      console.log("Fetched lessons:", res.data);
+      setLessons(res.data);
+    } catch (err) {
+      console.error("❌ Failed to load lessons:", err);
+      alert("Failed to fetch lessons.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleTimeUpdate = () => {
-    const video = videoRef.current;
-    if (!video || !video.duration) return;
-
-    const currentTime = video.currentTime;
-
-    if (currentTime > lastTimestamp.current+2) {
-      alert("⛔ Skipping is not allowed! 😄")
-      video.currentTime = lastTimestamp.current; 
+  useEffect(() => {
+    if (!token) {
+      navigate("/");
       return;
     }
+    fetchLessons();
+  }, [token, navigate]);
 
-    if (Math.abs(currentTime - lastTimestamp.current) > 1) {
-      lastTimestamp.current = currentTime;
-    }
+  const handleSelectLesson = async (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setSelectedUser(null);
 
-    const percent = (currentTime / video.duration) * 100;
-    if (percent > progressPercent) {
-      setProgressPercent(percent);
-    }
-  
-    setVideoScreenTime((prev) => {
-      const newTime = prev + 1;
-      console.log(`🎥 Video screen time: ${newTime} seconds`);
-      return newTime;
-    });
-
-  };
-
-  useEffect(() => {
-  if (!lesson || !token) return;
-
-  const timer = setInterval(() => {
-    const maxScreenTime = numPages * 20;
-
-    if (lesson.contentType === "video") {
-      const video = videoRef.current;
-      const currentPercent = Math.floor(progressPercent);
-      const currentTime = Math.floor(video?.currentTime || 0);
-
-      if (
-        video &&
-        progressPercent > 0 &&
-        progressPercent <= 100 &&
-        currentPercent !== lastSent.current &&
-        currentTime > 0 &&
-        (lastTimestampFromServer === null ||
-          currentTime >= lastTimestampFromServer)
-      ) {
-        lastSent.current = currentPercent;
-        lastTimestamp.current = currentTime;
-
-        axios
-          .put(
-            `/api/user/progress/${lesson.id}`,
-            {
-              percent: currentPercent,
-              lastTimestamp: Math.floor(video.currentTime),
-              thumbnailUrl: lesson.thumbnailUrl || "",
-              screenTime: videoScreenTime,
-              contentType: lesson.contentType
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-            }
-          )
-          .catch((err) => console.error("❌ PUT failed:", err));
-      }
-    }else if (lesson.contentType === "document") {
-      setDocumentScreenTime((prev) => {
-        const updatedTime = prev + 1;
-        const progressPercent = Math.min((updatedTime / maxScreenTime) * 100, 100);
-        setDocProgress(progressPercent);
-        console.log(`📄 Document screen time: ${updatedTime} seconds`);
-        console.log(`📄 Document max screen time: ${maxScreenTime} seconds`);
-        console.log(`📄 Document progress: ${progressPercent}%`);
-        return updatedTime;
+    try {
+      const res = await axios.get<UserProgress[]>("/api/user/progress/all", {
+        headers: authHeader,
       });
-    }
-  },100);
-
-  return () => {
-    clearInterval(timer);
-
-    // Send screen time for document content when leaving the page
-    if (lesson.contentType === "document" && documentScreenTime > 0) {
-      axios
-        .put(
-          `/api/user/progress/${lesson.id}`,
-          {
-            percent: Math.floor(docprogress), // No progress for documents
-            lastTimestamp: 0, // No timestamp for documents
-            thumbnailUrl: lesson.thumbnailUrl || "",
-            screenTime: documentScreenTime, // Send screen time
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-          }
-        )
-        // .then(() => console.log("✅ Screen time logged successfully"))
-        .catch((err) =>
-          console.error("❌ Failed to log document screen time:", err)
-        );
-    }
-  };
-}, [lesson, token, progressPercent, lastTimestampFromServer, documentScreenTime, numPages, docprogress]);
-
-useEffect(() => {
-  let timer: NodeJS.Timeout | null = null;
-
-  if (lesson?.contentType === "document") {
-    setCanSwitchPage(false); // Disable switching initially
-    setTimeSpentOnCurrentPage(0); // Reset time spent on the page
-
-    timer = setInterval(() => {
-      setTimeSpentOnCurrentPage((prev) => {
-        const updatedTime = prev + 1;
-        if (updatedTime >= 2) { // Allow switching after 20 seconds
-          setCanSwitchPage(true);
-          clearInterval(timer!); // Stop the timer
-        }
-        return updatedTime;
+      const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
+      const latestByUser = new Map<string, UserProgress>();
+      lessonProgress.forEach((entry) => {
+        latestByUser.set(entry.userEmail, entry);
       });
-    }, 1000);
-  }
-
-  return () => {
-    if (timer) clearInterval(timer);
-  };
-}, [currentPage, lesson]);
-  useEffect(() => {
-    if (
-      progressPercent >= 100 &&
-      !showQuiz &&
-      lesson &&
-      lesson.quizAttemptLimit
-    ) {
-      setShowQuiz(true);
+      setProgressList(Array.from(latestByUser.values()));
+    } catch (err) {
+      console.error("❌ Failed to fetch progress:", err);
+      alert("Failed to load progress data.");
     }
-  }, [progressPercent, showQuiz, lesson]);
+  };
 
+  const handleDeleteLesson = async (id: number) => {
+    if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
 
-  
-  if (loading || !lesson) {
-    return <div className="p-6 text-gray-400">⏳ Loading lesson…</div>;
-  }
-
-  const filename = lesson.videoUrl?.split("/").pop() || "";
-  const documentfile =
-    lesson.documentUrl?.split("/").pop() || "Can't find document";
-
-  if (!token) return <Navigate to="/" replace />;
-  // Render video หรือ document
-  const renderContent = () => {
-    if (lesson.contentType === "video") {
-      if (lastTimestampFromServer === null) {
-        return <div className="p-6 text-gray-400">⏳ Loading video…</div>;
+    try {
+      await axios.delete(`/api/learning/${id}`, {
+        headers: authHeader,
+      });
+      setLessons((prev) => prev.filter((l) => l.id !== id));
+      if (selectedLesson?.id === id) {
+        setSelectedLesson(null);
+        setProgressList([]);
+        setSelectedUser(null);
       }
-
-      return (
-        <video
-          ref={videoRef}
-          controls
-          onLoadedMetadata={handleLoadedMetadata}
-          onTimeUpdate={handleTimeUpdate}
-          poster={lesson.thumbnailUrl}
-          className="w-full h-auto bg-black noscrub"
-          controlsList="noplaybackrate nodownload noremoteplayback"
-          disablePictureInPicture
-          src={`/api/learning/video/v2/${filename}`}
-        />
-      );
-    } else if (lesson.contentType === "document") {
-      return (
-        <div className="bg-white p-4 rounded shadow w-full">
-          <Document
-            file={`/api/learning/document/${documentfile}`}
-            onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-            onLoadError={(error) =>
-              console.error("Error loading PDF:", error)
-            }
-            loading={<p>Loading PDF...</p>}
-          >
-            <Page
-              pageNumber={currentPage + 1}
-              renderAnnotationLayer={true}
-              renderTextLayer={true}
-            />
-          </Document>
-
-          {/* PDF Pagination */}
-          <div className="flex justify-between items-center mt-4">
-            <button
-               onClick={() => {
-              if (!canSwitchPage) {
-                alert("⏳ Please spend on this page before moving to the next one.");
-                return;
-              }
-              setCurrentPage((prev) => Math.max(prev - 1, 0));
-            }}
-              disabled={currentPage <= 0}
-              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-            >
-              ◀️ Previous
-            </button>
-            <p className="text-sm text-gray-600">
-              Page {currentPage + 1} of {numPages}
-            </p>
-            <button
-              onClick={() => {
-              if (!canSwitchPage) {
-                alert("⏳ Please spend on this page before moving to the next one.");
-                return;
-              }
-              setCurrentPage((prev) => Math.max(prev + 1, 0));
-            }}
-              disabled={currentPage >= numPages - 1}
-              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-            >
-              Next ▶️
-            </button>
-          </div>
-        </div>
-      );
+      alert("✅ Lesson deleted");
+    } catch (err) {
+      console.error("❌ Delete failed:", err);
+      alert("Failed to delete lesson.");
     }
-    return null;
   };
 
-  const filteringProgress = () => {
-    if (lesson.contentType === "video") {
-      return (
-        <div className="h-1 bg-gray-300">
-          <div
-            className="h-full bg-blue-600 transition-all"
-            style={{ width: `${progressPercent}%` }}
-          />
-          <div>
-            <p className="text-sm text-gray-500">
-              Attempts: {attempts}/{maxAttempts || lesson.quizAttemptLimit || 1}
-            </p>
-          </div>
-        </div>
-      );
-    }
-    return null;
+  const handleOpenEdit = (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setShowEditModal(true);
   };
+
+  const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
+    if (!selectedLesson) return;
+    try {
+      const payload: Lesson = { ...selectedLesson, ...data };
+      await axios.put(`/api/learning/${selectedLesson.id}`, payload, {
+        headers: authHeader,
+      });
+
+      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
+
+      setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
+
+      setShowEditModal(false);
+      alert("✅ Lesson updated");
+    } catch (err) {
+      console.error("❌ Update failed:", err);
+      alert("Failed to update lesson information.");
+    }
+  };
+
+  if (!token) return null;
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
-      <main className="flex-1 p-8">
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-          <div className="xl:col-span-2 space-y-8">
-            <div className="w-full rounded-xl overflow-hidden shadow">
-              {renderContent()}
-            </div>
+      <AdminSidebarWidget />
 
-            <section className="bg-white rounded-xl shadow p-6 space-y-4">
-              <h1 className="text-2xl font-bold text-gray-800">
-                {lesson.title}
-              </h1>
-              <span className="text-xs font-semibold uppercase text-purple-600">
-                {lesson.category}
-              </span>
-              <p className="text-gray-700">{lesson.description}</p>
+      <main className="flex-1 p-10 space-y-6">
+        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">
+          🧙 Task Management
+        </h1>
 
-              <div className="flex items-center gap-4">
-                {lesson.authorAvatarUrl ? (
-                  <img
-                    src={lesson.authorAvatarUrl}
-                    alt="Author Avatar"
-                    className="w-10 h-10 rounded-full object-cover border"
-                    onError={(e) =>
-                      ((e.currentTarget.style.display = "none"))
-                    }
-                  />
-                ) : (
-                  <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-sm text-white">
-                    {lesson.authorName?.charAt(0) ?? "?"}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Lesson List */}
+          <section className="col-span-1 space-y-4">
+            {loading ? (
+              <p className="text-gray-500">Loading lessons...</p>
+            ) : (
+              lessons.map((lesson) => (
+                <div
+                  key={lesson.id}
+                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all
+                  ${
+                    selectedLesson?.id === lesson.id
+                      ? "bg-blue-50 border-blue-500"
+                      : "bg-white hover:border-blue-500"
+                  }`}
+                >
+                  <div onClick={() => handleSelectLesson(lesson)}>
+                    <h3 className="font-semibold text-lg text-gray-800">
+                      {lesson.title}
+                    </h3>
+                    <p className="text-sm text-gray-500">ID: {lesson.id}</p>
+                    <p className="text-xs text-purple-600 font-semibold uppercase">
+                      {lesson.category}
+                    </p>
                   </div>
-                )}
+
+                  {/* Edit button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenEdit(lesson);
+                    }}
+                    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
+                    title="Edit lesson"
+                    type="button"
+                    aria-label="Edit lesson"
+                  >
+                    <Pencil size={18} />
+                  </button>
+
+                  {/* Delete button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteLesson(lesson.id);
+                    }}
+                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                    title="Delete lesson"
+                    type="button"
+                    aria-label="Delete lesson"
+                  >
+                    🗑
+                  </button>
+                </div>
+              ))
+            )}
+          </section>
+
+          {/* User Progress List */}
+          <section className="col-span-1 space-y-4">
+            {progressList.length === 0 && selectedLesson && (
+              <p className="text-gray-400">No progress yet…</p>
+            )}
+            {progressList.map((user) => (
+              <div
+                key={`${user.lessonId}-${user.userEmail}`}
+                className="p-4 bg-white rounded-xl shadow flex justify-between items-center"
+              >
                 <div>
-                  <p className="text-sm font-medium text-gray-800">
-                    {lesson.authorName || "Unknown"}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {lesson.authorEmail || ""}
-                  </p>
+                  <p className="font-medium text-gray-800">{user.userEmail}</p>
+                  <p className="text-sm text-gray-400">Lesson ID: {user.lessonId}</p>
+                </div>
+                <button
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
+                  onClick={() => setSelectedUser(user)}
+                >
+                  View
+                </button>
+              </div>
+            ))}
+          </section>
+
+          {/* Right pane: selected user overview */}
+         <section className="col-span-1 bg-white p-6 rounded-xl shadow">
+          <h2 className="text-lg font-semibold mb-4 text-gray-700">
+            Quick overview of employee progress
+          </h2>
+
+          {selectedUser ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                <div>
+                  <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
+                  <p className="text-sm text-gray-500">Lesson ID: {selectedUser.lessonId}</p>
                 </div>
               </div>
-              {filteringProgress()}
-            </section>
-          </div>
 
-          <aside className="space-y-6 mt-4 xl:mt-0">
-            {lesson && <FeedbackWidget token={token} lessonId={lesson.id}/>}
-                
-          </aside>
+              <div>
+                <p className="text-sm text-gray-500">Progress</p>
+                <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
+                <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
+              </div>
+
+              <p className="text-sm text-gray-500">
+                Quiz:{" "}
+                {selectedLesson?.quizAvailable ? (
+                  selectedUser?.score > 0 ? (
+                    <span className="text-green-600 font-semibold">
+                      Finished ({selectedUser.score} pts)
+                    </span>
+                  ) : (
+                    <span className="text-red-500">Not yet</span>
+                  )
+                ) : (
+                  <span className="text-gray-400">Quiz not available for this learning content</span>
+                )}
+              </p>
+
+         
+              {/* Feedback Section */}
+             {/* Feedback Section */}
+            {selectedUser?.percent === 100 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Feedback for {selectedUser.userEmail}
+                </label>
+                {selectedUser.feedback ? (
+                  // Show feedback if already given
+                  <div className="p-4 bg-gray-100 border rounded-lg">
+                    <p className="text-sm text-gray-700">{selectedUser.feedback}</p>
+                  </div>
+                ) : (
+                  // Show feedback input form if feedback is not given
+                  <>
+                    <textarea
+                      value={feedback}
+                      onChange={(e) => setFeedback(e.target.value)}
+                      className="h-48 w-full border rounded-lg px-3 py-2"
+                      placeholder="Write your feedback here..."
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!feedback.trim()) {
+                          alert("❌ Feedback cannot be empty.");
+                          return;
+                        }
+
+                        try {
+                          // Submit feedback
+                          await axios.post(
+                            `/api/user/feedback`,
+                            {
+                              userEmail: selectedUser.userEmail,
+                              lessonId: selectedUser.lessonId,
+                              feedback,
+                              adminEmail,
+                            },
+                            { headers: authHeader }
+                          );
+
+                          // Send notification to the user
+                          await sendLessonNotification({
+                            token,
+                            message: `You have received feedback for lesson ${selectedUser.lessonId}.`,
+                            userIds: [selectedUser.userEmail],
+                            target: "USER",
+                          });
+
+                          alert("✅ Feedback sent successfully!");
+                          setFeedback(""); // Clear feedback input
+                          setSelectedUser((prev) =>
+                            prev ? { ...prev, feedback } : prev
+                          ); // Update feedback in the UI
+                        } catch (err) {
+                          console.error("❌ Failed to send feedback:", err);
+                          alert("Failed to send feedback.");
+                        }
+                      }}
+                      className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      Send Feedback
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            </div>
+          ) : (
+            <p className="text-gray-400">← Select a user to see details</p>
+          )}
+        </section>
         </div>
       </main>
 
-      {showQuiz && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-xl shadow-xl w-[90%] max-w-md text-center">
-            {hasTakenQuiz ? (
-              <>
-                <h2 className="text-xl font-bold text-red-600 mb-4">
-                  ❌ Quiz unavailable
-                </h2>
-                <p className="text-gray-700 mb-6">
-                  {quizPassed
-                    ? "You have already passed the quiz."
-                    : "You have reached the maximum number of attempts."}
-                </p>
-                <button
-                  onClick={() => {
-                    setShowQuiz(false);
-                    navigate("/lesson");
-                  }}
-                  className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-lg"
-                >
-                  Back to Lessons
-                </button>
-              </>
-            ) : (
-              <>
-                <h2 className="text-xl font-bold mb-4">
-                  🎉 Lesson Completed!
-                </h2>
-                <p className="text-gray-700 mb-2">
-                  Take a quiz to test your knowledge.
-                </p>
-                <button
-                  onClick={() => {
-                    setShowQuiz(false);
-                    navigate(`/quiz/${lesson.id}`);
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg"
-                >
-                  Start Quiz
-                </button>
-              </>
-            )}
-          </div>
-        </div>
+      {/* Edit Lesson Modal */}
+      {showEditModal && selectedLesson && (
+        <EditLessonModal
+          open={showEditModal}
+          initial={selectedLesson}
+          onClose={() => setShowEditModal(false)}
+          onSave={handleSaveLesson}
+        />
       )}
     </div>
   );
 };
 
-export default LessonDetailPage;
+export default AdminTaskManagementPage;
