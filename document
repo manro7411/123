@@ -21,19 +21,20 @@ const LessonFeedbackWidget = ({
 }) => {
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [newFeedback, setNewFeedback] = useState<string>("");
-  const [newRating,setNewRating] = useState<number>(0);
+  const [newRating, setNewRating] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(false);
 
-  const { email , avatarUrl} = useUserProfile(token);
+  const { email, avatarUrl } = useUserProfile(token);
+
   useEffect(() => {
     if (!lessonId || !token) return;
+
     const fetchFeedbacks = async () => {
       setLoading(true);
       try {
         const res = await axios.get(`/api/feedback/lesson/${lessonId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-
         setFeedbacks(res.data);
       } catch (err) {
         console.error("❌ Failed to fetch feedbacks:", err);
@@ -44,6 +45,7 @@ const LessonFeedbackWidget = ({
 
     fetchFeedbacks();
   }, [lessonId, token]);
+
   const handleSubmitFeedback = async () => {
     if (!newFeedback.trim()) {
       alert("❌ Feedback cannot be empty.");
@@ -56,77 +58,95 @@ const LessonFeedbackWidget = ({
         feedback: newFeedback,
         authorAvatarUrl: avatarUrl,
         ratingScore: newRating,
-        learningContent: {id: lessonId}
+        learningContent: { id: lessonId },
       };
-      console.log(payload)
+
       const res = await axios.post(`/api/feedback`, payload, {
         headers: { Authorization: `Bearer ${token}` },
       });
+
       alert("✅ Feedback submitted successfully!");
-      setFeedbacks((prev) => [...prev, res.data]); // Add new feedback to the list
-      setNewFeedback(""); // Clear the input field
-      setNewRating(0); // Clear the rating
+      setFeedbacks((prev) => [...prev, res.data]); // append new feedback
+      setNewFeedback(""); // reset input
+      setNewRating(0); // reset rating
     } catch (err) {
       console.error("❌ Failed to submit feedback:", err);
       alert("Failed to submit feedback.");
     }
   };
+
   const extractFileName = (url: string) => {
-  return url.split("/").pop();
-};
+    return url.split("/").pop();
+  };
 
   return (
     <div className="bg-white p-4 rounded-xl shadow">
       <h3 className="text-sm font-semibold mb-4 text-gray-700">Feedback</h3>
+
       {loading ? (
         <p className="text-gray-500">Loading feedback...</p>
       ) : feedbacks.length === 0 ? (
         <p className="text-gray-500">No feedback available for this lesson.</p>
       ) : (
-          feedbacks.map((feedback) => (
-          <div key={feedback.id} className="mb-4 flex items-start space-x-4">
+        feedbacks.map((feedback, idx) => (
+          <div
+            key={feedback.id || idx}
+            className="mb-4 flex items-start space-x-4"
+          >
             <img
-              src={`/api/profile/avatars/${extractFileName(feedback.authorAvatarUrl)}`}
+              src={`/api/profile/avatars/${extractFileName(
+                feedback.authorAvatarUrl
+              )}`}
               alt="Author Avatar"
               className="w-10 h-10 rounded-full object-cover border"
               onError={(e) => (e.currentTarget.style.display = "none")}
             />
             <div className="flex flex-col">
               <p className="text-sm text-gray-800">{feedback.feedback}</p>
-              <p className="text-xs text-gray-500 mt-1">By: {feedback.userEmail}</p>
+              <p className="text-xs text-gray-500 mt-1">
+                By: {feedback.userEmail}
+              </p>
               <div className="flex items-center mt-2 space-x-2">
                 <div className="flex">
-                 {[1, 2, 3, 4, 5].map((star) => (
-                  <span
-                     key={`${feedback.id}-${star}`}
-                    className={`w-5 h-5 ${
-                      feedback.rating >= star ? "text-yellow-400" : "text-gray-300"
-                    }`}
-                  >
-                    {feedback.rating >= star ? "⭐" : "☆"}
-                  </span>
-                ))}
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <span
+                      key={`${feedback.id || idx}-star-${star}`}
+                      className={`w-5 h-5 ${
+                        feedback.rating >= star
+                          ? "text-yellow-400"
+                          : "text-gray-300"
+                      }`}
+                    >
+                      {feedback.rating >= star ? "⭐" : "☆"}
+                    </span>
+                  ))}
                 </div>
-                <span className="text-sm text-gray-600">({feedback.rating}/5)</span>
+                <span className="text-sm text-gray-600">
+                  ({feedback.rating}/5)
+                </span>
               </div>
             </div>
           </div>
-        )
-        ))} 
-      
+        ))
+      )}
+
       <textarea
         value={newFeedback}
         onChange={(e) => setNewFeedback(e.target.value)}
         className="h-32 w-full border rounded-lg px-3 py-2 mt-4"
         placeholder="Write your feedback here..."
       />
-       <div className="mt-4">
-        <label className="text-sm font-medium text-gray-700">Rate this lesson:</label>
+
+      <div className="mt-4">
+        <label className="text-sm font-medium text-gray-700">
+          Rate this lesson:
+        </label>
         <div className="flex space-x-2 mt-2">
           {[1, 2, 3, 4, 5].map((star) => (
             <button
-              key={star}
+              key={`new-rating-star-${star}`}
               onClick={() => setNewRating(star)}
+              type="button"
               className="w-8 h-8 rounded-full flex items-center justify-center text-xl"
             >
               {newRating >= star ? "⭐" : "☆"}
@@ -134,6 +154,7 @@ const LessonFeedbackWidget = ({
           ))}
         </div>
       </div>
+
       <button
         onClick={handleSubmitFeedback}
         className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -145,88 +166,3 @@ const LessonFeedbackWidget = ({
 };
 
 export default LessonFeedbackWidget;
----
-react-dom-client.development.js:24030 
- Each child in a list should have a unique "key" prop.
-
-Check the render method of `div`. It was passed a child from LessonFeedbackWidget. See https://react.dev/link/warning-keys for more information.
-(anonymous)	@	react-dom-client.development.js:24030
-runWithFiberInDEV	@	react-dom-client.development.js:1519
-warnForMissingKey	@	react-dom-client.development.js:24029
-warnOnInvalidKey	@	react-dom-client.development.js:7550
-reconcileChildrenArray	@	react-dom-client.development.js:7631
-reconcileChildFibersImpl	@	react-dom-client.development.js:7952
-(anonymous)	@	react-dom-client.development.js:8057
-reconcileChildren	@	react-dom-client.development.js:8621
-beginWork	@	react-dom-client.development.js:10870
-runWithFiberInDEV	@	react-dom-client.development.js:1519
-performUnitOfWork	@	react-dom-client.development.js:15132
-workLoopSync	@	react-dom-client.development.js:14956
-renderRootSync	@	react-dom-client.development.js:14936
-performWorkOnRoot	@	react-dom-client.development.js:14419
-performWorkOnRootViaSchedulerTask	@	react-dom-client.development.js:16216
-performWorkUntilDeadline	@	scheduler.development.js:45
-<div>		
-exports.jsxDEV	@	react-jsx-dev-runtime.development.js:346
-(anonymous)	@	LearningFeedbackFormWidget.tsx:87
-LessonFeedbackWidget	@	LearningFeedbackFormWidget.tsx:86
-react_stack_bottom_frame	@	react-dom-client.development.js:23863
-renderWithHooksAgain	@	react-dom-client.development.js:5629
-renderWithHooks	@	react-dom-client.development.js:5541
-updateFunctionComponent	@	react-dom-client.development.js:8897
-beginWork	@	react-dom-client.development.js:10522
-runWithFiberInDEV	@	react-dom-client.development.js:1519
-performUnitOfWork	@	react-dom-client.development.js:15132
-workLoopSync	@	react-dom-client.development.js:14956
-renderRootSync	@	react-dom-client.development.js:14936
-performWorkOnRoot	@	react-dom-client.development.js:14419
-performWorkOnRootViaSchedulerTask	@	react-dom-client.development.js:16216
-performWorkUntilDeadline	@	scheduler.development.js:45
-<LessonFeedbackWidget>		
-exports.jsxDEV	@	react-jsx-dev-runtime.development.js:346
-LessonDetailPage	@	LessonDetailPage.tsx:443
-react_stack_bottom_frame	@	react-dom-client.development.js:23863
-renderWithHooksAgain	@	react-dom-client.development.js:5629
-renderWithHooks	@	react-dom-client.development.js:5541
-updateFunctionComponent	@	react-dom-client.development.js:8897
-beginWork	@	react-dom-client.development.js:10522
-runWithFiberInDEV	@	react-dom-client.development.js:1519
-performUnitOfWork	@	react-dom-client.development.js:15132
-workLoopSync	@	react-dom-client.development.js:14956
-renderRootSync	@	react-dom-client.development.js:14936
-performWorkOnRoot	@	react-dom-client.development.js:14419
-performWorkOnRootViaSchedulerTask	@	react-dom-client.development.js:16216
-performWorkUntilDeadline	@	scheduler.development.js:45
-<...>		
-exports.jsxDEV	@	react-jsx-dev-runtime.development.js:346
-UserRoutes	@	UserRoutes.tsx:27
-react_stack_bottom_frame	@	react-dom-client.development.js:23863
-renderWithHooksAgain	@	react-dom-client.development.js:5629
-renderWithHooks	@	react-dom-client.development.js:5541
-updateFunctionComponent	@	react-dom-client.development.js:8897
-beginWork	@	react-dom-client.development.js:10471
-runWithFiberInDEV	@	react-dom-client.development.js:1519
-performUnitOfWork	@	react-dom-client.development.js:15132
-workLoopConcurrentByScheduler	@	react-dom-client.development.js:15126
-renderRootConcurrent	@	react-dom-client.development.js:15101
-performWorkOnRoot	@	react-dom-client.development.js:14418
-performWorkOnRootViaSchedulerTask	@	react-dom-client.development.js:16216
-performWorkUntilDeadline	@	scheduler.development.js:45
-<...>		
-exports.jsxDEV	@	react-jsx-dev-runtime.development.js:346
-App	@	App.tsx:23
-react_stack_bottom_frame	@	react-dom-client.development.js:23863
-renderWithHooksAgain	@	react-dom-client.development.js:5629
-renderWithHooks	@	react-dom-client.development.js:5541
-updateFunctionComponent	@	react-dom-client.development.js:8897
-beginWork	@	react-dom-client.development.js:10522
-runWithFiberInDEV	@	react-dom-client.development.js:1519
-performUnitOfWork	@	react-dom-client.development.js:15132
-workLoopSync	@	react-dom-client.development.js:14956
-renderRootSync	@	react-dom-client.development.js:14936
-performWorkOnRoot	@	react-dom-client.development.js:14419
-performWorkOnRootViaSchedulerTask	@	react-dom-client.development.js:16216
-performWorkUntilDeadline	@	scheduler.development.js:45
-<App>		
-exports.jsxDEV	@	react-jsx-dev-runtime.development.js:346
-(anonymous)
