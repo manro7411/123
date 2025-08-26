@@ -1,18 +1,29 @@
-@POST
-@Transactional
-public Response createFeedback(UserFeedbackEntity feedback) {
-    if (feedback.getLearningContent() == null || feedback.getLearningContent().getId() == null) {
-        return Response.status(Response.Status.BAD_REQUEST).entity("Learning content ID is required").build();
-    }
-
-    LearningContent learningContent = em.find(LearningContent.class, feedback.getLearningContent().getId());
-    if (learningContent == null) {
-        return Response.status(Response.Status.BAD_REQUEST).entity("Invalid learning content ID").build();
-    }
-
-    feedback.setLearningContent(learningContent);
-    feedback.setCreatedAt(LocalDateTime.now());
-    em.persist(feedback);
-
-    return Response.status(Response.Status.CREATED).entity(feedback).build();
-}
+  feedbacks.map((feedback) => (
+          <div key={feedback.id} className="mb-4 flex items-start space-x-4">
+            <img
+              src={`/api/profile/avatars/${extractFileName(feedback.authorAvatarUrl)}`}
+              alt="Author Avatar"
+              className="w-10 h-10 rounded-full object-cover border"
+              onError={(e) => (e.currentTarget.style.display = "none")}
+            />
+            <div className="flex flex-col">
+              <p className="text-sm text-gray-800">{feedback.feedback}</p>
+              <p className="text-xs text-gray-500 mt-1">By: {feedback.userEmail}</p>
+              <div className="flex items-center mt-2 space-x-2">
+                <div className="flex">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <span
+                      key={star}
+                      className={`w-5 h-5 ${
+                        feedback.rating >= star ? "text-yellow-400" : "text-gray-300"
+                      }`}
+                    >
+                      ⭐
+                    </span>
+                  ))}
+                </div>
+                <span className="text-sm text-gray-600">({feedback.rating}/5)</span>
+              </div>
+            </div>
+          </div>
+        )
