@@ -1,306 +1,115 @@
-import { useParams, useNavigate, Navigate } from "react-router-dom";
-import { useEffect, useRef, useState, useContext } from "react";
-import axios from "axios";
-import Sidebar from "../../widgets/SidebarWidget";
-import { AuthContext } from "../../Authentication/AuthContext";
-import { Document, Page, pdfjs } from "react-pdf";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
+import {
+  Home, BookOpen, ClipboardList, Users, Star, Gamepad2,
+  Settings, LogOut, Menu, X
+} from "lucide-react";
+import BBL from "../assets/BBL.BK_BIG-4e142047.png"
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useContext, useState } from "react";
+import { AuthContext } from "../Authentication/AuthContext";
 
-import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+const menuItems = [
+  { name: "Dashboard", icon: <Home size={20} />, path: "/dashboard" },
+  { name: "Lesson",    icon: <BookOpen size={20} />, path: "/lesson" },
+  { name: "Task",      icon: <ClipboardList size={20} />, path: "/task" },
+  { name: "Community", icon: <Users size={20} />, path: "/forum" },
+  { name: "Point",     icon: <Star size={20} />, path: "/point" },
+  { name: "Game",      icon: <Gamepad2 size={20} />, path: "/minigame" },
+  { name: "Profile",   icon: <Settings size={20} />, path: "/settings" },
+];
 
-import "./lesson.css";
-import LessonFeedbackWidget from "../../widgets/LearningFeedbackFormWidget";
+export default function SidebarWidget() {
+  const location           = useLocation();
+  const navigate           = useNavigate();
+  const { logout }         = useContext(AuthContext);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
 
-interface Lesson {
-  id: string;
-  title: string;
-  description: string;
-  category: string;
-  contentType: "video" | "document";
-  thumbnailUrl?: string;
-  videoUrl?: string;
-  documentUrl?: string;
-  authorName?: string;
-  authorEmail?: string;
-  authorAvatarUrl?: string;
-  quizAttemptLimit?: number;
-}
-
-interface Progress {
-  lessonId: string;
-  percent: number;
-  score: number;
-  attempts: number;
-  maxAttempts: number;
-  lastTimestamp: number;
-  thumbnailUrl: string;
-  screenTime: number;
-}
-
-const LessonDetailPage = () => {
-  const { id } = useParams<{ id: string }>();
-  const { token } = useContext(AuthContext);
-  const navigate = useNavigate();
-
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const lastTimestamp = useRef<number>(0);
-  const lastSent = useRef<number>(0);
-
-  const [lesson, setLesson] = useState<Lesson | null>(null);
-  const [progressPercent, setProgressPercent] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [showQuiz, setShowQuiz] = useState(false);
-  const [hasTakenQuiz, setHasTakenQuiz] = useState(false);
-  const [attempts, setAttempts] = useState(0);
-  const [maxAttempts, setMaxAttempts] = useState(1);
-  const [quizPassed, setQuizPassed] = useState(false);
-  const [lastTimestampFromServer, setLastTimestampFromServer] = useState<number | null>(null);
-
-  const [currentPage, setCurrentPage] = useState(0);
-  const [numPages, setNumPages] = useState(0);
-
-  const [documentScreenTime, setDocumentScreenTime] = useState(0);
-  const [videoScreenTime, setVideoScreenTime] = useState(0);
-
-  const [, setTimeSpentOnCurrentPage] = useState(0);
-  const [canSwitchPage, setCanSwitchPage] = useState(false);
-
-  // โหลดบทเรียน
-  useEffect(() => {
-    axios
-      .get<Lesson>(`/api/learning/${id}`)
-      .then((res) => setLesson(res.data))
-      .catch(() => alert("Lesson not found"))
-      .finally(() => setLoading(false));
-  }, [id]);
-
-  // โหลด progress เดิม
-  useEffect(() => {
-    if (!lesson || !token) return;
-
-    axios
-      .get<Progress[]>(`/api/user/progress`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      .then((res) => {
-        const found = res.data.find((p) => p.lessonId === lesson.id);
-        if (!found) return;
-
-        setAttempts(found.attempts);
-        setMaxAttempts(found.maxAttempts);
-        setQuizPassed(found.score > 0);
-        setHasTakenQuiz(found.attempts >= found.maxAttempts);
-        setProgressPercent(found.percent);
-        setDocumentScreenTime(found.screenTime || 0);
-        setVideoScreenTime(found.screenTime || 0);
-
-        if (found.lastTimestamp > 0) {
-          setLastTimestampFromServer(found.lastTimestamp);
-          lastTimestamp.current = found.lastTimestamp;
-        }
-      })
-      .catch(() => console.error("❌ Failed to fetch progress"));
-  }, [lesson, token]);
-
-  // ตั้งค่าเริ่ม video
-  const handleLoadedMetadata = () => {
-    const video = videoRef.current;
-    if (
-      video &&
-      lastTimestampFromServer !== null &&
-      lastTimestampFromServer > 0 &&
-      lastTimestampFromServer < video.duration
-    ) {
-      video.currentTime = lastTimestampFromServer;
-    }
-  };
-
-  // เก็บเวลาจาก video
-  const handleTimeUpdate = () => {
-    const video = videoRef.current;
-    if (!video || !video.duration) return;
-
-    const currentTime = video.currentTime;
-
-    // 🚫 ป้องกัน skip
-    if (currentTime > lastTimestamp.current + 2) {
-      alert("⛔ Skipping is not allowed!");
-      video.currentTime = lastTimestamp.current;
-      return;
-    }
-
-    // อัปเดต timestamp ล่าสุด
-    lastTimestamp.current = currentTime;
-
-    // ✅ เก็บเวลาเรียนจริง
-    setVideoScreenTime((prev) => prev + 1);
-
-    // อัปเดต progress %
-    const percent = (currentTime / video.duration) * 100;
-    if (percent > progressPercent) {
-      setProgressPercent(percent);
-    }
-  };
-
-  // ส่ง progress ไป backend
-  useEffect(() => {
-    if (!lesson || !token) return;
-
-    const timer = setInterval(() => {
-      if (lesson.contentType === "video") {
-        const video = videoRef.current;
-        const currentPercent = Math.floor(progressPercent);
-        const currentTime = Math.floor(video?.currentTime || 0);
-
-        if (
-          video &&
-          progressPercent > 0 &&
-          progressPercent <= 100 &&
-          currentPercent !== lastSent.current
-        ) {
-          lastSent.current = currentPercent;
-
-          axios
-            .put(
-              `/api/user/progress/${lesson.id}`,
-              {
-                percent: currentPercent,
-                lastTimestamp: currentTime,
-                thumbnailUrl: lesson.thumbnailUrl || "",
-                screenTime: videoScreenTime, // ✅ ส่งเวลาที่เก็บจริง
-                contentType: lesson.contentType,
-              },
-              { headers: { Authorization: `Bearer ${token}` } }
-            )
-            .catch((err) => console.error("❌ PUT failed:", err));
-        }
-      }
-    }, 5000); // ทุก ๆ 5 วิ
-
-    return () => clearInterval(timer);
-  }, [lesson, token, progressPercent, videoScreenTime]);
-
-  // Document pagination timer
-  useEffect(() => {
-    let timer: NodeJS.Timeout | null = null;
-
-    if (lesson?.contentType === "document") {
-      setCanSwitchPage(false);
-      setTimeSpentOnCurrentPage(0);
-
-      timer = setInterval(() => {
-        setTimeSpentOnCurrentPage((prev) => {
-          const updatedTime = prev + 1;
-          if (updatedTime >= 20) {
-            setCanSwitchPage(true);
-            clearInterval(timer!);
-          }
-          return updatedTime;
-        });
-      }, 1000);
-    }
-
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [currentPage, lesson]);
-
-  // เปิด quiz เมื่อ progress ครบ
-  useEffect(() => {
-    if (progressPercent >= 100 && !showQuiz && lesson?.quizAttemptLimit) {
-      setShowQuiz(true);
-    }
-  }, [progressPercent, showQuiz, lesson]);
-
-  if (loading || !lesson) {
-    return <div className="p-6 text-gray-400">⏳ Loading lesson…</div>;
-  }
-
-  if (!token) return <Navigate to="/" replace />;
-
-  const filename = lesson.videoUrl?.split("/").pop() || "";
-  const documentfile = lesson.documentUrl?.split("/").pop() || "";
-
-  const renderContent = () => {
-    if (lesson.contentType === "video") {
-      if (lastTimestampFromServer === null) {
-        return <div className="p-6 text-gray-400">⏳ Loading video…</div>;
-      }
-      return (
-        <video
-          ref={videoRef}
-          controls
-          onLoadedMetadata={handleLoadedMetadata}
-          onTimeUpdate={handleTimeUpdate}
-          poster={lesson.thumbnailUrl}
-          className="w-full h-auto bg-black noscrub"
-          controlsList="noplaybackrate nodownload noremoteplayback"
-          disablePictureInPicture
-          src={`/api/learning/video/v2/${filename}`}
-        />
-      );
-    }
-    if (lesson.contentType === "document") {
-      return (
-        <div className="bg-white p-4 rounded shadow w-full">
-          <Document
-            file={`/api/learning/document/${documentfile}`}
-            onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-          >
-            <Page pageNumber={currentPage + 1} />
-          </Document>
-          <div className="flex justify-between items-center mt-4">
-            <button
-              onClick={() => setCurrentPage((p) => Math.max(p - 1, 0))}
-              disabled={currentPage <= 0 || !canSwitchPage}
-              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-            >
-              ◀️ Previous
-            </button>
-            <p className="text-sm text-gray-600">
-              Page {currentPage + 1} of {numPages}
-            </p>
-            <button
-              onClick={() => setCurrentPage((p) => Math.min(p + 1, numPages - 1))}
-              disabled={currentPage >= numPages - 1 || !canSwitchPage}
-              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-            >
-              Next ▶️
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return null;
+  const handleLogout = () => {
+    logout();
+    navigate("/");
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
-      <main className="flex-1 p-8">
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-          <div className="xl:col-span-2 space-y-8">
-            <div className="w-full rounded-xl overflow-hidden shadow">
-              {renderContent()}
-            </div>
+    <>
+      {/* 🔹 Mobile Navbar with Hamburger */}
+      <div className="md:hidden flex justify-between items-center p-4 bg-white shadow">
+        <img
+          src={BBL}
+          alt="Bangkok Bank Logo"
+          className="w-24 cursor-pointer"
+          onClick={() => navigate("/dashboard")}
+        />
+        <button onClick={() => setIsOpen(!isOpen)}>
+          {isOpen ? <X size={28} /> : <Menu size={28} />}
+        </button>
+      </div>
 
-            <section className="bg-white rounded-xl shadow p-6 space-y-4">
-              <h1 className="text-2xl font-bold text-gray-800">{lesson.title}</h1>
-              <span className="text-xs font-semibold uppercase text-purple-600">
-                {lesson.category}
-              </span>
-              <p className="text-gray-700">{lesson.description}</p>
-            </section>
-          </div>
-          <aside className="space-y-6 mt-4 xl:mt-0">
-            {id && <LessonFeedbackWidget token={token} lessonId={id} />}
-          </aside>
+      {/* 🔹 Sidebar (desktop: always visible, mobile: toggle with hamburger) */}
+      <aside
+        className={`fixed md:static top-0 left-0 h-full md:h-auto w-64 bg-white shadow-md p-6 
+          rounded-r-xl md:rounded-xl flex flex-col justify-between transform transition-transform duration-300 z-50
+          ${isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+      >
+        <div>
+          {/* Desktop logo (hidden on mobile, shown only md+) */}
+          <img
+            src={BBL}
+            alt="Bangkok Bank Logo"
+            className="hidden md:block w-22 mb-10 cursor-pointer max-w-[90%]"
+            onClick={() => navigate("/dashboard")}
+          />
+          <nav className="space-y-4 text-sm">
+            {menuItems.map(({ name, icon, path }) => (
+              <Link
+                key={path}
+                to={path}
+                onClick={() => setIsOpen(false)} // close menu on mobile after click
+                className={`flex items-center space-x-3 transition
+                  ${location.pathname === path
+                    ? "text-blue-600 font-semibold"
+                    : "text-black hover:text-blue-600"}`}
+              >
+                {icon}
+                <span>{name}</span>
+              </Link>
+            ))}
+          </nav>
         </div>
-      </main>
-    </div>
-  );
-};
 
-export default LessonDetailPage;
+        <div className="text-sm space-y-2 mt-6">
+          <button
+            onClick={() => setShowConfirm(true)}
+            className="flex items-center space-x-2 text-red-500 hover:underline"
+          >
+            <LogOut size={18} />
+            <span>Logout</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* 🔹 Logout Confirm Modal */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white p-6 rounded-xl shadow-lg max-w-sm w-full text-center space-y-4">
+            <h2 className="text-lg font-semibold text-gray-800">Are you sure?</h2>
+            <p className="text-sm text-gray-500">You will be logged out of the system.</p>
+            <div className="flex justify-center space-x-4">
+              <button
+                onClick={() => setShowConfirm(false)}
+                className="px-4 py-2 bg-gray-200 rounded-full hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 bg-red-500 text-white rounded-full hover:bg-red-600"
+              >
+                Logout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
