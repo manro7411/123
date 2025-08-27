@@ -1,496 +1,342 @@
-import { useParams, useNavigate, Navigate } from "react-router-dom";
-import { useEffect, useRef, useState, useContext } from "react";
-import axios from "axios";
-import Sidebar from "../../widgets/SidebarWidget";
-import { AuthContext } from "../../Authentication/AuthContext";
-import { Document, Page, pdfjs } from "react-pdf";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
-import LessonFeedbackWidget from "../../widgets/LearningFeedbackFormWidget";
-import "./lesson.css";
+import { useContext, useEffect, useState } from "react";
+import type { Post, Comment } from "./KnowledgeForumLayout.tsx";
+import { AuthContext } from "../../Authentication/AuthContext.tsx";
+import {
+  FaCommentDots,
+  FaEye,
+  FaHeart,
+  FaRegHeart,
+  FaFilePdf,
+  FaDownload,
+  FaExternalLinkAlt,
+} from "react-icons/fa";
 
-pdfjs.GlobalWorkerOptions.workerSrc = '/pdf-worker/pdf.worker.min.mjs';
-interface Lesson {
-  id: string;
-  title: string;
-  description: string;
-  category: string;
-  contentType: "video" | "document";
-  thumbnailUrl?: string;
-  videoUrl?: string;
-  documentUrl?: string;
-  authorName?: string;
-  authorEmail?: string;
-  authorAvatarUrl?: string;
-  quizAttemptLimit?: number;
-  quizAvailable?: boolean;
-}
+type Props = {
+  post: Post;
+};
 
-interface Progress {
-  lessonId: string;
-  percent: number;
-  score: number;
-  attempts: number;
-  maxAttempts: number;
-  lastTimestamp: number;
-  thumbnailUrl: string;
-  screenTime: number
-}
+const PostCardWidget = ({ post }: Props) => {
+  const { token, user } = useContext(AuthContext);
+  const [showComments, setShowComments] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [comments, setComments] = useState<Comment[]>(post.comments);
 
-const LessonDetailPage = () => {
-  const { id } = useParams<{ id: string }>();
-  const { token } = useContext(AuthContext);
-  const navigate = useNavigate();
+  const [likes, setLikes] = useState(post.likes);
+  const [liked, setLiked] = useState(post.likedByUser ?? false);
+  const [liking, setLiking] = useState(false);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const lastTimestamp = useRef<number>(0);
-  const lastSent = useRef<number>(0);
+  const [userProfile, setUserProfile] = useState<{
+    name: string;
+    email: string;
+    avatarUrl?: string;
+  } | null>(null);
 
-  const [lesson, setLesson] = useState<Lesson | null>(null);
-  const [progressPercent, setProgressPercent] = useState(0);
-  const [docprogress,setDocProgress] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [showQuiz, setShowQuiz] = useState(false);
-  const [hasTakenQuiz, setHasTakenQuiz] = useState(false);
-  const [attempts, setAttempts] = useState(0);
-  const [maxAttempts, setMaxAttempts] = useState(1);
-  const [quizPassed, setQuizPassed] = useState(false);
-  const [lastTimestampFromServer, setLastTimestampFromServer] = useState<number | null>(null);
-
-  const [currentPage, setCurrentPage] = useState(0);
-  const [numPages, setNumPages] = useState(0);
-
-  const [documentScreenTime,setDocumentScreenTime] = useState(0)
-  const [videoScreenTime,setVideoScreenTime] = useState(0)
-
-  const [, setTimeSpentOnCurrentPage] = useState(0);
-  const [canSwitchPage, setCanSwitchPage] = useState(false);
+  const userEmail = user?.email || user?.upn;
 
   useEffect(() => {
-    axios
-      .get<Lesson>(`/api/learning/${id}`)
-      .then((res) => setLesson(res.data))
-      .catch(() => alert("Lesson not found"))
-      .finally(() => setLoading(false));
-  }, [id]);
+    const fetchUserProfile = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch(`/api/profile`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error("Failed to fetch user profile");
+        const data = await res.json();
+        setUserProfile(data);
+      } catch (err) {
+        console.error("❌ Failed to fetch user profile:", err);
+      }
+    };
+    fetchUserProfile();
+  }, [token]);
 
-  useEffect(() => {
-    if (!lesson || !token) return;
-
-    axios
-      .get<Progress[]>(`/api/user/progress`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      .then((res) => {
-        const found = res.data.find((p) => p.lessonId === lesson.id);
-        if (!found) {
-          setLastTimestampFromServer(0);
-          setDocProgress(0); // Set progress to 0 if no progress is found
-          setDocumentScreenTime(0); 
-          return;
-        }
-
-        // console.log(found.percent)
-        // console.log(found.screenTime || 0)
-        // console.log("found:", found)
-
-        setAttempts(found.attempts);
-        setMaxAttempts(found.maxAttempts);
-        setQuizPassed(found.score > 0);
-        setHasTakenQuiz(found.attempts >= found.maxAttempts);
-        setProgressPercent(found.percent);
-        setDocProgress(found.percent); // Set document progress
-        setDocumentScreenTime(found.screenTime || 0); // Set document screen time
-        setDocumentScreenTime(found.screenTime || 0)
-
-
-        if (
-          typeof found.lastTimestamp === "number" &&
-          found.lastTimestamp > 0
-        ) {
-          setLastTimestampFromServer(found.lastTimestamp);
-          lastTimestamp.current = found.lastTimestamp;
-        } else {
-          setLastTimestampFromServer(0);
-        }
-      })
-      .catch(() => console.error("❌ Failed to fetch progress"));
-  }, [lesson, token]);
-
-  const handleLoadedMetadata = () => {
-    const video = videoRef.current;
-    if (
-      video &&
-      lastTimestampFromServer !== null &&
-      lastTimestampFromServer > 0 &&
-      lastTimestampFromServer < video.duration
-    ) {
-      video.currentTime = lastTimestampFromServer;
-      setTimeout(() => {
-        video.currentTime = lastTimestampFromServer;
-      }, 300);
+  const fetchComments = async () => {
+    try {
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("Failed to fetch comments");
+      const data = await res.json();
+      setComments(data);
+    } catch (err) {
+      console.error("❌ Failed to load comments:", err);
     }
   };
 
-  const handleTimeUpdate = () => {
-    const video = videoRef.current;
-    if (!video || !video.duration) return;
+  const handleCommentSubmit = async () => {
+    const trimmed = commentText.trim();
+    if (!trimmed) return;
 
-    const currentTime = video.currentTime;
+    try {
+      const payload = {
+        message: trimmed,
+        authorName: user?.name || "Anonymous",
+        authorEmail: userEmail || "unknown@example.com",
+        avatarUrl: userProfile?.avatarUrl || "",
+      };
 
-    if (currentTime > lastTimestamp.current+2) {
-      alert("⛔ Skipping is not allowed! 😄")
-      video.currentTime = lastTimestamp.current; 
-      return;
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error("Failed to submit comment");
+
+      setCommentText("");
+      await fetchComments();
+    } catch (err) {
+      console.error("❌ Failed to submit comment:", err);
     }
+  };
 
-    if (Math.abs(currentTime - lastTimestamp.current) > 1) {
-      lastTimestamp.current = currentTime;
+  const handleToggleComments = async () => {
+    const willShow = !showComments;
+    setShowComments(willShow);
+    if (willShow && comments.length === 0) {
+      await fetchComments();
     }
+  };
 
-    const percent = (currentTime / video.duration) * 100;
-    const newTime = Math.floor(percent);
-    // console.log("New Time Updated",newTime)
-    if (newTime > progressPercent) {
-      setProgressPercent(newTime);
+  const handleToggleLike = async () => {
+    if (!userEmail || liking) return;
+
+    setLiking(true);
+    const endpoint = liked ? "unlike" : "like";
+    const nextLiked = !liked;
+    const optimisticLikes = liked ? likes - 1 : likes + 1;
+
+    setLiked(nextLiked);
+    setLikes(optimisticLikes);
+
+    try {
+      const res = await fetch(`/api/posts/${post.id}/${endpoint}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) throw new Error("Failed to toggle like");
+
+      const data = await res.json();
+      if (typeof data.likes === "number") setLikes(data.likes);
+      if (typeof data.likedByUser === "boolean") setLiked(data.likedByUser ?? false);
+    } catch (err) {
+      console.error("❌ Failed to toggle like:", err);
+      setLiked(!nextLiked);
+      setLikes(likes);
+    } finally {
+      setLiking(false);
     }
-  
-    setVideoScreenTime((prev) => {
-      const newTime = prev + 1;
-      // console.log(`🎥 Video screen time: ${newTime} seconds`);
-      return newTime;
+  };
+
+  const linkify = (text: string): string => {
+    const urlRegex = /(\bhttps?:\/\/[^\s]+)/g;
+    return text.replace(urlRegex, (url) => {
+      const safeUrl = url.replace(/"/g, "&quot;");
+      return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">${url}</a>`;
     });
-
   };
 
-  useEffect(() => {
-  if (!lesson || !token) return;
-
-  const timer = setInterval(() => {
-    const maxScreenTime = numPages * 20;
-
-    if (lesson.contentType === "video") {
-      const video = videoRef.current;
-      const currentPercent = Math.floor(progressPercent);
-      const currentTime = Math.floor(video?.currentTime || 0);
-
-      if (
-        video &&
-        progressPercent > 0 &&
-        progressPercent <= 100 &&
-        currentPercent !== lastSent.current &&
-        currentTime > 0 &&
-        (lastTimestampFromServer === null ||
-          currentTime >= lastTimestampFromServer)
-      ) {
-        lastSent.current = currentPercent;
-        lastTimestamp.current = currentTime;
-
-        axios
-          .put(
-            `/api/user/progress/${lesson.id}`,
-            {
-              percent: currentPercent,
-              lastTimestamp: Math.floor(video.currentTime),
-              thumbnailUrl: lesson.thumbnailUrl || "",
-              screenTime: videoScreenTime,
-              contentType: lesson.contentType
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-            }
-          )
-          .catch((err) => console.error("❌ PUT failed:", err));
-      }
-    }else if (lesson.contentType === "document") {
-      setDocumentScreenTime((prev) => {
-        const updatedTime = prev + 1;
-        const progressPercent = Math.min((updatedTime / maxScreenTime) * 100, 100);
-        setDocProgress(progressPercent);
-        // console.log(`📄 Document screen time: ${updatedTime} seconds`);
-        // console.log(`📄 Document max screen time: ${maxScreenTime} seconds`);
-        // console.log(`📄 Document progress: ${progressPercent}%`);
-        return updatedTime;
-      });
-    }
-  },100);
-
-  return () => {
-    clearInterval(timer);
-
-    // Send screen time for document content when leaving the page
-    if (lesson.contentType === "document" && documentScreenTime > 0) {
-      axios
-        .put(
-          `/api/user/progress/${lesson.id}`,
-          {
-            percent: Math.floor(docprogress), // No progress for documents
-            lastTimestamp: 0, // No timestamp for documents
-            thumbnailUrl: lesson.thumbnailUrl || "",
-            screenTime: documentScreenTime, // Send screen time
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-          }
-        )
-        // .then(() => console.log("✅ Screen time logged successfully"))
-        .catch((err) =>
-          console.error("❌ Failed to log document screen time:", err)
-        );
-    }
-  };
-}, [lesson, token, progressPercent, lastTimestampFromServer, documentScreenTime, numPages, docprogress]);
-
-useEffect(() => {
-  let timer: NodeJS.Timeout | null = null;
-
-  if (lesson?.contentType === "document") {
-    setCanSwitchPage(false); // Disable switching initially
-    setTimeSpentOnCurrentPage(0); // Reset time spent on the page
-
-    timer = setInterval(() => {
-      setTimeSpentOnCurrentPage((prev) => {
-        const updatedTime = prev + 1;
-        if (updatedTime >= 2) { // Allow switching after 20 seconds
-          setCanSwitchPage(true);
-          clearInterval(timer!); // Stop the timer
-        }
-        return updatedTime;
-      });
-    }, 1000);
-  }
-
-  // console.log("Printout Quiz availability: ",lesson?.quizAvailable)
-
-  return () => {
-    if (timer) clearInterval(timer);
-  };
-}, [currentPage, lesson]);
-  useEffect(() => {
-    if (
-      progressPercent >= 100 &&
-      !showQuiz &&
-      lesson &&
-      (lesson.quizAttemptLimit || 1) &&
-      !quizPassed && !hasTakenQuiz && lesson.quizAvailable
-    ) {
-      // console.log("Show Quiz: ",showQuiz)
-      setShowQuiz(true);
-    }
-  }, [progressPercent, showQuiz, lesson]);
-
-
-  
-  if (loading || !lesson) {
-    return <div className="p-6 text-gray-400">⏳ Loading lesson…</div>;
-  }
-
-  const filename = lesson.videoUrl?.split("/").pop() || "";
-  const documentfile =
-    lesson.documentUrl?.split("/").pop() || "Can't find document";
-
-  if (!token) return <Navigate to="/" replace />;
-  // Render video หรือ document
-  const renderContent = () => {
-    if (lesson.contentType === "video") {
-      if (lastTimestampFromServer === null) {
-        return <div className="p-6 text-gray-400">⏳ Loading video…</div>;
-      }
+   const renderAvatar = () => {
+    if (post.avatarUrl) {
+      const isFullUrl = post.avatarUrl.startsWith("http") ;
+      const filename = post.avatarUrl.split("/").pop();
+      const avatarUrl = isFullUrl
+        ? `/api/profile/avatars/${filename}`
+        : "";
 
       return (
-        <video
-          ref={videoRef}
-          controls
-          onLoadedMetadata={handleLoadedMetadata}
-          onTimeUpdate={handleTimeUpdate}
-          poster={lesson.thumbnailUrl}
-          className="w-full h-auto bg-black noscrub"
-          controlsList="noplaybackrate nodownload noremoteplayback"
-          disablePictureInPicture
-          src={`/api/learning/video/v2/${filename}`}
+        <img
+          src={avatarUrl}
+          alt="Avatar"
+          className="w-10 h-10 rounded-full object-cover border"
+          onError={(e) => (e.currentTarget.style.display = "none")}
         />
       );
-    } else if (lesson.contentType === "document") {
-      return (
-        <div className="bg-white p-4 rounded shadow w-full">
-          <Document
-            file={`/api/learning/document/${documentfile}`}
-            onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-            onLoadError={(error) =>
-              console.error("Error loading PDF:", error)
-            }
-            loading={<p>Loading PDF...</p>}
-          >
-            <Page
-              pageNumber={currentPage + 1}
-              renderAnnotationLayer={true}
-              renderTextLayer={true}
-            />
-          </Document>
-
-          {/* PDF Pagination */}
-          <div className="flex justify-between items-center mt-4">
-            <button
-               onClick={() => {
-              if (!canSwitchPage) {
-                alert("⏳ Please spend on this page before moving to the next one.");
-                return;
-              }
-              setCurrentPage((prev) => Math.max(prev - 1, 0));
-            }}
-              disabled={currentPage <= 0}
-              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-            >
-              ◀️ Previous
-            </button>
-            <p className="text-sm text-gray-600">
-              Page {currentPage + 1} of {numPages}
-            </p>
-            <button
-              onClick={() => {
-              if (!canSwitchPage) {
-                alert("⏳ Please spend on this page before moving to the next one.");
-                return;
-              }
-              setCurrentPage((prev) => Math.max(prev + 1, 0));
-            }}
-              disabled={currentPage >= numPages - 1}
-              className="px-4 py-2 bg-gray-200 rounded disabled:opacity-50"
-            >
-              Next ▶️
-            </button>
-          </div>
-        </div>
-      );
     }
-    return null;
+    return (
+      <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold text-sm">
+        {post.authorName?.charAt(0)?.toUpperCase() || "?"}
+      </div>
+    );
   };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fileNameFromBackend: string | undefined = (post as any).document || undefined;
+  const documentUrl = fileNameFromBackend
+  ? `/api/posts/postDocument/${encodeURIComponent(fileNameFromBackend)}`
+  : undefined;
 
-  const filteringProgress = () => {
-    if (lesson.contentType === "video") {
-      return (
-        <div className="h-1 bg-gray-300">
-          <div
-            className="h-full bg-blue-600 transition-all"
-            style={{ width: `${progressPercent}%` }}
-          />
-          <div>
-            <p className="text-sm text-gray-500">
-              Attempts: {attempts}/{maxAttempts || lesson.quizAttemptLimit || 1}
-            </p>
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
+  const docFileName = fileNameFromBackend || "";
+  const docExt = docFileName.includes(".") ? docFileName.split(".").pop()!.toLowerCase() : "";
+  const isPdf = docExt === "pdf";
+  // console.log("DocumentUrl : ",documentUrl)
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
-      <main className="flex-1 p-8">
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-          <div className="xl:col-span-2 space-y-8">
-            <div className="w-full rounded-xl overflow-hidden shadow">
-              {renderContent()}
+    <article className="bg-white rounded-lg shadow p-4">
+      {/* Header */}
+      <header className="flex items-center gap-3 mb-3">
+        {renderAvatar()}
+        <div>
+          <p className="text-sm font-semibold text-gray-800">{post.authorName}</p>
+          <p className="text-xs text-gray-500">{post.authorEmail}</p>
+          <p className="text-xs text-gray-400">{new Date(post.createdAt).toLocaleString()}</p>
+        </div>
+      </header>
+
+      <h2 className="text-base font-semibold text-gray-800">{post.title}</h2>
+      <p
+        className="text-sm text-gray-700 mt-1 whitespace-pre-line"
+        dangerouslySetInnerHTML={{ __html: linkify(post.message) }}
+      />
+
+      {post.pictureUrl && (
+        <div className="mt-3">
+          {(() => {
+            const filename = post.pictureUrl.split("/").pop();
+            return (
+              <img
+                src={`/api/posts/picture/${filename}`}
+                alt="Post Image"
+                className="w-full max-h-96 object-cover rounded-md border"
+              />
+            );
+          })()}
+        </div>
+      )}
+      {documentUrl && (
+        <div className="mt-3">
+          <div className="relative w-[200px] rounded-xl border bg-white shadow-sm overflow-hidden group hover:shadow-md transition-shadow">
+            <div
+              className={`absolute top-0 left-0 px-2 py-1 text-[10px] font-semibold text-white rounded-br-lg ${
+                isPdf ? "bg-red-600" : "bg-gray-600"
+              }`}
+            >
+              {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
+            </div>
+            <div className="h-24 w-full bg-gray-50 flex items-center justify-center">
+              {isPdf ? (
+                <FaFilePdf className="text-xl opacity-20" />
+              ) : (
+                <div className="text-xs text-gray-500">Preview</div>
+              )}
             </div>
 
-            <section className="bg-white rounded-xl shadow p-6 space-y-4">
-              <h1 className="text-2xl font-bold text-gray-800">
-                {lesson.title}
-              </h1>
-              <span className="text-xs font-semibold uppercase text-purple-600">
-                {lesson.category}
+            <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 border-t">
+              <span
+                className={`px-1.5 py-0.5 text-[10px] leading-none rounded-sm font-bold text-white ${
+                  isPdf ? "bg-red-600" : "bg-gray-600"
+                }`}
+              >
+                {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
               </span>
-              <p className="text-gray-700">{lesson.description}</p>
-
-              <div className="flex items-center gap-4">
-                {lesson.authorAvatarUrl ? (
-                  <img
-                    src={lesson.authorAvatarUrl}
-                    alt="Author Avatar"
-                    className="w-10 h-10 rounded-full object-cover border"
-                    onError={(e) =>
-                      ((e.currentTarget.style.display = "none"))
-                    }
-                  />
-                ) : (
-                  <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-sm text-white">
-                    {lesson.authorName?.charAt(0) ?? "?"}
-                  </div>
-                )}
-                <div>
-                  <p className="text-sm font-medium text-gray-800">
-                    {lesson.authorName || "Unknown"}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {lesson.authorEmail || ""}
-                  </p>
-                </div>
-              </div>
-              {filteringProgress()}
-            </section>
-          </div>
-
-          <aside className="space-y-6 mt-4 xl:mt-0">
-             {id && <LessonFeedbackWidget token={token} lessonId={id} />}
-          </aside>
-        </div>
-      </main>
-
-      {showQuiz && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-xl shadow-xl w-[90%] max-w-md text-center">
-            {hasTakenQuiz ? (
-              <>
-                <h2 className="text-xl font-bold text-red-600 mb-4">
-                  ❌ Quiz unavailable
-                </h2>
-                <p className="text-gray-700 mb-6">
-                  {quizPassed
-                    ? "You have already passed the quiz."
-                    : "You have reached the maximum number of attempts."}
-                </p>
-                <button
-                  onClick={() => {
-                    setShowQuiz(false);
-                    navigate("/lesson");
-                  }}
-                  className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-lg"
-                >
-                  Back to Lessons
-                </button>
-              </>
-            ) : (
-              <>
-                <h2 className="text-xl font-bold mb-4">
-                  🎉 Lesson Completed!
-                </h2>
-                <p className="text-gray-700 mb-2">
-                  Take a quiz to test your knowledge.
-                </p>
-                <button
-                  onClick={() => {
-                    setShowQuiz(false);
-                    navigate(`/quiz/${lesson.id}`);
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg"
-                >
-                  Start Quiz
-                </button>
-              </>
-            )}
+              <span className="text-sm font-semibold truncate" title={docFileName}>
+                {docFileName}
+              </span>
+            </div>
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
+            <div className="absolute inset-x-0 bottom-2 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <a
+                href={documentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="pointer-events-auto inline-flex items-center gap-1 text-xs px-3 py-1 rounded bg-white border hover:bg-gray-50"
+                title="เปิดดู"
+              >
+                <FaExternalLinkAlt /> เปิดดู
+              </a>
+              <a
+                href={documentUrl}
+                download={docFileName || true}
+                className="pointer-events-auto inline-flex items-center gap-1 text-xs px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                title="ดาวน์โหลด"
+              >
+                <FaDownload /> ดาวน์โหลด
+              </a>
+            </div>
           </div>
         </div>
       )}
-    </div>
+
+      <div className="flex gap-4 text-xs text-gray-500 mt-3 items-center">
+        <span className="flex items-center gap-1">
+          <FaEye /> {post.views}
+        </span>
+
+        <button
+          type="button"
+          onClick={handleToggleComments}
+          className="hover:underline flex items-center gap-1"
+        >
+          <FaCommentDots /> {comments.length}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleToggleLike}
+          disabled={liking}
+          className={`hover:underline flex items-center gap-1 ${
+            liked ? "text-red-600 font-bold" : ""
+          }`}
+        >
+          {liked ? <FaHeart /> : <FaRegHeart />} {likes}
+        </button>
+      </div>
+
+      {showComments && (
+        <section className="mt-4 space-y-2 border-t pt-4">
+          {comments.length === 0 ? (
+            <p className="text-xs text-gray-400">No comments yet.</p>
+          ) : (
+            comments.map((c) => (
+              <div key={c.id} className="flex items-start gap-2 text-xs">
+                {c.avatarUrl ? (
+                  <img
+                    src={`/api/profile/avatars/${c.avatarUrl.split("/").pop()}`}
+                    alt="User avatar"
+                    className="w-6 h-6 rounded-full object-cover border"
+                  />
+                ) : (
+                  <div className="w-6 h-6 bg-gray-400 text-white rounded-full flex items-center justify-center text-[10px] font-bold">
+                    {c.authorName?.charAt(0)?.toUpperCase() || "?"}
+                  </div>
+                )}
+                <div>
+                  <p className="font-medium">{c.authorName}</p>
+                  <p className="text-gray-700 whitespace-pre-line">{c.message}</p>
+                  <p className="text-[10px] text-gray-400">
+                    {new Date(c.createdAt).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            ))
+          )}
+
+          <div className="mt-3">
+            <textarea
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              className="w-full border border-gray-300 rounded p-2 text-xs focus:outline-none focus:ring focus:ring-blue-200"
+              rows={3}
+              placeholder="Add a comment..."
+            />
+            <div className="flex justify-end mt-2">
+              <button
+                type="button"
+                onClick={handleCommentSubmit}
+                disabled={!commentText.trim()}
+                className="bg-blue-600 text-white px-4 py-1 rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
+              >
+                Submit
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+    </article>
   );
 };
 
-export default LessonDetailPage;
+export default PostCardWidget;
