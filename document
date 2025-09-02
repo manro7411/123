@@ -62,7 +62,7 @@ const mapAssignTypeToTarget = (assignType: string): "ALL" | "TEAM" | "USER" => {
       return "ALL";
     case "team":
       return "TEAM";
-    case "user":
+    case "specific":
       return "USER";
     default:
       throw new Error(`Invalid assignType: ${assignType}`);
@@ -205,7 +205,7 @@ const handleVideoSubmit = async (e: React.FormEvent) => {
       isCorrect: q.correctAnswers.includes(text),
     })),
   }))));
-  console.log("Data",formData)
+  // console.log("Data",formData)
   try {
     await axios.post("/api/learning", formData, {
       headers: {
@@ -244,7 +244,12 @@ const handleVideoSubmit = async (e: React.FormEvent) => {
           formData.append("description",form.description)
           formData.append("avatarUrl",authorAvatarUrl?.userPicture ?? "")
           formData.append("category",categoryValue)
-          formData.append("assignType", form.assignType ?? "");
+          formData.append("assignType",mapAssignTypeToTarget(form.assignType));
+
+           if (form.assignType === "specific") {
+            selectedUsers.forEach((id) => formData.append("assignedUserIds", id));
+          }
+
 
           if (form.assignType === "team" && form.assignTeamId) {
             formData.append("assignTeamId", form.assignTeamId);
@@ -254,13 +259,13 @@ const handleVideoSubmit = async (e: React.FormEvent) => {
             formData.append("thumbnailUrl", form.thumbnailUrl);
           }
 
-            if (form.assignType === "specific") {
-            // selectedUsers.forEach((id) => formData.append("assignedUserIds", id));
-            formData.append("assignedUserIds",JSON.stringify(selectedUsers))
-          }
+          //   if (form.assignType === "specific") {
+          //   // selectedUsers.forEach((id) => formData.append("assignedUserIds", id));
+          //   formData.append("assignedUserIds",JSON.stringify(selectedUsers))
+          // }
           
           if (form.thumbnailFile) {
-            console.log("Document file", form.thumbnailFile);
+            // console.log("Document file", form.thumbnailFile);
             formData.append("document", form.thumbnailFile);
           }
           try {
@@ -272,7 +277,7 @@ const handleVideoSubmit = async (e: React.FormEvent) => {
         }
       }
 
-      console.log("Payload Result : ",formData.entries())
+      // console.log("Payload Result : ",formData.entries())
       await axios.post("/api/learning/documents", formData, {
         headers: { Authorization: `Bearer ${token}` },  
       });
