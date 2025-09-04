@@ -1,558 +1,351 @@
-import { useState, useEffect, useContext} from "react";
-import { useNavigate } from "react-router-dom";
+import { useContext, useEffect, useState } from "react";
 import axios from "axios";
-import AdminSidebarWidget from "../Widgets/AdminSideBar";
 import { AuthContext } from "../../../Authentication/AuthContext";
+import AdminSidebarWidget from "../Widgets/AdminSideBar";
+import { useNavigate } from "react-router-dom";
+import { Pencil } from "lucide-react";
+import EditLessonModal, { type Lesson } from "./EditLessonModal";
 import { sendLessonNotification } from "../Widgets/notificationServices";
-import { CATEGORY_GROUP } from "../../Lesson/Category";
+import { useUserProfile } from "../../Lesson/hooks/useUserProfile";
 
-
-interface LessonFormState {
-  title: string;
-  description: string;
-  category: "AGILE" | "SCRUM" | "WATERFALL";
-  thumbnailUrl: string; 
-   thumbnailFile: File | null;
-  quizAttemptLimit: number;
-  assignType: "all" | "team" | "specific";
-  assignTeamId?: string;
-  videoUrl:string,
-  dueDate?: string;
-  questions: QuestionForm[];
+interface UserProgress {
+  userEmail: string;
+  percent: number;
+  lessonId: number;
+  score: number;
+  quizAvailable: boolean;
+  feedback?: string;
 }
 
-interface QuestionForm {
-  questionText: string;
-  type: "single" | "multiple" | "fill" | "ordering" | "matching";
-  options: string[];
-  correctAnswers: string[];
-}
-
-interface User {
-  id: string;
-  name: string;
-  userPicture?:string;
-}
-
-interface Team {
-  id: string;
-  name: string;
-}
-
-const INITIAL_FORM: LessonFormState = {
-  title: "",
-  description: "",
-  category: "AGILE",
-  thumbnailUrl: "",
-    thumbnailFile: null,
-  quizAttemptLimit: 1,
-  assignType: "all",
-  questions: [],
-  videoUrl:"",
-  dueDate: ""
-};
-
-const tabs = [
-  { label: "Video_Content", value: "video" },
-  { label: "Document_Content", value: "document" },
-];
-const mapAssignTypeToTarget = (assignType: string): "ALL" | "TEAM" | "USER" => {
-  switch (assignType) {
-    case "all":
-      return "ALL";
-    case "team":
-      return "TEAM";
-    case "specific":
-      return "USER";
-    default:
-      throw new Error(`Invalid assignType: ${assignType}`);
-  }
-};
-
-
-const AdminAddLessonPage = () => {
-  const { token} = useContext(AuthContext);
+const AdminTaskManagementPage = () => {
+  const { token } = useContext(AuthContext);
+  const {email} = useUserProfile(token);
   const navigate = useNavigate();
-  const [form, setForm] = useState<LessonFormState>(INITIAL_FORM);
+
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
+  const [progressList, setProgressList] = useState<UserProgress[]>([]);
+  const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
   const [loading, setLoading] = useState(false);
-  const [users, setUsers] = useState<User[]>([]);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
-  const [showUserModal, setShowUserModal] = useState(false);
-  const [activeTab, setActiveTab] = useState("video");
-  const [authorAvatarUrl, setAuthorAvatarUrl] = useState<User | null>(null);
-  const [videoUrl, setvideoUrl] = useState<File | null>(null);
-  const [categoryGroup,setCategoryGroup] = useState<string>("");
-  const [categorySub,setCategorySub] = useState<string>(); 
+  const [feedback,setFeedback] = useState<string>("")
 
-  const categoryValue = categorySub ? `${categoryGroup} > ${categorySub}` : categoryGroup;
- 
-  useEffect(() => {
-    if (!token) navigate("/");
-  }, [token, navigate]);
+  const [showEditModal, setShowEditModal] = useState(false);
 
- useEffect(() => {
-    if (token) {
-      axios
-        .get("/api/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        .then((res) => {
-          setAuthorAvatarUrl({
-            id: res.data.id,
-            name: res.data.name,
-            userPicture: `${res.data.avatarUrl}`, 
-            });
-        })
-        .catch((err) => {
-          console.error("❌ Failed to fetch user profile", err);
-        });
-    }
-  }, [token]);
+  const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
 
-  useEffect(() => {
-    if (!token) return;
-
-    axios.get<User[]>("/api/profile/users", { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => setUsers(res.data))
-      .catch(() => console.error("❌ Failed to load users"));
-
-    axios.get<Team[]>("/api/teams", { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => setTeams(res.data))
-      .catch(() => console.error("❌ Failed to load teams"));
-  }, [token]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setForm((prev) => ({
-      ...prev,
-      [name]: name === "quizAttemptLimit" ? parseInt(value) : value,
-    }));
-  };
-
-  const handleAssignTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value as LessonFormState["assignType"];
-    setForm((prev) => ({
-      ...prev,
-      assignType: value,
-      assignTeamId: value !== "team" ? undefined : prev.assignTeamId,
-    }));
-    if (value === "specific") setShowUserModal(true);
-    else setSelectedUsers([]);
-  };
-
-  const handleQuestionChange = (index: number, field: keyof QuestionForm, value: string | string[]) => {
-    const updatedQuestions = [...form.questions];
-    updatedQuestions[index] = { ...updatedQuestions[index], [field]: value };
-    setForm({ ...form, questions: updatedQuestions });
-  };
-
-  const addQuestion = () => setForm((prev) => ({
-    ...prev,
-    questions: [...prev.questions, { questionText: "", type: "single", options: [""], correctAnswers: [""] }],
-  }));
-
-  const addOption = (qIdx: number) => {
-    const updated = [...form.questions];
-    updated[qIdx].options.push("");
-    setForm({ ...form, questions: updated });
-  };
-
-  const addCorrectAnswer = (qIdx: number) => {
-    const updated = [...form.questions];
-    updated[qIdx].correctAnswers.push("");
-    setForm({ ...form, questions: updated });
-  };
-
-  const resetForm = () => {
-    setForm(INITIAL_FORM);
-    setSelectedUsers([]);
-  };
-
-const handleVideoSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setLoading(true);
-
-  const formData = new FormData();
-  formData.append("contentType", "video");
-  formData.append("title", form.title);
-  formData.append("description", form.description);
-  formData.append("category", categoryValue);
-  formData.append("thumbnailUrl", form.thumbnailUrl);
-  formData.append("maxAttempts", form.quizAttemptLimit.toString());
-  formData.append("assignType", form.assignType);
-  formData.append("authorAvatarUrl", authorAvatarUrl?.userPicture ?? "");
-  if (form.dueDate) formData.append("dueDate", form.dueDate);
-
-
-  if (videoUrl) {
-    formData.append("video", videoUrl); 
-  }
-
-  if (form.assignType === "specific") {
-    selectedUsers.forEach((id) => formData.append("assignedUserIds", id));
-  }
-
-  if (form.assignType === "team" && form.assignTeamId) {
-    formData.append("assignedTeamIds", form.assignTeamId);
-  }
-
-  formData.append("questions", JSON.stringify(form.questions.map((q) => ({
-    questionText: q.questionText,
-    type: q.type,
-    choices: q.options.map((text) => ({
-      text,
-      isCorrect: q.correctAnswers.includes(text),
-    })),
-  }))));
-  // console.log("Data",formData)
-  try {
-    await axios.post("/api/learning", formData, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "multipart/form-data",
-      },
-    });
-
-    await sendLessonNotification({
-      token:token as string,
-      message:`A new Video 📢 "${form.title} Lesson has been added`,
-     target: mapAssignTypeToTarget(form.assignType),
-      userIds: form.assignType === "specific" ? selectedUsers:[],
-      teamIds: form.assignType === "team" && form.assignTeamId ? [form.assignTeamId]:[]
-
-    })
-
-    alert("✅ Video lesson created!");
-    resetForm();
-    navigate("/admin/lesson/management");
-  } catch (err) {
-    alert("❌ Failed to create video lesson");
-    console.error(err);
-  } finally {
-    setLoading(false);
-  }
-};
-
-
-        const handleDocumentSubmit = async () => {
-          setLoading(true);
-          const formData = new FormData;
-
-          formData.append("contentType","document")
-          formData.append("title",form.title)
-          formData.append("description",form.description)
-          formData.append("avatarUrl",authorAvatarUrl?.userPicture ?? "")
-          formData.append("category",categoryValue)
-          formData.append("assignType",mapAssignTypeToTarget(form.assignType));
-
-           if (form.assignType === "specific") {
-            selectedUsers.forEach((id) => formData.append("assignedUserIds", id));
-          }
-
-
-          if (form.assignType === "team" && form.assignTeamId) {
-            formData.append("assignTeamId", form.assignTeamId);
-          }
-
-          if (form.thumbnailUrl) {
-            formData.append("thumbnailUrl", form.thumbnailUrl);
-          }
-
-          //   if (form.assignType === "specific") {
-          //   // selectedUsers.forEach((id) => formData.append("assignedUserIds", id));
-          //   formData.append("assignedUserIds",JSON.stringify(selectedUsers))
-          // }
-          
-          if (form.thumbnailFile) {
-            // console.log("Document file", form.thumbnailFile);
-            formData.append("document", form.thumbnailFile);
-          }
-          try {
-          for (const [key, value] of formData.entries()) {
-        if (value instanceof File) {
-          console.log(`${key}:`, value.name, value.type, value.size);
-        } else {
-          console.log(`${key}:`, value);
-        }
-      }
-
-      // console.log("Payload Result : ",formData.entries())
-      await axios.post("/api/learning/documents", formData, {
-        headers: { Authorization: `Bearer ${token}` },  
+  const fetchLessons = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get<Lesson[]>("/api/learning?mine=true", {
+        headers: authHeader,
       });
-      
-      await sendLessonNotification({
-      token:token as string,
-      message:`A new Document 📢 "${form.title} Lesson has been added`,
-      target:mapAssignTypeToTarget(form.assignType),
-      userIds: form.assignType === "specific" ? selectedUsers:[],
-      teamIds: form.assignType === "team" && form.assignTeamId ? [form.assignTeamId]:[]
-      })
-
-
-      alert("✅ Document uploaded!");
-      resetForm();
-      navigate("/admin/lesson/management");
+      // console.log("Fetched lessons:", res.data);
+      setLessons(res.data);
     } catch (err) {
-      alert("❌ Failed to upload document");
-      console.error(err);
+      console.error("❌ Failed to load lessons:", err);
+      alert("Failed to fetch lessons.");
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!token) {
+      navigate("/");
+      return;
+    }
+    fetchLessons();
+  }, [token, navigate]);
+
+  const handleSelectLesson = async (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setSelectedUser(null);
+
+    try {
+      const res = await axios.get<UserProgress[]>("/api/user/progress/all", {
+        headers: authHeader,
+      });
+      const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
+      const latestByUser = new Map<string, UserProgress>();
+      lessonProgress.forEach((entry) => {
+        latestByUser.set(entry.userEmail, entry);
+      });
+      setProgressList(Array.from(latestByUser.values()));
+    } catch (err) {
+      console.error("❌ Failed to fetch progress:", err);
+      alert("Failed to load progress data.");
+    }
+  };
+
+  const handleDeleteLesson = async (id: number) => {
+    if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
+
+    try {
+      await axios.delete(`/api/learning/${id}`, {
+        headers: authHeader,
+      });
+      setLessons((prev) => prev.filter((l) => l.id !== id));
+      if (selectedLesson?.id === id) {
+        setSelectedLesson(null);
+        setProgressList([]);
+        setSelectedUser(null);
+      }
+      alert("✅ Lesson deleted");
+    } catch (err) {
+      console.error("❌ Delete failed:", err);
+      alert("Failed to delete lesson.");
+    }
+  };
+
+  const handleOpenEdit = (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setShowEditModal(true);
+  };
+
+  const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
+    if (!selectedLesson) return;
+    try {
+      const payload: Lesson = { ...selectedLesson, ...data };
+      await axios.put(`/api/learning/${selectedLesson.id}`, payload, {
+        headers: authHeader,
+      });
+
+      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
+
+      setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
+
+      setShowEditModal(false);
+      alert("✅ Lesson updated");
+    } catch (err) {
+      console.error("❌ Update failed:", err);
+      alert("Failed to update lesson information.");
+    }
+  };
+
+  if (!token) return null;
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <AdminSidebarWidget />
-      <main className="flex-1 p-10 space-y-6 max-w-3xl">
-        <h1 className="text-2xl font-bold text-blue-800 pb-2">📚 Add New Lesson</h1>
-        <div className="flex space-x-6 border-b mb-6 text-sm font-semibold">
-          {tabs.map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => setActiveTab(tab.value)}
-              className={`pb-2 ${
-                activeTab === tab.value
-                  ? "text-blue-600 border-b-2 border-blue-600"
-                  : "text-gray-500 hover:text-blue-600"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
 
-        {activeTab === "video" && (
-          <form onSubmit={handleVideoSubmit} className="bg-white p-8 rounded-xl shadow space-y-6">
-            <Field label="Lesson Thumbnail URL" name="thumbnailUrl" value={form.thumbnailUrl} onChange={handleChange} />
-            <div className="flex flex-col space-y-2">
-              <label className="text-sm font-medium text-gray-700">Upload File (.mp4)</label>
-              <input type="file" className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50"   onChange={(e) => setvideoUrl(e.target.files?.[0] || null)}/>
-            </div>
-            <Field label="Lesson Title" name="title" value={form.title} onChange={handleChange} required />
-            <Field label="Description" name="description" value={form.description} onChange={handleChange} />
-            {/* ------------------------------------------------ */}
-           <label className="text-sm font-medium text-gray-700">Category : </label>
-            <select
-              value={categoryGroup}
-              onChange={e => { setCategoryGroup(e.target.value); setCategorySub(""); }}
-            >
-              <option value="">---Select group---</option>
-              {Object.keys(CATEGORY_GROUP).map((g) => (
-                <option key={g} value={g}>{g}</option>
-              ))}
-            </select>
+      <main className="flex-1 p-10 space-y-6">
+        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">
+          🧙 Task Management
+        </h1>
 
-            {(CATEGORY_GROUP[categoryGroup] ?? []).length > 0 && (
-              <>
-                <label className="text-sm font-medium text-gray-700 mt-2">Subcategory : </label>
-                <select
-                  value={categorySub}
-                  onChange={e => setCategorySub(e.target.value)}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Lesson List */}
+          <section className="col-span-1 space-y-4">
+            {loading ? (
+              <p className="text-gray-500">Loading lessons...</p>
+            ) : (
+              lessons.map((lesson) => (
+                <div
+                  key={lesson.id}
+                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all
+                  ${
+                    selectedLesson?.id === lesson.id
+                      ? "bg-blue-50 border-blue-500"
+                      : "bg-white hover:border-blue-500"
+                  }`}
                 >
-                  <option value="">---Select subcategory---</option>
-                  {CATEGORY_GROUP[categoryGroup].map((g) => (
-                    <option key={g} value={g}>{g}</option>
-                  ))}
-                </select>
-              </>
-            )}
-            {/* ------------------------------------------------ */}
-            <div>
-              <label className="text-sm font-medium text-gray-700">Assign To</label>
-              <select name="assignType" value={form.assignType} onChange={handleAssignTypeChange} className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50">
-                <option value="all">All Users</option>
-                <option value="team">Specific Team</option>
-                <option value="specific">Specific Users</option>
-              </select>
-              {form.assignType === "team" && (
-                <select
-                  name="assignTeamId"
-                  value={form.assignTeamId || ""}
-                  onChange={(e) => setForm({ ...form, assignTeamId: e.target.value })}
-                  className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50"
-                >
-                  <option value="">-- Select a team --</option>
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>{team.name}</option>
-                  ))}
-                </select>
-              )}
-              {form.assignType === "specific" && selectedUsers.length > 0 && (
-                <p className="text-sm text-gray-500 mt-1">
-                  Selected users: {users.filter(u => selectedUsers.includes(u.id)).map(u => u.name).join(", ")}
-                </p>
-              )}
-            </div>
-            <div className="flex justify-between gap-4">
-              <Field label="Max Quiz Attempts" name="quizAttemptLimit" type="number" min={1} max={3} value={form.quizAttemptLimit.toString()} onChange={handleChange} />
-              <Field label="Due Date & Time" name="dueDate" type="datetime-local" value={form.dueDate || ""} onChange={handleChange} />
-            </div>
+                  <div onClick={() => handleSelectLesson(lesson)}>
+                    <h3 className="font-semibold text-lg text-gray-800">
+                      {lesson.title}
+                    </h3>
+                    <p className="text-sm text-gray-500">ID: {lesson.id}</p>
+                    <p className="text-xs text-purple-600 font-semibold uppercase">
+                      {lesson.category}
+                    </p>
+                  </div>
 
-            <div className="space-y-4">
-              <h2 className="text-lg font-semibold">Questions</h2>
-              {form.questions.map((q, idx) => (
-                <div key={idx} className="border rounded-lg p-4 space-y-2">
-                  <input className="w-full border px-2 py-1 rounded" placeholder="Question text" value={q.questionText} onChange={(e) => handleQuestionChange(idx, "questionText", e.target.value)} />
-                  <select value={q.type} onChange={(e) => handleQuestionChange(idx, "type", e.target.value as QuestionForm["type"])} className="w-full border px-2 py-1 rounded">
-                    <option value="single">Single Choice</option>
-                    <option value="multiple">Multiple Choice</option>
-                    <option value="fill">Fill in the Blank</option>
-                    <option value="ordering">Ordering</option>
-                    <option value="matching">Matching</option>
-                  </select>
-                  <div>
-                    <h4 className="text-sm font-medium">Options</h4>
-                    {q.options.map((opt, oIdx) => (
-                      <input key={oIdx} className="w-full border px-2 py-1 rounded" value={opt} onChange={(e) => {
-                        const opts = [...q.options];
-                        opts[oIdx] = e.target.value;
-                        handleQuestionChange(idx, "options", opts);
-                      }} />
-                    ))}
-                    <button type="button" onClick={() => addOption(idx)} className="text-blue-600 text-sm underline">+ Add Option</button>
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-medium">Correct Answers</h4>
-                    {q.correctAnswers.map((ans, aIdx) => (
-                      <input key={aIdx} className="w-full border px-2 py-1 rounded" value={ans} onChange={(e) => {
-                        const answers = [...q.correctAnswers];
-                        answers[aIdx] = e.target.value;
-                        handleQuestionChange(idx, "correctAnswers", answers);
-                      }} />
-                    ))}
-                    <button type="button" onClick={() => addCorrectAnswer(idx)} className="text-green-600 text-sm underline">+ Add Correct Answer</button>
-                  </div>
+                  {/* Edit button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenEdit(lesson);
+                    }}
+                    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
+                    title="Edit lesson"
+                    type="button"
+                    aria-label="Edit lesson"
+                  >
+                    <Pencil size={18} />
+                  </button>
+
+                  {/* Delete button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteLesson(lesson.id);
+                    }}
+                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                    title="Delete lesson"
+                    type="button"
+                    aria-label="Delete lesson"
+                  >
+                    🗑
+                  </button>
                 </div>
-              ))}
-              <button type="button" onClick={addQuestion} className="text-blue-700 font-semibold">+ Add Question</button>
-            </div>
-            <div className="flex gap-4">
-              <button type="submit" disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg disabled:opacity-50">{loading ? "Saving…" : "Create Lesson"}</button>
-              <button type="button" onClick={resetForm} className="text-gray-600 hover:underline">Reset</button>
-            </div>
-          </form>
-        )}
+              ))
+            )}
+          </section>
 
-        {activeTab === "document" && (
-  <div className="bg-white p-8 rounded-xl shadow space-y-6">
-    <Field label="Lesson Thumbnail URL" name="thumbnailUrl" value={form.thumbnailUrl} onChange={handleChange} />
-    <Field label="Lesson Title" name="title" value={form.title} onChange={handleChange} required />
-    <Field label="Lesson Description" name="description" value={form.description} onChange={handleChange} />
-    
-    {/* Category and Subcategory */}
-    <label className="text-sm font-medium text-gray-700">Category : </label>
-    <select
-      value={categoryGroup}
-      onChange={(e) => {
-        setCategoryGroup(e.target.value);
-        setCategorySub(""); // Reset subcategory when category changes
-      }}
-    >
-      <option value="">---Select group---</option>
-      {Object.keys(CATEGORY_GROUP).map((g) => (
-        <option key={g} value={g}>{g}</option>
-      ))}
-    </select>
-
-    {(CATEGORY_GROUP[categoryGroup] ?? []).length > 0 && (
-      <>
-        <label className="text-sm font-medium text-gray-700 mt-2">Subcategory : </label>
-        <select
-          value={categorySub}
-          onChange={(e) => setCategorySub(e.target.value)}
-        >
-          <option value="">---Select subcategory---</option>
-          {CATEGORY_GROUP[categoryGroup].map((sub) => (
-            <option key={sub} value={sub}>{sub}</option>
-          ))}
-        </select>
-      </>
-    )}
-
-    <div>
-      <label className="text-sm font-medium text-gray-700">Assign To</label>
-      <select name="assignType" value={form.assignType} onChange={handleAssignTypeChange} className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50">
-        <option value="all">All Users</option>
-        <option value="team">Specific Team</option>
-        <option value="specific">Specific User</option>
-      </select>
-      {form.assignType === "team" && (
-        <select
-          name="assignTeamId"
-          value={form.assignTeamId || ""}
-          onChange={(e) => setForm({ ...form, assignTeamId: e.target.value })}
-          className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50"
-        >
-          <option value="">-- Select a team --</option>
-          {teams.map((team) => (
-            <option key={team.id} value={team.id}>{team.name}</option>
-          ))}
-        </select>
-      )}
-      {form.assignType === "specific" && selectedUsers.length > 0 && (
-        <p className="text-sm text-gray-500 mt-1">
-          Selected users: {users.filter((u) => selectedUsers.includes(u.id)).map((u) => u.name).join(", ")}
-        </p>
-      )}
-    </div>
-    <div>
-      <label className="text-sm font-medium text-gray-700">Upload File (.pdf, .doc, .docx)</label>
-      <input
-        type="file"
-        accept=".pdf,.doc,.docx,.png,.jpeg"
-        className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) {
-            const reader = new FileReader();
-            reader.onload = () => {
-              setForm((prev) => ({
-                ...prev,
-                thumbnailFile: file,
-                thumbnailUrl: URL.createObjectURL(file),
-              }));
-            };
-            reader.readAsDataURL(file);
-          }
-        }}
-      />
-    </div>
-    <div className="flex gap-4">
-      <button onClick={handleDocumentSubmit} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg disabled:opacity-50">
-        {loading ? "Uploading…" : "Upload Document"}
-      </button>
-      <button onClick={resetForm} className="text-gray-600 hover:underline">Reset</button>
-    </div>
-  </div>
-)}
-
-        {showUserModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-xl shadow-xl w-[90%] max-w-md">
-              <h2 className="text-lg font-bold mb-4">Select Users</h2>
-              <select multiple value={selectedUsers} onChange={(e) => setSelectedUsers(Array.from(e.target.selectedOptions, o => o.value))} className="w-full h-40 border p-2 rounded-lg bg-gray-50">
-                {users.map((u) => (<option key={u.id} value={u.id}>{u.name}</option>))}
-              </select>
-              <div className="mt-4 flex justify-end gap-2">
-                <button onClick={() => setShowUserModal(false)} className="px-4 py-2 bg-gray-500 text-white rounded">Close</button>
+          {/* User Progress List */}
+          <section className="col-span-1 space-y-4">
+            {progressList.length === 0 && selectedLesson && (
+              <p className="text-gray-400">No progress yet…</p>
+            )}
+            {progressList.map((user) => (
+              <div
+                key={`${user.lessonId}-${user.userEmail}`}
+                className="p-4 bg-white rounded-xl shadow flex justify-between items-center"
+              >
+                <div>
+                  <p className="font-medium text-gray-800">{user.userEmail}</p>
+                  <p className="text-sm text-gray-400">Lesson ID: {user.lessonId}</p>
+                </div>
+                <button
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
+                  onClick={() => setSelectedUser(user)}
+                >
+                  View
+                </button>
               </div>
+            ))}
+          </section>
+
+          {/* Right pane: selected user overview */}
+         <section className="col-span-1 bg-white p-6 rounded-xl shadow">
+          <h2 className="text-lg font-semibold mb-4 text-gray-700">
+            Quick overview of employee progress
+          </h2>
+
+          {selectedUser ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                <div>
+                  <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
+                  <p className="text-sm text-gray-500">Lesson ID: {selectedUser.lessonId}</p>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-sm text-gray-500">Progress</p>
+                <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
+                <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
+              </div>
+
+              <p className="text-sm text-gray-500">
+                Quiz:{" "}
+                {selectedLesson?.quizAvailable ? (
+                  selectedUser?.score > 0 ? (
+                    <span className="text-green-600 font-semibold">
+                      Finished ({selectedUser.score} pts)
+                    </span>
+                  ) : (
+                    <span className="text-red-500">Not yet</span>
+                  )
+                ) : (
+                  <span className="text-gray-400">Quiz not available for this learning content</span>
+                )}
+              </p>
+
+         
+              {/* Feedback Section */}
+             {/* Feedback Section */}
+            {selectedUser?.percent === 100 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Feedback for {selectedUser.userEmail}
+                </label>
+                {selectedUser.feedback ? (
+                  // Show feedback if already given
+                  <div className="p-4 bg-gray-100 border rounded-lg">
+                    <p className="text-sm text-gray-700">{selectedUser.feedback}</p>
+                  </div>
+                ) : (
+                  // Show feedback input form if feedback is not given
+                  <>
+                    <textarea
+                      value={feedback}
+                      onChange={(e) => setFeedback(e.target.value)}
+                      className="h-48 w-full border rounded-lg px-3 py-2"
+                      placeholder="Write your feedback here..."
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!feedback.trim()) {
+                          alert("❌ Feedback cannot be empty.");
+                          return;
+                        }
+
+                        try {
+                          // Submit feedback
+                          await axios.post(
+                            `/api/user/feedback`,
+                            {
+                              userEmail: selectedUser.userEmail,
+                              lessonId: selectedUser.lessonId,
+                              feedback,
+                              email,
+                            },
+                            { headers: authHeader }
+                          );
+
+                          // Send notification to the user
+                          await sendLessonNotification({
+                            token,
+                            message: `You have received feedback for lesson ${selectedUser.lessonId}.`,
+                            userIds: [selectedUser.userEmail],
+                            target: "USER",
+                          });
+                          
+                          console.log("Notification Payload: " ,{
+                            token,
+                            message: `You have received feedback for lesson ${selectedUser.lessonId}.`,
+                            userIds: [selectedUser.userEmail],
+                            target: "USER",
+                          })
+
+                          alert("✅ Feedback sent successfully!");
+                          setFeedback(""); // Clear feedback input
+                          setSelectedUser((prev) =>
+                            prev ? { ...prev, feedback } : prev
+                          ); // Update feedback in the UI
+                        } catch (err) {
+                          console.error("❌ Failed to send feedback:", err);
+                          alert("Failed to send feedback.");
+                        }
+                      }}
+                      className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      Send Feedback
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
             </div>
-          </div>
-        )}
+          ) : (
+            <p className="text-gray-400">← Select a user to see details</p>
+          )}
+        </section>
+        </div>
       </main>
+
+      {/* Edit Lesson Modal */}
+      {showEditModal && selectedLesson && (
+        <EditLessonModal
+          open={showEditModal}
+          initial={selectedLesson}
+          onClose={() => setShowEditModal(false)}
+          onSave={handleSaveLesson}
+        />
+      )}
     </div>
   );
 };
 
-function Field(props: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
-  const { label, ...inputProps } = props;
-  return (
-    <div>
-      <label className="text-sm font-medium text-gray-700">{label}</label>
-      <input {...inputProps} className="w-full mt-1 px-4 py-2 border rounded-lg bg-gray-50" />
-    </div>
-  );
-}
-
-export default AdminAddLessonPage;
+export default AdminTaskManagementPage;
