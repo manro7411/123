@@ -13,29 +13,33 @@ interface UserProgress {
   percent: number;
   lessonId: number;
   score: number;
-  authorAvatarUrl:string;
+  authorAvatarUrl?: string;
   quizAvailable: boolean;
   feedback?: string;
 }
+
 interface AnswerReply {
   id: string;
   trainerReply: string;
   trainerEmail: string;
   trainerName: string;
-  avatarUrl: string;
+  avatarUrl?: string;
   createdAt: string;
 }
+
 interface QuestionAnswer {
   id: string;
   userEmail: string;
-  authorAvatarUrl: string;
-  createAt: string;
+  authorAvatarUrl?: string;
+  createAt?: string;     // some backends send createAt
+  createdAt?: string;    // some send createdAt
   question: string;
   answerReplies?: AnswerReply[];
 }
+
 const AdminTaskManagementPage = () => {
   const { token } = useContext(AuthContext);
-  const {email} = useUserProfile(token);
+  const { email } = useUserProfile(token);
   const navigate = useNavigate();
 
   const [lessons, setLessons] = useState<Lesson[]>([]);
@@ -43,23 +47,32 @@ const AdminTaskManagementPage = () => {
   const [progressList, setProgressList] = useState<UserProgress[]>([]);
   const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
   const [loading, setLoading] = useState(false);
-  const [feedback,setFeedback] = useState<string>("")
 
-  const [trainerReply,setTrainerReply] = useState<string>("");
-  const [replyLoading,setReplyLoading] = useState(false);
+  const [feedback, setFeedback] = useState<string>("");
+
+  const [trainerReply, setTrainerReply] = useState<string>("");
+  const [replyLoading, setReplyLoading] = useState(false);
 
   const [showEditModal, setShowEditModal] = useState(false);
-  const [userLessonQuestion , setUserLessonQuestion] = useState<QuestionAnswer[]>()
+  const [userLessonQuestion, setUserLessonQuestion] = useState<QuestionAnswer[] | undefined>();
 
   const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
 
+  // ------------- helpers -------------
+  const fmtDate = (iso?: string) => {
+    if (!iso) return "";
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
+  };
+
+  // ------------- data fetchers -------------
   const fetchLessons = async () => {
     setLoading(true);
     try {
-      const res = await axios.get<Lesson[]>("/api/learning?mine=true", {
-        headers: authHeader,
-      });
-      console.log("My contents => ",res.data)
+      const res = await axios.get<Lesson[]>("/api/learning?mine=true", { headers: authHeader });
       setLessons(res.data);
     } catch (err) {
       console.error("❌ Failed to load lessons:", err);
@@ -68,70 +81,81 @@ const AdminTaskManagementPage = () => {
       setLoading(false);
     }
   };
-  
 
+  const fetchUserIdByEmail = async (userEmail: string) => {
+    try {
+      const res = await axios.get("/api/profile/users", {
+        params: { email: userEmail },
+        headers: authHeader,
+      });
+
+      const users = res.data;
+      if (Array.isArray(users) && users.length > 0) {
+        const user = users.find((u: any) => u.email === userEmail);
+        return user?.id || null;
+      }
+      console.error("❌ No matching user found for email:", userEmail);
+      return null;
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        console.error("❌ Failed to fetch userId:", err.response?.data || err.message);
+      } else {
+        console.error("❌ Failed to fetch userId:", err);
+      }
+      return null;
+    }
+  };
+
+  const fetchUserLessonQuestion = async (userEmail: string, lessonId: string | number) => {
+    try {
+      // ใช้ path แบบ relative ให้สอดคล้องกับ proxy ของแอป
+      const res = await axios.get<QuestionAnswer>(
+        `/api/trainer-question-answer/get-answer-reply-by-question-id/${userEmail}/${lessonId}`,
+        { headers: authHeader }
+      );
+      setUserLessonQuestion(res.data ? [res.data] : []);
+    } catch (err) {
+      console.error("❌ Failed to fetch user lesson question:", err);
+      setUserLessonQuestion([]);
+    }
+  };
+
+  // ------------- effects -------------
   useEffect(() => {
     if (!token) {
       navigate("/");
       return;
     }
     fetchLessons();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, navigate]);
 
- const fetchUserIdByEmail = async (userEmail: string) => {
-  try {
-    const res = await axios.get("/api/profile/users", {
-      params: { email: userEmail }, // Pass email as query parameter
-      headers: authHeader,
-    });
-
-    // Ensure the response is an array and find the user by email
-    const users = res.data;
-    if (Array.isArray(users) && users.length > 0) {
-      const user = users.find((u) => u.email === userEmail); // Match by email
-      return user?.id || null; // Return userId if found
-    }
-
-    console.error("❌ No matching user found for email:", userEmail);
-    return null;
-  } catch (err) {
-    if (axios.isAxiosError(err)) {
-      console.error("❌ Failed to fetch userId:", err.response?.data || err.message);
+  useEffect(() => {
+    if (selectedUser && selectedLesson) {
+      fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
     } else {
-      console.error("❌ Failed to fetch userId:", err);
+      setUserLessonQuestion(undefined);
     }
-    return null;
-  }
-};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUser, selectedLesson]);
 
-  const fetchUserLessonQuestion = async (userEmail: string, lessonId: string | number) => {
-  try {
-    const res = await axios.get<QuestionAnswer>(
-      `http://localhost:8080/trainer-question-answer/get-answer-reply-by-question-id/${userEmail}/${lessonId}`,
-      { headers: authHeader }
-    );
-    setUserLessonQuestion(res.data ? [res.data] : []);
-  } catch (err) {
-    console.error("❌ Failed to fetch user lesson question:", err);
-    setUserLessonQuestion([]);
-  }
-};
-
+  // ------------- handlers -------------
   const handleSelectLesson = async (lesson: Lesson) => {
     setSelectedLesson(lesson);
     setSelectedUser(null);
+    setUserLessonQuestion(undefined);
+    setTrainerReply("");
 
     try {
-      const res = await axios.get<UserProgress[]>("/api/user/progress/all", {
-        headers: authHeader,
-      });
+      const res = await axios.get<UserProgress[]>("/api/user/progress/all", { headers: authHeader });
       const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
-      console.log(lessonProgress)
+
+      // keep last entry per user
       const latestByUser = new Map<string, UserProgress>();
       lessonProgress.forEach((entry) => {
         latestByUser.set(entry.userEmail, entry);
       });
-      console.log(Array.from(latestByUser.values()))
+
       setProgressList(Array.from(latestByUser.values()));
     } catch (err) {
       console.error("❌ Failed to fetch progress:", err);
@@ -143,14 +167,13 @@ const AdminTaskManagementPage = () => {
     if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
 
     try {
-      await axios.delete(`/api/learning/${id}`, {
-        headers: authHeader,
-      });
+      await axios.delete(`/api/learning/${id}`, { headers: authHeader });
       setLessons((prev) => prev.filter((l) => l.id !== id));
       if (selectedLesson?.id === id) {
         setSelectedLesson(null);
         setProgressList([]);
         setSelectedUser(null);
+        setUserLessonQuestion(undefined);
       }
       alert("✅ Lesson deleted");
     } catch (err) {
@@ -168,12 +191,9 @@ const AdminTaskManagementPage = () => {
     if (!selectedLesson) return;
     try {
       const payload: Lesson = { ...selectedLesson, ...data };
-      await axios.put(`/api/learning/${selectedLesson.id}`, payload, {
-        headers: authHeader,
-      });
+      await axios.put(`/api/learning/${selectedLesson.id}`, payload, { headers: authHeader });
 
       setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
-
       setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
 
       setShowEditModal(false);
@@ -183,13 +203,6 @@ const AdminTaskManagementPage = () => {
       alert("Failed to update lesson information.");
     }
   };
-  useEffect(() => {
-  if (selectedUser && selectedLesson) {
-    fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
-  } else {
-    setUserLessonQuestion(undefined);
-  }
-}, [selectedUser, selectedLesson]);
 
   if (!token) return null;
 
@@ -198,9 +211,7 @@ const AdminTaskManagementPage = () => {
       <AdminSidebarWidget />
 
       <main className="flex-1 p-10 space-y-6">
-        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">
-          🧙 Task Management
-        </h1>
+        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">🧙 Task Management</h1>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Lesson List */}
@@ -211,21 +222,14 @@ const AdminTaskManagementPage = () => {
               lessons.map((lesson) => (
                 <div
                   key={lesson.id}
-                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all
-                  ${
-                    selectedLesson?.id === lesson.id
-                      ? "bg-blue-50 border-blue-500"
-                      : "bg-white hover:border-blue-500"
+                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all ${
+                    selectedLesson?.id === lesson.id ? "bg-blue-50 border-blue-500" : "bg-white hover:border-blue-500"
                   }`}
                 >
                   <div onClick={() => handleSelectLesson(lesson)}>
-                    <h3 className="font-semibold text-lg text-gray-800">
-                      {lesson.title}
-                    </h3>
+                    <h3 className="font-semibold text-lg text-gray-800">{lesson.title}</h3>
                     <p className="text-sm text-gray-500">ID: {lesson.id}</p>
-                    <p className="text-xs text-purple-600 font-semibold uppercase">
-                      {lesson.category}
-                    </p>
+                    <p className="text-xs text-purple-600 font-semibold uppercase">{lesson.category}</p>
                   </div>
 
                   {/* Edit button */}
@@ -262,9 +266,7 @@ const AdminTaskManagementPage = () => {
 
           {/* User Progress List */}
           <section className="col-span-1 space-y-4">
-            {progressList.length === 0 && selectedLesson && (
-              <p className="text-gray-400">No progress yet…</p>
-            )}
+            {progressList.length === 0 && selectedLesson && <p className="text-gray-400">No progress yet…</p>}
             {progressList.map((user) => (
               <div
                 key={`${user.lessonId}-${user.userEmail}`}
@@ -272,7 +274,7 @@ const AdminTaskManagementPage = () => {
               >
                 <div>
                   <p className="font-medium text-gray-800">{user.userEmail}</p>
-                  <p className="text-sm text-gray-400">Lesson ID: {user.lessonId}</p>
+                <p className="text-sm text-gray-400">Lesson ID: {user.lessonId}</p>
                 </div>
                 <button
                   className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
@@ -285,176 +287,217 @@ const AdminTaskManagementPage = () => {
           </section>
 
           {/* Right pane: selected user overview */}
-         <section className="col-span-1 bg-white p-6 rounded-xl shadow">
-          <h2 className="text-lg font-semibold mb-4 text-gray-700">
-            Quick overview of employee progress
-          </h2>
+          <section className="col-span-1 bg-white p-6 rounded-xl shadow">
+            <h2 className="text-lg font-semibold mb-4 text-gray-700">Quick overview of employee progress</h2>
 
-          {selectedUser ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                {selectedUser.authorAvatarUrl ? (
-                   <img
-                  src={selectedUser.authorAvatarUrl}
-                  alt={`${selectedUser.userEmail}'s avatar`}
-                  className="w-10 h-10 rounded-full"
-                />
-                ):(
-                  <div className="w-10 h-10 bg-gray-200 rounded-full" />
-                )}
-                <div>
-                  <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
-                  <p className="text-sm text-gray-500">Lesson ID: {selectedUser.lessonId}</p>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm text-gray-500">Progress</p>
-                <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
-                <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
-              </div>
-
-              <p className="text-sm text-gray-500">
-                Quiz:{" "}
-                {selectedLesson?.quizAvailable ? (
-                  selectedUser?.score > 0 ? (
-                    <span className="text-green-600 font-semibold">
-                      Finished ({selectedUser.score} pts)
-                    </span>
+            {selectedUser ? (
+              <div className="space-y-6">
+                <div className="flex items-center gap-3">
+                  {selectedUser.authorAvatarUrl ? (
+                    <img
+                      src={selectedUser.authorAvatarUrl}
+                      alt={`${selectedUser.userEmail}'s avatar`}
+                      className="w-10 h-10 rounded-full"
+                    />
                   ) : (
-                    <span className="text-red-500">Not yet</span>
-                  )
-                ) : (
-                  <span className="text-gray-400">Quiz not available for this learning content</span>
-                )}
-              </p>
-
-         
-              {/* Feedback Section */}
-             {/* Feedback Section */}
-            {selectedUser?.percent === 100 && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Feedback for {selectedUser.userEmail}
-                </label>
-
-                {selectedUser.feedback ? (
-                  // Show feedback if already given
-                  <div className="p-4 bg-gray-100 border rounded-lg">
-                    <p className="text-sm text-gray-700">{selectedUser.feedback}</p>
+                    <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                  )}
+                  <div>
+                    <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
+                    <p className="text-sm text-gray-500">Lesson ID: {selectedUser.lessonId}</p>
                   </div>
-                ) : (
-                  // Show feedback input form if feedback is not given
-                  <>
+                </div>
+
+                <div>
+                  <p className="text-sm text-gray-500">Progress</p>
+                  <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
+                  <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
+                </div>
+
+                <p className="text-sm text-gray-500">
+                  Quiz:{" "}
+                  {selectedUser.quizAvailable ? (
+                    selectedUser?.score > 0 ? (
+                      <span className="text-green-600 font-semibold">Finished ({selectedUser.score} pts)</span>
+                    ) : (
+                      <span className="text-red-500">Not yet</span>
+                    )
+                  ) : (
+                    <span className="text-gray-400">Quiz not available for this learning content</span>
+                  )}
+                </p>
+
+                {/* Q&A thread for this user+lesson */}
+                <div className="border-t pt-4">
+                  <h3 className="font-semibold text-gray-800 mb-2">User Question for this Learning Content</h3>
+                  {userLessonQuestion === undefined ? (
+                    <p className="text-sm text-gray-400">Loading…</p>
+                  ) : userLessonQuestion.length === 0 ? (
+                    <p className="text-sm text-gray-400">No questions from this user for this lesson.</p>
+                  ) : (
+                    userLessonQuestion.map((qa) => (
+                      <div key={qa.id} className="space-y-3">
+                        <div className="p-3 rounded-lg bg-gray-50 border">
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{qa.question}</p>
+                          <p className="mt-1 text-xs text-gray-400">Asked: {fmtDate(qa.createdAt || qa.createAt)}</p>
+                        </div>
+
+                        {qa.answerReplies && qa.answerReplies.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-sm font-medium text-gray-700">Trainer Replies</p>
+                            {qa.answerReplies.map((r) => (
+                              <div key={r.id} className="p-3 rounded-lg bg-blue-50 border">
+                                <p className="text-sm text-gray-800 whitespace-pre-wrap">{r.trainerReply}</p>
+                                <p className="mt-1 text-xs text-gray-500">
+                                  by {r.trainerName} • {r.trainerEmail} • {fmtDate(r.createdAt)}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Feedback Section (visible only when finished) */}
+                {selectedUser?.percent === 100 && (
+                  <div className="border-t pt-4 space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Feedback for {selectedUser.userEmail}
+                    </label>
+
+                    {selectedUser.feedback ? (
+                      <div className="p-4 bg-gray-100 border rounded-lg">
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedUser.feedback}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <textarea
+                          value={feedback}
+                          onChange={(e) => setFeedback(e.target.value)}
+                          className="h-32 w-full border rounded-lg px-3 py-2"
+                          placeholder="Write your feedback here..."
+                        />
+                        <button
+                          onClick={async () => {
+                            if (!feedback.trim()) {
+                              alert("❌ Feedback cannot be empty.");
+                              return;
+                            }
+                            try {
+                              await axios.post(
+                                `/api/user/feedback`,
+                                {
+                                  userEmail: selectedUser.userEmail,
+                                  lessonId: selectedUser.lessonId,
+                                  feedback,
+                                  email,
+                                },
+                                { headers: authHeader }
+                              );
+
+                              // notify only when a valid id is found
+                              const uid = await fetchUserIdByEmail(selectedUser.userEmail);
+                              if (uid) {
+                                await sendLessonNotification({
+                                  token,
+                                  message: `You have received feedback for lesson ${selectedLesson?.title}.`,
+                                  userIds: [uid],
+                                  target: "USER",
+                                });
+                              }
+
+                              alert("✅ Feedback sent successfully!");
+                              setFeedback("");
+                              setSelectedUser((prev) => (prev ? { ...prev, feedback } : prev));
+                            } catch (err) {
+                              console.error("❌ Failed to send feedback:", err);
+                              alert("Failed to send feedback.");
+                            }
+                          }}
+                          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                        >
+                          Send Feedback
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Trainer Reply Section (reply to the specific question) */}
+                {selectedUser?.percent === 100 && userLessonQuestion && userLessonQuestion.length > 0 && (
+                  <div className="mt-2 border-t pt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Reply to this question
+                    </label>
                     <textarea
-                      value={feedback}
-                      onChange={(e) => setFeedback(e.target.value)}
-                      className="h-48 w-full border rounded-lg px-3 py-2"
-                      placeholder="Write your feedback here..."
+                      value={trainerReply}
+                      onChange={(e) => setTrainerReply(e.target.value)}
+                      className="h-24 w-full border rounded-lg px-3 py-2"
+                      placeholder="Write your answer here..."
+                      disabled={replyLoading}
                     />
                     <button
                       onClick={async () => {
-                        if (!feedback.trim()) {
-                          alert("❌ Feedback cannot be empty.");
+                        if (!trainerReply.trim()) {
+                          alert("❌ Answer cannot be empty.");
                           return;
                         }
+                        const qa = userLessonQuestion?.[0];
+                        if (!qa) {
+                          alert("❌ No question context to reply to.");
+                          return;
+                        }
+                        setReplyLoading(true);
                         try {
+                          const payload = {
+                            // ✅ reply to the specific question of this user+lesson
+                            questionAnswerId: qa.id,
+                            // optional: include lessonId if backend needs it
+                            lessonId: selectedLesson?.id,
+                            trainerReply,
+                            trainerEmail: email,
+                            trainerName: email || "Trainer",
+                            createdAt: new Date().toISOString(),
+                          };
+
                           await axios.post(
-                            `/api/user/feedback`,
-                            {
-                              userEmail: selectedUser.userEmail,
-                              lessonId: selectedUser.lessonId,
-                              feedback,
-                              email,
-                            },
+                            "/api/trainer-question-answer/Update-answer-to-learning-content",
+                            payload,
                             { headers: authHeader }
                           );
-                          await sendLessonNotification({
-                            token,
-                            message: `You have received feedback for lesson ${selectedLesson?.title}.`,
-                            userIds: [await fetchUserIdByEmail(selectedUser.userEmail)],
-                            target: "USER",
-                          });
-                          alert("✅ Feedback sent successfully!");
-                          setFeedback(""); // Clear feedback input
-                          setSelectedUser((prev) =>
-                            prev ? { ...prev, feedback } : prev
-                          ); // Update feedback in the UI
+
+                          // refresh thread
+                          if (selectedUser && selectedLesson) {
+                            await fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
+                          }
+
+                          alert("✅ Trainer answer sent successfully!");
+                          setTrainerReply("");
                         } catch (err) {
-                          console.error("❌ Failed to send feedback:", err);
-                          alert("Failed to send feedback.");
+                          console.error("❌ Failed to send trainer answer:", err);
+                          alert("Failed to send trainer answer.");
+                        } finally {
+                          setReplyLoading(false);
                         }
                       }}
-                      className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                      className={`mt-2 px-4 py-2 rounded-lg ${
+                        replyLoading || !trainerReply.trim()
+                          ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                          : "bg-green-600 text-white hover:bg-green-700"
+                      }`}
+                      disabled={replyLoading || !trainerReply.trim()}
                     >
-                      Send Feedback
+                      {replyLoading ? "Sending..." : "Send Trainer Answer"}
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
+            ) : (
+              <p className="text-gray-400">← Select a user to see details</p>
             )}
-            {selectedUser?.percent === 100 && (
-            <div className="mt-6">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Trainer Answer to {selectedUser.userEmail}
-              </label>
-              <textarea
-                value={trainerReply}
-                onChange={(e) => setTrainerReply(e.target.value)}
-                className="h-24 w-full border rounded-lg px-3 py-2"
-                placeholder="Write your answer here..."
-                disabled={replyLoading}
-              />
-              <button
-                onClick={async () => {
-                  if (!trainerReply.trim()) {
-                    alert("❌ Answer cannot be empty.");
-                    return;
-                  }
-                  setReplyLoading(true);
-                  try {
-                    // Prepare payload
-                    const payload = {
-                      questionAnswerId: selectedLesson, // You must have this in UserProgress
-                      trainerReply,
-                      trainerEmail: email,
-                      trainerName: "Tanwarat Ttaitiprat", // Replace with actual trainer name if available
-                      avatarUrl: selectedUser.authorAvatarUrl, // Or trainer avatar if available
-                      createdAt: new Date().toISOString(),
-                    };
-                    // Log payload for debugging
-                    console.log("Sending trainer answer:", payload);
-
-                    await axios.post(
-                      "http://localhost:8080/trainer-question-answer/Update-answer-to-learning-content",
-                      payload,
-                      { headers: authHeader }
-                    );
-                    alert("✅ Trainer answer sent successfully!");
-                    setTrainerReply("");
-                  } catch (err) {
-                    console.error("❌ Failed to send trainer answer:", err);
-                    alert("Failed to send trainer answer.");
-                  } finally {
-                    setReplyLoading(false);
-                  }
-                }}
-                className={`mt-2 px-4 py-2 rounded-lg ${
-                  replyLoading || !trainerReply.trim()
-                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                    : "bg-green-600 text-white hover:bg-green-700"
-                }`}
-                disabled={replyLoading || !trainerReply.trim()}
-              >
-                {replyLoading ? "Sending..." : "Send Trainer Answer"}
-              </button>
-            </div>
-          )}
-            </div>
-          ) : (
-            <p className="text-gray-400">← Select a user to see details</p>
-          )}
-        </section>
+          </section>
         </div>
       </main>
 
