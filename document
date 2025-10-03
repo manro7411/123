@@ -1,211 +1,474 @@
-                                                                                                                                                                                                                                    
-2025-09-24 15:58:28,050 INFO  [org.acm.sec.jwt.LDAPAuthenticationService] (executor-thread-1) User info retrieved from LDAP: null
-2025-09-24 15:58:28,052 WARN  [Tes.LoginResource] (executor-thread-1) LDAP authentication failed for s_Tratchanon: Cannot invoke "org.acme.security.jwt.LDAPUserInfo.getFirstName()" because "userInfo" is null
-__  ____  __  _____   ___  __ ____  ______ ource] (executor-thread-1) No local user found with email: s_Tratchanon
-2025-09-24 15:58:54,595 ERROR [org.acm.sec.jwt.LDAPAuthenticationService] (executor-thread-1) LDAP search failed for s_Tratchanon: [LDAP: error code 32 - 0000208D: NameErr: DSID-03100245, problem 2001 (NO_OBJECT), data 0, best match of:
-        'DC=oa,DC=bbl'
-]
+import { useContext, useEffect, useState } from "react";
+import axios from "axios";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import AdminSidebarWidget from "../Widgets/AdminSideBar";
+import { useNavigate } from "react-router-dom";
+import { Pencil } from "lucide-react";
+import EditLessonModal, { type Lesson } from "./EditLessonModal";
+import { sendLessonNotification } from "../Widgets/notificationServices";
+import { useUserProfile } from "../../Lesson/hooks/useUserProfile";
 
-Exception in LDAPAuthenticationService.java:95
-          93              String searchBase = "ou=Users,dc=oa,dc=bbl";
-          94  
-        ? 95              NamingEnumeration<SearchResult> results = ctx.search(searchBase, searchFilter, searchControls);
-          96  
-          97              if (results.hasMore()) {
-
-
-
-Exception in LDAPAuthenticationService.java:131
-          129          } catch (NoResultException e) {
-          130              log.warn("LDAPAuthenticationService->findOrCreateLdapUser: LDAP user not found : {}", ldapUsername);                                                                                                     
-        ? 131              LDAPUserInfo userInfo = getUserInfo(ldapUsername, password);                                                                                                                                             
-          132              log.info("User info retrieved from LDAP: {}", userInfo != null ? userInfo.getEmail() : "null");                                                                                                          
-          133              user = new User();                                                                                                                                                                                       
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-Exception in LoginResource.java:44                                                                                                                                                                                                  
-          42                  boolean ldapAuthenticated = ldapAuthenticationService.validateUserCredentials(email, request.password);                                                                                               
-          43                  if (ldapAuthenticated) {                                                                                                                                                                              
-        ? 44                      User user = ldapAuthenticationService.findOrCreateLdapUser(username,request.password);                                                                                                            
-          45                      String token = JwtUtil.generateToken(user.getEmail(), user.getRole(), user.getName(), Duration.ofHours(2));                                                                                       
-          46                      log.info("LDAP login successful: {}", token);                                                                                                                                                     
-                                                                                                                                                                                                                                    
-: javax.naming.NameNotFoundException: [LDAP: error code 32 - 0000208D: NameErr: DSID-03100245, problem 2001 (NO_OBJECT), data 0, best match of:                                                                                     
-        'DC=oa,DC=bbl'                                                                                                                                                                                                              
-]; remaining name 'ou=Users,dc=oa,dc=bbl'                                                                                                                                                                                           
-        at java.naming/com.sun.jndi.ldap.LdapCtx.mapErrorCode(LdapCtx.java:3285)                                                                                                                                                    
-        at java.naming/com.sun.jndi.ldap.LdapCtx.processReturnCode(LdapCtx.java:3206)                                                                                                                                               
-        at java.naming/com.sun.jndi.ldap.LdapCtx.processReturnCode(LdapCtx.java:2997)                                                                                                                                               
-        at java.naming/com.sun.jndi.ldap.LdapCtx.searchAux(LdapCtx.java:1876)                                                                                                                                                       
-        at java.naming/com.sun.jndi.ldap.LdapCtx.c_search(LdapCtx.java:1799)                                                                                                                                                        
-        at java.naming/com.sun.jndi.toolkit.ctx.ComponentDirContext.p_search(ComponentDirContext.java:392)                                                                                                                          
-        at java.naming/com.sun.jndi.toolkit.ctx.PartialCompositeDirContext.search(PartialCompositeDirContext.java:358)                                                                                                              
-        at java.naming/com.sun.jndi.toolkit.ctx.PartialCompositeDirContext.search(PartialCompositeDirContext.java:341)                                                                                                              
-        at java.naming/javax.naming.directory.InitialDirContext.search(InitialDirContext.java:346)                                                                                                                                  
-        at org.acme.security.jwt.LDAPAuthenticationService.getUserInfo(LDAPAuthenticationService.java:95)                                                                                                                           
-        at org.acme.security.jwt.LDAPAuthenticationService.findOrCreateLdapUser(LDAPAuthenticationService.java:131)                                                                                                                 
-        at org.acme.security.jwt.LDAPAuthenticationService_ClientProxy.findOrCreateLdapUser(Unknown Source)                                                                                                                         
-        at Testing.LoginResource.login(LoginResource.java:44)                                                                                                                                                                       
-        at Testing.LoginResource_Subclass.login$$superforward(Unknown Source)                                                                                                                                                       
-        at Testing.LoginResource_Subclass$$function$$3.apply(Unknown Source)                                                                                                                                                        
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:136)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:107)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.doIntercept(TransactionalInterceptorRequired.java:38)                                                                                       
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.intercept(TransactionalInterceptorBase.java:61)                                                                                                 
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.intercept(TransactionalInterceptorRequired.java:32)                                                                                         
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired_Bean.intercept(Unknown Source)                                                                                                              
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
-        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
-2025-09-24 15:58:54,602 ERROR [Tes.LoginResource] (executor-thread-1) No local user found with email: s_Tratchanon Cannot invoke "org.acme.security.jwt.LDAPUserInfo.getFirstName()" because "userInfo" is null                     
---
-Press [e] to edit command line args (currently ''), [:] for the terminal, [h] for more options>
-
-package org.acme.security.jwt;
-
-import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
-import jakarta.enterprise.context.RequestScoped;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.NoResultException;
-import model.User;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import javax.naming.Context;
-import javax.naming.NamingEnumeration;
-import javax.naming.NamingException;
-import javax.naming.directory.Attributes;
-import javax.naming.directory.DirContext;
-import javax.naming.directory.InitialDirContext;
-import javax.naming.directory.SearchControls;
-import javax.naming.directory.SearchResult;
-
-import java.util.HashMap;
-import java.util.Hashtable;
-@RequestScoped
-public class LDAPAuthenticationService {
-
-    @Inject
-    EntityManager em;
-    private static final Logger log = LoggerFactory.getLogger(LDAPAuthenticationService.class);
-    private final String providerUrl;
-    private final String domainName;
-
-    public LDAPAuthenticationService(
-            @ConfigProperty(name = "quarkus.security.ldap.dir-context.url") String providerUrl,
-            @ConfigProperty(name = "app.ldap.domain") String domainName) {
-        this.providerUrl = providerUrl;
-        this.domainName = domainName;
-    }
-    public boolean validateUserCredentials(String username, String password) {
-        log.info("LDAPAuthenticationService->validateUserCredential: {}", username);
-        HashMap<String, String> environment = new HashMap<>();
-        environment.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");
-        environment.put(Context.PROVIDER_URL, providerUrl);
-        environment.put(Context.SECURITY_AUTHENTICATION, "simple");
-        environment.put(Context.SECURITY_PRINCIPAL, createBindPrincipal(username));
-        environment.put(Context.SECURITY_CREDENTIALS, password);
-
-        try {
-            DirContext ctx = new InitialDirContext(new Hashtable<>(environment));
-            ctx.close();
-            log.info("LDAPAuthenticationService->validateUserCredential: {} - Success", username);
-            return true;
-        } catch (javax.naming.AuthenticationException e) {
-            log.error("Authentication failed for user {}: Invalid credentials", username, e);
-        } catch (NamingException e) {
-            log.error("Error contacting LDAP server {}: Unable to connect", providerUrl, e);
-        } catch (Exception e) {
-            log.error("Unexpected error: {}", e.getMessage(), e);
-        }
-        return false;
-    }
-    public String createBindPrincipal(String username) {
-        log.info("LDAPAuthenticationService->createBindPrincipal: {}", username);
-        if (username.toLowerCase().endsWith("@" + domainName.toLowerCase())) {
-            return username;
-        } else {
-            return username + "@" + domainName;
-        }
-    }
-    public LDAPUserInfo getUserInfo(String username, String password) {
-        log.info("LDAPAuthenticationService->getUserInfo: {}", username);
-
-        if (!validateUserCredentials(username, password)) {
-            log.warn("LDAPAuthenticationService->getUserInfo: Invalid credentials for {}", username);
-            return null;
-        }
-
-        HashMap<String, String> environment = new HashMap<>();
-        environment.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");
-        environment.put(Context.PROVIDER_URL, providerUrl);
-        environment.put(Context.SECURITY_AUTHENTICATION, "simple");
-        environment.put(Context.SECURITY_PRINCIPAL, createBindPrincipal(username));
-        environment.put(Context.SECURITY_CREDENTIALS, password);
-
-        try {
-            DirContext ctx = new InitialDirContext(new Hashtable<>(environment));
-            SearchControls searchControls = new SearchControls();
-            searchControls.setSearchScope(SearchControls.SUBTREE_SCOPE);
-            searchControls.setReturningAttributes(new String[]{"givenName", "sn", "mail"});
-
-            // Use uid instead of sAMAccountName to match your LDAP config
-            String searchFilter = "(uid=" + username.split("@")[0] + ")";
-            // Use the search base from your config
-            String searchBase = "ou=Users,dc=oa,dc=bbl";
-
-            NamingEnumeration<SearchResult> results = ctx.search(searchBase, searchFilter, searchControls);
-
-            if (results.hasMore()) {
-                SearchResult result = results.next();
-                Attributes attrs = result.getAttributes();
-
-                String firstName = attrs.get("givenName") != null ?
-                        attrs.get("givenName").get().toString() : "FirstName";
-                String lastName = attrs.get("sn") != null ?
-                        attrs.get("sn").get().toString() : "LastName";
-                String email = attrs.get("mail") != null ?
-                        attrs.get("mail").get().toString() : username;
-
-                ctx.close();
-                log.info("LDAPAuthenticationService->getUserInfo: Successfully retrieved info for {}", username);
-                return new LDAPUserInfo(firstName, lastName, email);
-            } else {
-                log.warn("LDAPAuthenticationService->getUserInfo: No LDAP entry found for {}", username);
-            }
-            ctx.close();
-        } catch (NamingException e) {
-            log.error("LDAP search failed for {}: {}", username, e.getMessage(), e);
-        } catch (Exception e) {
-            log.error("Unexpected error while retrieving user info for {}: {}", username, e.getMessage(), e);
-        }
-        return null;
-    }
-    public User findOrCreateLdapUser(String ldapUsername, String password) {
-        log.info("LDAPAuthenticationService->findOrCreateLdapUser: {}", ldapUsername);
-        User user;
-        try {
-            user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
-                    .setParameter("email", ldapUsername)
-                    .getSingleResult();
-        } catch (NoResultException e) {
-            log.warn("LDAPAuthenticationService->findOrCreateLdapUser: LDAP user not found : {}", ldapUsername);
-            LDAPUserInfo userInfo = getUserInfo(ldapUsername, password);
-            log.info("User info retrieved from LDAP: {}", userInfo != null ? userInfo.getEmail() : "null");
-            user = new User();
-            user.setId(NanoIdUtils.randomNanoId());
-            user.setName(userInfo.getFirstName() + " " + userInfo.getLastName());
-            user.setEmail(userInfo != null ? userInfo.getEmail() : ldapUsername);
-            user.setLdap(true);
-            user.setRole("user");
-            em.persist(user);
-            log.info("LDAPAuthenticationService->findOrCreateLdapUser: New LDAP user created - id={}, name={}", user.getId(), user.getName());
-        }
-        return user;
-    }
+interface UserProgress {
+  userEmail: string;
+  percent: number;
+  lessonId: number;
+  score: number;
+  authorAvatarUrl:string;
+  quizAvailable: boolean;
+  feedback?: string;
 }
+interface AnswerReply {
+  id: string;
+  trainerReply: string;
+  trainerEmail: string;
+  trainerName: string;
+  avatarUrl: string;
+  createdAt: string;
+}
+interface QuestionAnswer {
+  id: string;
+  userEmail: string;
+  authorAvatarUrl: string;
+  createAt: string;
+  question: string;
+  answerReplies?: AnswerReply[];
+}
+const AdminTaskManagementPage = () => {
+  const { token } = useContext(AuthContext);
+  const {email} = useUserProfile(token);
+  const navigate = useNavigate();
 
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
+  const [progressList, setProgressList] = useState<UserProgress[]>([]);
+  const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [feedback,setFeedback] = useState<string>("")
+
+  const [trainerReply,setTrainerReply] = useState<string>("");
+  const [replyLoading,setReplyLoading] = useState(false);
+
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [userLessonQuestion , setUserLessonQuestion] = useState<QuestionAnswer[]>()
+
+  const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+  const fetchLessons = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get<Lesson[]>("/api/learning?mine=true", {
+        headers: authHeader,
+      });
+      console.log("My contents => ",res.data)
+      setLessons(res.data);
+    } catch (err) {
+      console.error("❌ Failed to load lessons:", err);
+      alert("Failed to fetch lessons.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+
+  useEffect(() => {
+    if (!token) {
+      navigate("/");
+      return;
+    }
+    fetchLessons();
+  }, [token, navigate]);
+
+ const fetchUserIdByEmail = async (userEmail: string) => {
+  try {
+    const res = await axios.get("/api/profile/users", {
+      params: { email: userEmail }, // Pass email as query parameter
+      headers: authHeader,
+    });
+
+    // Ensure the response is an array and find the user by email
+    const users = res.data;
+    if (Array.isArray(users) && users.length > 0) {
+      const user = users.find((u) => u.email === userEmail); // Match by email
+      return user?.id || null; // Return userId if found
+    }
+
+    console.error("❌ No matching user found for email:", userEmail);
+    return null;
+  } catch (err) {
+    if (axios.isAxiosError(err)) {
+      console.error("❌ Failed to fetch userId:", err.response?.data || err.message);
+    } else {
+      console.error("❌ Failed to fetch userId:", err);
+    }
+    return null;
+  }
+};
+
+  const fetchUserLessonQuestion = async (userEmail: string, lessonId: string | number) => {
+  try {
+    const res = await axios.get<QuestionAnswer>(
+      `http://localhost:8080/trainer-question-answer/get-answer-reply-by-question-id/${userEmail}/${lessonId}`,
+      { headers: authHeader }
+    );
+    setUserLessonQuestion(res.data ? [res.data] : []);
+  } catch (err) {
+    console.error("❌ Failed to fetch user lesson question:", err);
+    setUserLessonQuestion([]);
+  }
+};
+
+  const handleSelectLesson = async (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setSelectedUser(null);
+
+    try {
+      const res = await axios.get<UserProgress[]>("/api/user/progress/all", {
+        headers: authHeader,
+      });
+      const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
+      console.log(lessonProgress)
+      const latestByUser = new Map<string, UserProgress>();
+      lessonProgress.forEach((entry) => {
+        latestByUser.set(entry.userEmail, entry);
+      });
+      console.log(Array.from(latestByUser.values()))
+      setProgressList(Array.from(latestByUser.values()));
+    } catch (err) {
+      console.error("❌ Failed to fetch progress:", err);
+      alert("Failed to load progress data.");
+    }
+  };
+
+  const handleDeleteLesson = async (id: number) => {
+    if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
+
+    try {
+      await axios.delete(`/api/learning/${id}`, {
+        headers: authHeader,
+      });
+      setLessons((prev) => prev.filter((l) => l.id !== id));
+      if (selectedLesson?.id === id) {
+        setSelectedLesson(null);
+        setProgressList([]);
+        setSelectedUser(null);
+      }
+      alert("✅ Lesson deleted");
+    } catch (err) {
+      console.error("❌ Delete failed:", err);
+      alert("Failed to delete lesson.");
+    }
+  };
+
+  const handleOpenEdit = (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setShowEditModal(true);
+  };
+
+  const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
+    if (!selectedLesson) return;
+    try {
+      const payload: Lesson = { ...selectedLesson, ...data };
+      await axios.put(`/api/learning/${selectedLesson.id}`, payload, {
+        headers: authHeader,
+      });
+
+      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
+
+      setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
+
+      setShowEditModal(false);
+      alert("✅ Lesson updated");
+    } catch (err) {
+      console.error("❌ Update failed:", err);
+      alert("Failed to update lesson information.");
+    }
+  };
+  useEffect(() => {
+  if (selectedUser && selectedLesson) {
+    fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
+  } else {
+    setUserLessonQuestion(undefined);
+  }
+}, [selectedUser, selectedLesson]);
+
+  if (!token) return null;
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      <AdminSidebarWidget />
+
+      <main className="flex-1 p-10 space-y-6">
+        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">
+          🧙 Task Management
+        </h1>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Lesson List */}
+          <section className="col-span-1 space-y-4">
+            {loading ? (
+              <p className="text-gray-500">Loading lessons...</p>
+            ) : (
+              lessons.map((lesson) => (
+                <div
+                  key={lesson.id}
+                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all
+                  ${
+                    selectedLesson?.id === lesson.id
+                      ? "bg-blue-50 border-blue-500"
+                      : "bg-white hover:border-blue-500"
+                  }`}
+                >
+                  <div onClick={() => handleSelectLesson(lesson)}>
+                    <h3 className="font-semibold text-lg text-gray-800">
+                      {lesson.title}
+                    </h3>
+                    <p className="text-sm text-gray-500">ID: {lesson.id}</p>
+                    <p className="text-xs text-purple-600 font-semibold uppercase">
+                      {lesson.category}
+                    </p>
+                  </div>
+
+                  {/* Edit button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenEdit(lesson);
+                    }}
+                    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
+                    title="Edit lesson"
+                    type="button"
+                    aria-label="Edit lesson"
+                  >
+                    <Pencil size={18} />
+                  </button>
+
+                  {/* Delete button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteLesson(lesson.id);
+                    }}
+                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                    title="Delete lesson"
+                    type="button"
+                    aria-label="Delete lesson"
+                  >
+                    🗑
+                  </button>
+                </div>
+              ))
+            )}
+          </section>
+
+          {/* User Progress List */}
+          <section className="col-span-1 space-y-4">
+            {progressList.length === 0 && selectedLesson && (
+              <p className="text-gray-400">No progress yet…</p>
+            )}
+            {progressList.map((user) => (
+              <div
+                key={`${user.lessonId}-${user.userEmail}`}
+                className="p-4 bg-white rounded-xl shadow flex justify-between items-center"
+              >
+                <div>
+                  <p className="font-medium text-gray-800">{user.userEmail}</p>
+                  <p className="text-sm text-gray-400">Lesson ID: {user.lessonId}</p>
+                </div>
+                <button
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
+                  onClick={() => setSelectedUser(user)}
+                >
+                  View
+                </button>
+              </div>
+            ))}
+          </section>
+
+          {/* Right pane: selected user overview */}
+         <section className="col-span-1 bg-white p-6 rounded-xl shadow">
+          <h2 className="text-lg font-semibold mb-4 text-gray-700">
+            Quick overview of employee progress
+          </h2>
+
+          {selectedUser ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                {selectedUser.authorAvatarUrl ? (
+                   <img
+                  src={selectedUser.authorAvatarUrl}
+                  alt={`${selectedUser.userEmail}'s avatar`}
+                  className="w-10 h-10 rounded-full"
+                />
+                ):(
+                  <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                )}
+                <div>
+                  <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
+                  <p className="text-sm text-gray-500">Lesson ID: {selectedUser.lessonId}</p>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-sm text-gray-500">Progress</p>
+                <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
+                <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
+              </div>
+
+              <p className="text-sm text-gray-500">
+                Quiz:{" "}
+                {selectedLesson?.quizAvailable ? (
+                  selectedUser?.score > 0 ? (
+                    <span className="text-green-600 font-semibold">
+                      Finished ({selectedUser.score} pts)
+                    </span>
+                  ) : (
+                    <span className="text-red-500">Not yet</span>
+                  )
+                ) : (
+                  <span className="text-gray-400">Quiz not available for this learning content</span>
+                )}
+              </p>
+
+         
+              {/* Feedback Section */}
+             {/* Feedback Section */}
+            {selectedUser?.percent === 100 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Feedback for {selectedUser.userEmail}
+                </label>
+
+                {selectedUser.feedback ? (
+                  // Show feedback if already given
+                  <div className="p-4 bg-gray-100 border rounded-lg">
+                    <p className="text-sm text-gray-700">{selectedUser.feedback}</p>
+                  </div>
+                ) : (
+                  // Show feedback input form if feedback is not given
+                  <>
+                    <textarea
+                      value={feedback}
+                      onChange={(e) => setFeedback(e.target.value)}
+                      className="h-48 w-full border rounded-lg px-3 py-2"
+                      placeholder="Write your feedback here..."
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!feedback.trim()) {
+                          alert("❌ Feedback cannot be empty.");
+                          return;
+                        }
+                        try {
+                          await axios.post(
+                            `/api/user/feedback`,
+                            {
+                              userEmail: selectedUser.userEmail,
+                              lessonId: selectedUser.lessonId,
+                              feedback,
+                              email,
+                            },
+                            { headers: authHeader }
+                          );
+                          await sendLessonNotification({
+                            token,
+                            message: `You have received feedback for lesson ${selectedLesson?.title}.`,
+                            userIds: [await fetchUserIdByEmail(selectedUser.userEmail)],
+                            target: "USER",
+                          });
+                          alert("✅ Feedback sent successfully!");
+                          setFeedback(""); // Clear feedback input
+                          setSelectedUser((prev) =>
+                            prev ? { ...prev, feedback } : prev
+                          ); // Update feedback in the UI
+                        } catch (err) {
+                          console.error("❌ Failed to send feedback:", err);
+                          alert("Failed to send feedback.");
+                        }
+                      }}
+                      className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      Send Feedback
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            {selectedUser?.percent === 100 && (
+            <div className="mt-6">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Trainer Answer to {selectedUser.userEmail}
+              </label>
+              <textarea
+                value={trainerReply}
+                onChange={(e) => setTrainerReply(e.target.value)}
+                className="h-24 w-full border rounded-lg px-3 py-2"
+                placeholder="Write your answer here..."
+                disabled={replyLoading}
+              />
+              <button
+                onClick={async () => {
+                  if (!trainerReply.trim()) {
+                    alert("❌ Answer cannot be empty.");
+                    return;
+                  }
+                  setReplyLoading(true);
+                  try {
+                    // Prepare payload
+                    const payload = {
+                      questionAnswerId: selectedLesson, // You must have this in UserProgress
+                      trainerReply,
+                      trainerEmail: email,
+                      trainerName: "Tanwarat Ttaitiprat", // Replace with actual trainer name if available
+                      avatarUrl: selectedUser.authorAvatarUrl, // Or trainer avatar if available
+                      createdAt: new Date().toISOString(),
+                    };
+                    // Log payload for debugging
+                    console.log("Sending trainer answer:", payload);
+
+                    await axios.post(
+                      "http://localhost:8080/trainer-question-answer/Update-answer-to-learning-content",
+                      payload,
+                      { headers: authHeader }
+                    );
+                    alert("✅ Trainer answer sent successfully!");
+                    setTrainerReply("");
+                  } catch (err) {
+                    console.error("❌ Failed to send trainer answer:", err);
+                    alert("Failed to send trainer answer.");
+                  } finally {
+                    setReplyLoading(false);
+                  }
+                }}
+                className={`mt-2 px-4 py-2 rounded-lg ${
+                  replyLoading || !trainerReply.trim()
+                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    : "bg-green-600 text-white hover:bg-green-700"
+                }`}
+                disabled={replyLoading || !trainerReply.trim()}
+              >
+                {replyLoading ? "Sending..." : "Send Trainer Answer"}
+              </button>
+            </div>
+          )}
+            </div>
+          ) : (
+            <p className="text-gray-400">← Select a user to see details</p>
+          )}
+        </section>
+        </div>
+      </main>
+
+      {/* Edit Lesson Modal */}
+      {showEditModal && selectedLesson && (
+        <EditLessonModal
+          open={showEditModal}
+          initial={selectedLesson}
+          onClose={() => setShowEditModal(false)}
+          onSave={handleSaveLesson}
+        />
+      )}
+    </div>
+  );
+};
+
+export default AdminTaskManagementPage;
