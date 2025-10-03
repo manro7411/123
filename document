@@ -31,8 +31,7 @@ interface QuestionAnswer {
   id: string;
   userEmail: string;
   authorAvatarUrl?: string;
-  createAt?: string;     // some backends send createAt
-  createdAt?: string;    // some send createdAt
+  createAt?: string;      
   question: string;
   answerReplies?: AnswerReply[];
 }
@@ -91,6 +90,7 @@ const AdminTaskManagementPage = () => {
 
       const users = res.data;
       if (Array.isArray(users) && users.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const user = users.find((u: any) => u.email === userEmail);
         return user?.id || null;
       }
@@ -113,6 +113,7 @@ const AdminTaskManagementPage = () => {
         `/api/trainer-question-answer/get-answer-reply-by-question-id/${userEmail}/${lessonId}`,
         { headers: authHeader }
       );
+      console.log(res.data)
       setUserLessonQuestion(res.data ? [res.data] : []);
     } catch (err) {
       console.error("❌ Failed to fetch user lesson question:", err);
@@ -331,35 +332,39 @@ const AdminTaskManagementPage = () => {
                 <div className="border-t pt-4">
                   <h3 className="font-semibold text-gray-800 mb-2">User Question for this Learning Content</h3>
                   {userLessonQuestion === undefined ? (
-                    <p className="text-sm text-gray-400">Loading…</p>
-                  ) : userLessonQuestion.length === 0 ? (
-                    <p className="text-sm text-gray-400">No questions from this user for this lesson.</p>
-                  ) : (
-                    userLessonQuestion.map((qa) => (
-                      <div key={qa.id} className="space-y-3">
-                        <div className="p-3 rounded-lg bg-gray-50 border">
-                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{qa.question}</p>
-                          <p className="mt-1 text-xs text-gray-400">Asked: {fmtDate(qa.createdAt || qa.createAt)}</p>
-                        </div>
-
-                        {qa.answerReplies && qa.answerReplies.length > 0 && (
-                          <div className="space-y-2">
-                            <p className="text-sm font-medium text-gray-700">Trainer Replies</p>
-                            {qa.answerReplies.map((r) => (
-                              <div key={r.id} className="p-3 rounded-lg bg-blue-50 border">
-                                <p className="text-sm text-gray-800 whitespace-pre-wrap">{r.trainerReply}</p>
-                                <p className="mt-1 text-xs text-gray-500">
-                                  by {r.trainerName} • {r.trainerEmail} • {fmtDate(r.createdAt)}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                  <p className="text-sm text-gray-400">Loading…</p>
+                ) : userLessonQuestion.length === 0 ? (
+                  <p className="text-sm text-gray-400">No questions from this user for this lesson.</p>
+                ) : (
+                  userLessonQuestion.map((qa) => (
+                    <div key={qa.id} className="space-y-3">
+                      <div className="p-3 rounded-lg bg-gray-50 border">
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                          {qa.question ? qa.question : <span className="text-gray-400">No question text</span>}
+                          {qa.question}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-400">
+                          Asked: {fmtDate(qa.createAt)}
+                        </p>
                       </div>
-                    ))
-                  )}
-                </div>
 
+                      {qa.answerReplies && qa.answerReplies.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-gray-700">Trainer Replies</p>
+                          {qa.answerReplies.map((r) => (
+                            <div key={r.id} className="p-3 rounded-lg bg-blue-50 border">
+                              <p className="text-sm text-gray-800 whitespace-pre-wrap">{r.trainerReply}</p>
+                              <p className="mt-1 text-xs text-gray-500">
+                                by {r.trainerName} • {r.trainerEmail} • {fmtDate(r.createdAt)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+                </div>
                 {/* Feedback Section (visible only when finished) */}
                 {selectedUser?.percent === 100 && (
                   <div className="border-t pt-4 space-y-2">
