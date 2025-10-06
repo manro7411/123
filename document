@@ -21,37 +21,31 @@ type RewardProps = {
 
 const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [loadingCouponId, setLoadingCouponId] = useState<string | null>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
 
-  // ✅ ใช้แค่ id สำหรับซ่อนแบบ optimistic
-  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  // ใช้ object map เพื่อหลีกเลี่ยงปัญหา reference ของ Set
+  const [hiddenById, setHiddenById] = useState<Record<string, boolean>>({});
 
-  // แสดงยอดคงเหลือแบบ optimistic
-  const [remainingPoints, setRemainingPoints] = useState<number>(userPoints);
+  // แสดงคะแนนคงเหลือแบบ optimistic
+  const [remainingPoints, setRemainingPoints] = useState(userPoints);
   useEffect(() => setRemainingPoints(userPoints), [userPoints]);
 
   const { email } = useUserProfile(token);
   const { HistoryDetails } = usePointHistory(token);
 
-  // ประวัติที่เคย redeem มาแล้ว
-  const redeemedKeys = useMemo(() => {
-    const ids = new Set<string>();
-    const codes = new Set<string>();
+  // ประวัติที่เคย redeem แล้ว (อิงเฉพาะ couponId)
+  const redeemedIdSet = useMemo(() => {
+    const s = new Set<string>();
     for (const h of HistoryDetails) {
-      if (h.isRedeemed) {
-        if (h.couponId) ids.add(h.couponId);
-        if (h.couponCode) codes.add(h.couponCode);
+      if (h.isRedeemed && h.couponId) {
+        s.add(h.couponId);
       }
     }
-    return { ids, codes };
+    return s;
   }, [HistoryDetails]);
 
-  // ปิดปุ่มถ้าใบนี้เคย redeem (จาก id) หรือถ้าไม่มี id ในประวัติให้กันด้วย code
-  const isRedeemedForButton = (c: Coupon) =>
-    redeemedKeys.ids.has(c.id) || redeemedKeys.codes.has(c.couponCode);
-
-  // ใช้เฉพาะ id ในการซ่อนจากลิสต์ (แก้ปัญหาหายยกชุด)
-  const isHiddenOptimistically = (c: Coupon) => hiddenIds.has(c.id);
+  const isRedeemedFromHistory = (c: Coupon) => redeemedIdSet.has(c.id);
+  const isHidden = (c: Coupon) => !!hiddenById[c.id];
 
   useEffect(() => {
     const fetchCoupons = async () => {
@@ -60,26 +54,31 @@ const Reward = ({ userPoints, token }: RewardProps) => {
           "http://localhost:8080/coupon-usage-tracking/Get-All-Coupons-For-User",
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        if (Array.isArray(res.data)) setCoupons(res.data);
+        if (Array.isArray(res.data)) {
+          setCoupons(res.data);
+          console.log("[Reward] fetched coupons:", res.data);
+        } else {
+          console.warn("[Reward] coupons response is not array:", res.data);
+        }
       } catch (err) {
-        console.error("Failed to fetch coupons:", err);
+        console.error("[Reward] fetch coupons error:", err);
       }
     };
     fetchCoupons();
   }, [token]);
 
   const handleRedeem = async (coupon: Coupon) => {
-    // บล็อกซ้ำ
-    if (isRedeemedForButton(coupon) || isHiddenOptimistically(coupon)) return;
+    // กันซ้ำ: ถ้าใบนี้ถูกซ่อนไปแล้วหรือเคย redeem แล้ว ให้ return
+    if (isHidden(coupon) || isRedeemedFromHistory(coupon)) return;
 
     if (remainingPoints < coupon.pointsRequired) {
       alert("คะแนนไม่พอสำหรับคูปองนี้");
       return;
     }
 
-    // ✅ ซ่อนทันทีด้วย id อย่างเดียว
-    setHiddenIds((s) => new Set(s).add(coupon.id));
-    setLoadingCouponId(coupon.id);
+    // ซ่อนทันทีด้วย id เท่านั้น
+    setHiddenById((prev) => ({ ...prev, [coupon.id]: true }));
+    setLoadingId(coupon.id);
 
     const nextPoints = remainingPoints - coupon.pointsRequired;
 
@@ -95,6 +94,8 @@ const Reward = ({ userPoints, token }: RewardProps) => {
       currentUserPoints: nextPoints,
     };
 
+    console.log("[Reward] redeem payload:", payload);
+
     try {
       await axios.post(
         "http://localhost:8080/coupon-usage-tracking/coupon-redemptions",
@@ -102,29 +103,33 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      // ✅ ลบออกจากลิสต์ด้วย id เท่านั้น (อย่าใช้ couponCode)
+      // สำเร็จ: ตัดทิ้งจากลิสต์ด้วย id เท่านั้น
       setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
       setRemainingPoints(nextPoints);
 
       alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
-    } catch (err) {
-      // rollback หากล้มเหลว
-      setHiddenIds((s) => {
-        const n = new Set(s);
-        n.delete(coupon.id);
-        return n;
+    } catch (err: any) {
+      // ล้มเหลว: rollback การซ่อน
+      setHiddenById((prev) => {
+        const copy = { ...prev };
+        delete copy[coupon.id];
+        return copy;
       });
-      alert("Redeem failed.");
-      console.error(err);
+      const msg =
+        err?.response?.status === 409
+          ? "คุณได้ Redeem คูปองนี้ไปแล้ว"
+          : "Redeem failed.";
+      alert(msg);
+      console.error("[Reward] redeem error:", err);
     } finally {
-      setLoadingCouponId(null);
+      setLoadingId(null);
     }
   };
 
-  // แสดงเฉพาะใบที่ไม่ถูกซ่อนแบบ optimistic (ใช้ id เท่านั้น)
+  // แสดงเฉพาะใบที่ไม่ถูกซ่อน (optimistic) — ใช้ id เท่านั้น
   const visibleCoupons = useMemo(
-    () => coupons.filter((c) => !isHiddenOptimistically(c)),
-    [coupons, hiddenIds]
+    () => coupons.filter((c) => !isHidden(c)),
+    [coupons, hiddenById]
   );
 
   return (
@@ -140,17 +145,17 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         <div className="text-gray-500">No coupons available.</div>
       ) : (
         visibleCoupons.map((coupon) => {
-          const isProcessing = loadingCouponId === coupon.id;
+          const isProcessing = loadingId === coupon.id;
+          // ปุ่มจะปิดถ้า: ไม่ active, คะแนนไม่พอ, กำลังโหลด, หรือ "เคย redeem ใบนั้นแล้ว" (จากประวัติ)
           const canRedeem =
             coupon.active &&
             remainingPoints >= coupon.pointsRequired &&
             !isProcessing &&
-            // ปิดปุ่มถ้าเคย redeem (id) หรือ (code) มาก่อน
-            !isRedeemedForButton(coupon);
+            !isRedeemedFromHistory(coupon);
 
           return (
             <div
-              key={coupon.id}
+              key={coupon.id} // ใช้ id เป็น key เท่านั้น
               className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
             >
               <div>
