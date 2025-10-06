@@ -15,7 +15,7 @@ interface Coupon {
 }
 
 type RewardProps = {
-  userPoints: number; // initial balance from parent
+  userPoints: number;
   token: string;
 };
 
@@ -23,18 +23,17 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loadingCouponId, setLoadingCouponId] = useState<string | null>(null);
 
-  // Optimistic UI: hide immediately when user clicks redeem
+  // ✅ ใช้แค่ id สำหรับซ่อนแบบ optimistic
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
-  const [hiddenCodes, setHiddenCodes] = useState<Set<string>>(new Set());
 
-  // Track remaining points locally (optimistic)
+  // แสดงยอดคงเหลือแบบ optimistic
   const [remainingPoints, setRemainingPoints] = useState<number>(userPoints);
   useEffect(() => setRemainingPoints(userPoints), [userPoints]);
 
   const { email } = useUserProfile(token);
   const { HistoryDetails } = usePointHistory(token);
 
-  // Build a redeemed registry from history by BOTH id and code
+  // ประวัติที่เคย redeem มาแล้ว
   const redeemedKeys = useMemo(() => {
     const ids = new Set<string>();
     const codes = new Set<string>();
@@ -47,11 +46,12 @@ const Reward = ({ userPoints, token }: RewardProps) => {
     return { ids, codes };
   }, [HistoryDetails]);
 
-  const isCouponRedeemedFromHistory = (c: Coupon) =>
+  // ปิดปุ่มถ้าใบนี้เคย redeem (จาก id) หรือถ้าไม่มี id ในประวัติให้กันด้วย code
+  const isRedeemedForButton = (c: Coupon) =>
     redeemedKeys.ids.has(c.id) || redeemedKeys.codes.has(c.couponCode);
 
-  const isCouponHiddenOptimistically = (c: Coupon) =>
-    hiddenIds.has(c.id) || hiddenCodes.has(c.couponCode);
+  // ใช้เฉพาะ id ในการซ่อนจากลิสต์ (แก้ปัญหาหายยกชุด)
+  const isHiddenOptimistically = (c: Coupon) => hiddenIds.has(c.id);
 
   useEffect(() => {
     const fetchCoupons = async () => {
@@ -60,9 +60,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
           "http://localhost:8080/coupon-usage-tracking/Get-All-Coupons-For-User",
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        if (Array.isArray(res.data)) {
-          setCoupons(res.data);
-        }
+        if (Array.isArray(res.data)) setCoupons(res.data);
       } catch (err) {
         console.error("Failed to fetch coupons:", err);
       }
@@ -71,18 +69,16 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   }, [token]);
 
   const handleRedeem = async (coupon: Coupon) => {
-    // Block duplicate redeem attempts (history or current optimistic state)
-    if (isCouponRedeemedFromHistory(coupon) || isCouponHiddenOptimistically(coupon)) return;
+    // บล็อกซ้ำ
+    if (isRedeemedForButton(coupon) || isHiddenOptimistically(coupon)) return;
 
-    // Use local remaining points (not the stale prop)
     if (remainingPoints < coupon.pointsRequired) {
       alert("คะแนนไม่พอสำหรับคูปองนี้");
       return;
     }
 
-    // Optimistic: hide immediately and set loading for this coupon
+    // ✅ ซ่อนทันทีด้วย id อย่างเดียว
     setHiddenIds((s) => new Set(s).add(coupon.id));
-    setHiddenCodes((s) => new Set(s).add(coupon.couponCode));
     setLoadingCouponId(coupon.id);
 
     const nextPoints = remainingPoints - coupon.pointsRequired;
@@ -106,48 +102,29 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      // Keep UI small and consistent with server by pruning redeemed coupon
-      setCoupons((prev) =>
-        prev.filter(
-          (c) => c.id !== coupon.id && c.couponCode !== coupon.couponCode
-        )
-      );
+      // ✅ ลบออกจากลิสต์ด้วย id เท่านั้น (อย่าใช้ couponCode)
+      setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
       setRemainingPoints(nextPoints);
 
       alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
-    } catch (err: any) {
-      // Rollback optimistic hide on failure
+    } catch (err) {
+      // rollback หากล้มเหลว
       setHiddenIds((s) => {
         const n = new Set(s);
         n.delete(coupon.id);
         return n;
       });
-      setHiddenCodes((s) => {
-        const n = new Set(s);
-        n.delete(coupon.couponCode);
-        return n;
-      });
-
-      // Optional: surface BE message if exists
-      const msg =
-        err?.response?.status === 409
-          ? "คุณได้ Redeem คูปองนี้ไปแล้ว"
-          : "Redeem failed.";
-      alert(msg);
+      alert("Redeem failed.");
       console.error(err);
     } finally {
       setLoadingCouponId(null);
     }
   };
 
-  // Only show coupons that are not redeemed historically and not optimistically hidden
+  // แสดงเฉพาะใบที่ไม่ถูกซ่อนแบบ optimistic (ใช้ id เท่านั้น)
   const visibleCoupons = useMemo(
-    () =>
-      coupons.filter(
-        (c) =>
-          !isCouponRedeemedFromHistory(c) && !isCouponHiddenOptimistically(c)
-      ),
-    [coupons, redeemedKeys, hiddenIds, hiddenCodes]
+    () => coupons.filter((c) => !isHiddenOptimistically(c)),
+    [coupons, hiddenIds]
   );
 
   return (
@@ -165,11 +142,15 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         visibleCoupons.map((coupon) => {
           const isProcessing = loadingCouponId === coupon.id;
           const canRedeem =
-            coupon.active && remainingPoints >= coupon.pointsRequired && !isProcessing;
+            coupon.active &&
+            remainingPoints >= coupon.pointsRequired &&
+            !isProcessing &&
+            // ปิดปุ่มถ้าเคย redeem (id) หรือ (code) มาก่อน
+            !isRedeemedForButton(coupon);
 
           return (
             <div
-              key={`${coupon.id}-${coupon.couponCode}`}
+              key={coupon.id}
               className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
             >
               <div>
