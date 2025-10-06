@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+// Reward.tsx
+import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { useUserProfile } from "../Lesson/hooks/useUserProfile";
 import { usePointHistory } from "./hooks/userPointHistory";
@@ -18,9 +19,12 @@ type RewardProps = {
   token: string;
 };
 
+// ใช้คีย์ต่อการ์ด เพื่อกัน edge case id ซ้ำ
+const keyOf = (c: Coupon) => `${c.id}::${c.couponCode}`;
+
 const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set()); // per-coupon loading
   const [remainingPoints, setRemainingPoints] = useState(userPoints);
 
   useEffect(() => setRemainingPoints(userPoints), [userPoints]);
@@ -28,44 +32,55 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   const { email } = useUserProfile(token);
   const { HistoryDetails, refetch: refetchHistory } = usePointHistory(token);
 
+  // ใช้ประวัติแค่ "ตอนเตรียมลิสต์ครั้งแรก/รีเฟรช" ไม่เอามาใส่ใน disabled
   const redeemedIdSet = useMemo(() => {
     const s = new Set<string>();
     for (const h of HistoryDetails) {
-      if (h.isRedeemed && h.couponId) {
-        s.add(String(h.couponId));
-      }
+      if (h.isRedeemed && h.couponId) s.add(String(h.couponId));
     }
     return s;
   }, [HistoryDetails]);
 
-  const fetchCoupons = useCallback(async () => {
+  const fetchCoupons = async () => {
     try {
       const res = await axios.get(
         "http://localhost:8080/coupon-usage-tracking/Get-All-Coupons-For-User",
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (Array.isArray(res.data)) {
-        setCoupons(res.data);
+        // กรองใบที่เคย redeem ไปแล้ว (เพื่อไม่ให้กลับมาโผล่)
+        const filtered = res.data.filter((c: Coupon) => !redeemedIdSet.has(c.id));
+        setCoupons(filtered);
       }
     } catch (err) {
       console.error("Failed to fetch coupons:", err);
     }
-  }, [token]);
+  };
 
   useEffect(() => {
     fetchCoupons();
-  }, [fetchCoupons]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, redeemedIdSet]); // อัปเดตลิสต์เมื่อประวัติมีการเปลี่ยน
 
   const handleRedeem = async (coupon: Coupon) => {
-    if (redeemedIdSet.has(coupon.id)) return;
+    const k = keyOf(coupon);
+    if (loadingKeys.has(k)) return;
+
+    if (!coupon.active) return;
     if (remainingPoints < coupon.pointsRequired) {
       alert("คะแนนไม่พอสำหรับคูปองนี้");
       return;
     }
-    setLoadingId(coupon.id);
 
+    // 1) mark loading "เฉพาะใบนี้"
+    setLoadingKeys((s) => new Set(s).add(k));
+
+    // 2) OPTIMISTIC: ลบใบนี้ออกจากลิสต์ทันที + หักแต้มทันที
+    setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
     const nextPoints = remainingPoints - coupon.pointsRequired;
+    setRemainingPoints(nextPoints);
 
+    // 3) ยิง POST ไปหลังบ้าน
     const payload = {
       id: crypto.randomUUID(),
       userEmail: email,
@@ -84,78 +99,10 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         payload,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      setRemainingPoints(nextPoints);
-      alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
 
-      // ✅ Auto refresh coupon list and redemption history
-      await Promise.all([fetchCoupons(), refetchHistory()]);
+      // 4) สำเร็จ: ปล่อยให้กดใบถัดไปได้ทันที (เราไม่รอ refetch)
+      //    ซิงก์ข้อมูลพื้นหลังแบบ fire-and-forget (ไม่ await เพื่อไม่บล็อก UI)
+      refetchHistory?.();
+      fetchCoupons(); // ไม่ต้อง await
     } catch (err: any) {
-      console.error(err);
-    } finally {
-      setLoadingId(null);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
-        <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
-        <div className="text-sm text-gray-700">
-          Remaining points: <span className="font-semibold">{remainingPoints}</span>
-        </div>
-      </div>
-
-      {coupons.length === 0 ? (
-        <div className="text-gray-500">No coupons available.</div>
-      ) : (
-        coupons.map((coupon) => {
-          const isProcessing = loadingId === coupon.id;
-          const isRedeemed = redeemedIdSet.has(coupon.id);
-          const canRedeem =
-            coupon.active &&
-            remainingPoints >= coupon.pointsRequired &&
-            !isProcessing &&
-            !isRedeemed;
-
-          return (
-            <div
-              key={coupon.id}
-              className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
-            >
-              <div>
-                <div className="text-base font-semibold text-blue-800">
-                  {coupon.couponTitle}
-                </div>
-                <div className="text-xs text-blue-600">
-                  {coupon.pointsRequired} points to redeem
-                </div>
-                <div className="text-xs text-gray-700">
-                  {coupon.couponDescription}
-                </div>
-              </div>
-              <button
-                disabled={!canRedeem}
-                onClick={() => handleRedeem(coupon)}
-                className={`px-4 py-1 rounded-full font-medium ${
-                  isRedeemed
-                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                    : canRedeem
-                    ? "bg-blue-600 hover:bg-blue-700 text-white"
-                    : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                }`}
-              >
-                {isRedeemed
-                  ? "Redeemed"
-                  : isProcessing
-                  ? "Processing..."
-                  : "Redeem"}
-              </button>
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
-};
-
-export default Reward;
+      // 5)
