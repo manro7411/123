@@ -1,172 +1,183 @@
-package PointSystem.Resources;
+import { useState, useEffect, useMemo } from "react";
+import axios from "axios";
+import { useUserProfile } from "../Lesson/hooks/useUserProfile";
+import { usePointHistory } from "./hooks/userPointHistory";
 
-import PointSystem.DTOs.CouponUsageTrackingDTO;
-import PointSystem.DTOs.CreatedCouponDTO;
-import PointSystem.Entity.CouponEntity;
-import PointSystem.Entity.CouponUsageEntity;
-
-import jakarta.annotation.security.RolesAllowed;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.Context;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.SecurityContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.UUID;
-
-@Path("/coupon-usage-tracking")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
-public class CouponUsageTrackingResources {
-    public static final String ROLE_USER = "user",
-            ROLE_ADMIN = "admin",
-            ROLE_EMPLOYEE = "employee",
-            ROLE_SUPERVISOR = "supervisor",
-            ROLE_ADMINISTRATOR = "administrator";
-
-    public static final Logger log = LoggerFactory.getLogger(CouponUsageTrackingResources.class);
-
-    @Inject
-    EntityManager entityManager;
-
-    // 1) ดึงประวัติการใช้คูปองของ user (ใส่ couponId ให้ DTO ด้วย)
-    @GET
-    @Transactional
-    @RolesAllowed(ROLE_USER)
-    @Path("coupon-redemptions/{userEmail}")
-    public Response getCouponRedemptionsByUser(@PathParam("userEmail") String userEmail,
-                                               @Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        log.info("User {} is retrieving coupon redemptions for userEmail: {}", currentUser, userEmail);
-
-        try {
-            var query = entityManager.createQuery(
-                    "SELECT u FROM CouponUsageEntity u WHERE u.userEmail = :userEmail ORDER BY u.redeemTime DESC",
-                    CouponUsageEntity.class);
-            query.setParameter("userEmail", userEmail);
-            var redemptions = query.getResultList();
-
-            var responseList = redemptions.stream().map(u -> {
-                var dto = new CouponUsageTrackingDTO();
-                dto.setId(u.getId());
-                dto.setUserEmail(u.getUserEmail());
-                dto.setCouponCode(u.getCouponCode());
-                dto.setCouponTitle(u.getCouponTitle());
-                dto.setCouponDescription(u.getCouponDescription());
-                dto.setUserEarnPoints(u.getUserEarnPoints());
-                dto.setCurrentUserPoints(u.getCurrentUserPoints());
-                dto.setRedeemTime(u.getRedeemTime());
-                dto.setRedeemed(Boolean.TRUE.equals(u.getRedeemed()));
-                // ✅ สำคัญ: ส่ง couponId กลับไปให้ UI
-                if (u.getCoupon() != null) {
-                    dto.setCouponId(u.getCoupon().getId());
-                }
-                return dto;
-            }).toList();
-
-            return Response.ok(responseList).build();
-        } catch (Exception e) {
-            log.error("Error retrieving coupon redemptions for userEmail: {}", userEmail, e);
-            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity("An error occurred while retrieving coupon redemptions.")
-                    .build();
-        }
-    }
-
-    // 2) คืนเฉพาะคูปองที่ user ยังไม่เคย redeem
-    @GET
-    @Transactional
-    @Path("Get-All-Coupons-For-User")
-    @RolesAllowed(ROLE_USER)
-    public Response getAllCouponsForUser(@Context SecurityContext securityContext) {
-        String currentUserEmail = securityContext.getUserPrincipal().getName();
-        log.info("User -> {} is retrieving all available coupons (excluding redeemed)", currentUserEmail);
-
-        try {
-            var query = entityManager.createQuery(
-                    "SELECT c FROM CouponEntity c " +
-                    "WHERE c.id NOT IN (SELECT u.coupon.id FROM CouponUsageEntity u WHERE u.userEmail = :userEmail)",
-                    CouponEntity.class);
-            query.setParameter("userEmail", currentUserEmail);
-
-            var coupons = query.getResultList();
-
-            var responseList = coupons.stream().map(c -> {
-                var dto = new CreatedCouponDTO();
-                dto.setId(c.getId());
-                dto.setCouponCode(c.getCouponCode());
-                dto.setCouponTitle(c.getCouponTitle());
-                dto.setCouponDescription(c.getCouponDescription());
-                dto.setActive(c.getActive());
-                dto.setStartDate(c.getStartDate());
-                dto.setEndDate(c.getEndDate());
-                dto.setPointsRequired(c.getPointRequirement());
-                return dto;
-            }).toList();
-
-            return Response.ok(responseList).build();
-        } catch (Exception e) {
-            log.error("Error retrieving coupons for user", e);
-            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity("An error occurred while retrieving coupons.")
-                    .build();
-        }
-    }
-
-    // 3) Redeem: กันซ้ำระดับเซิร์ฟเวอร์ (idempotent)
-    @POST
-    @Transactional
-    @Path("coupon-redemptions")
-    @RolesAllowed(ROLE_USER)
-    public Response createCouponRedemption(CouponUsageTrackingDTO request,
-                                           @Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        UUID couponID = request.getCouponId();
-        log.info("User {} is creating a CouponRedemption for couponId={}", currentUser, couponID);
-
-        if (couponID == null) {
-            return Response.status(Response.Status.BAD_REQUEST).entity("Coupon ID is required").build();
-        }
-
-        var coupon = entityManager.find(CouponEntity.class, couponID);
-        if (coupon == null) {
-            log.warn("No CouponEntity found with ID: {}", couponID);
-            return Response.status(Response.Status.BAD_REQUEST).entity("Invalid Coupon ID").build();
-        }
-
-        // ✅ กัน Redeem ซ้ำ (user + coupon) ถ้ามีแล้วให้ Conflict
-        long dupCount = entityManager.createQuery(
-                "SELECT COUNT(u) FROM CouponUsageEntity u WHERE u.userEmail = :email AND u.coupon.id = :cid",
-                Long.class)
-                .setParameter("email", request.getUserEmail())
-                .setParameter("cid", couponID)
-                .getSingleResult();
-
-        if (dupCount > 0) {
-            log.info("User {} already redeemed coupon {}", request.getUserEmail(), couponID);
-            return Response.status(Response.Status.CONFLICT).entity("Already redeemed").build();
-        }
-
-        // สร้าง usage ใหม่
-        var usage = new CouponUsageEntity();
-        usage.setUserEmail(request.getUserEmail());
-        usage.setCoupon(coupon);
-        usage.setCouponCode(request.getCouponCode());
-        usage.setCouponTitle(request.getCouponTitle());
-        usage.setCouponDescription(request.getCouponDescription());
-        usage.setUserEarnPoints(request.getUserEarnPoints());
-        usage.setCurrentUserPoints(request.getCurrentUserPoints());
-        usage.setRedeemTime(request.getRedeemTime());
-        usage.setRedeemed(true);
-
-        entityManager.persist(usage);
-        log.info("Successfully created CouponRedemption for user {} coupon {}", request.getUserEmail(), couponID);
-
-        return Response.ok().entity("Coupon redeemed successfully").build();
-    }
+interface Coupon {
+  id: string;
+  couponCode: string;
+  couponTitle: string;
+  couponDescription: string;
+  pointsRequired: number;
+  active: boolean;
+  currentUserPoints?: number;
 }
+
+type RewardProps = {
+  userPoints: number; // initial balance from parent
+  token: string;
+};
+
+const Reward = ({ userPoints, token }: RewardProps) => {
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+
+  // hide instantly by id (optimistic)
+  const [hiddenById, setHiddenById] = useState<Record<string, boolean>>({});
+
+  const [remainingPoints, setRemainingPoints] = useState(userPoints);
+  useEffect(() => setRemainingPoints(userPoints), [userPoints]);
+
+  const { email } = useUserProfile(token);
+  const { HistoryDetails } = usePointHistory(token);
+
+  // Build a redeemed-id set from history (BE now sends couponId)
+  const redeemedIdSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const h of HistoryDetails) {
+      if (h.isRedeemed && h.couponId) {
+        s.add(String(h.couponId));
+      }
+    }
+    return s;
+  }, [HistoryDetails]);
+
+  const isHidden = (id: string) => !!hiddenById[id];
+
+  // Initial load: BE already excludes redeemed coupons, but we keep this robust
+  useEffect(() => {
+    const fetchCoupons = async () => {
+      try {
+        const res = await axios.get(
+          "http://localhost:8080/coupon-usage-tracking/Get-All-Coupons-For-User",
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (Array.isArray(res.data)) {
+          // (Optional) double safety: drop any that appear in redemption history
+          const filtered = res.data.filter((c: Coupon) => !redeemedIdSet.has(c.id));
+          setCoupons(filtered);
+        }
+      } catch (err) {
+        console.error("Failed to fetch coupons:", err);
+      }
+    };
+    fetchCoupons();
+  }, [token, redeemedIdSet]);
+
+  const handleRedeem = async (coupon: Coupon) => {
+    if (isHidden(coupon.id)) return;
+    if (remainingPoints < coupon.pointsRequired) {
+      alert("คะแนนไม่พอสำหรับคูปองนี้");
+      return;
+    }
+
+    // optimistic: hide this id only
+    setHiddenById((prev) => ({ ...prev, [coupon.id]: true }));
+    setLoadingId(coupon.id);
+
+    const nextPoints = remainingPoints - coupon.pointsRequired;
+
+    const payload = {
+      id: crypto.randomUUID(),
+      userEmail: email,
+      couponCode: coupon.couponCode,
+      couponTitle: coupon.couponTitle,
+      couponDescription: coupon.couponDescription,
+      userEarnPoints: coupon.pointsRequired,
+      couponId: coupon.id, // สำคัญ: ใช้ id
+      redeemTime: new Date().toISOString(),
+      currentUserPoints: nextPoints,
+    };
+
+    try {
+      await axios.post(
+        "http://localhost:8080/coupon-usage-tracking/coupon-redemptions",
+        payload,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      // success: remove by id only
+      setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
+      setRemainingPoints(nextPoints);
+
+      alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
+    } catch (err: any) {
+      // rollback optimistic hide
+      setHiddenById((prev) => {
+        const copy = { ...prev };
+        delete copy[coupon.id];
+        return copy;
+      });
+
+      const status = err?.response?.status;
+      if (status === 409) {
+        alert("คุณได้ Redeem คูปองนี้ไปแล้ว");
+      } else {
+        alert("Redeem failed.");
+      }
+      console.error(err);
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  const visibleCoupons = useMemo(
+    () => coupons.filter((c) => !isHidden(c.id)),
+    [coupons, hiddenById]
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
+        <div className="text-sm text-gray-700">
+          Remaining points: <span className="font-semibold">{remainingPoints}</span>
+        </div>
+      </div>
+
+      {visibleCoupons.length === 0 ? (
+        <div className="text-gray-500">No coupons available.</div>
+      ) : (
+        visibleCoupons.map((coupon) => {
+          const isProcessing = loadingId === coupon.id;
+          const canRedeem =
+            coupon.active &&
+            remainingPoints >= coupon.pointsRequired &&
+            !isProcessing;
+
+          return (
+            <div
+              key={coupon.id}
+              className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
+            >
+              <div>
+                <div className="text-base font-semibold text-blue-800">
+                  {coupon.couponTitle}
+                </div>
+                <div className="text-xs text-blue-600">
+                  {coupon.pointsRequired} points to redeem
+                </div>
+                <div className="text-xs text-gray-700">
+                  {coupon.couponDescription}
+                </div>
+              </div>
+              <button
+                disabled={!canRedeem}
+                onClick={() => handleRedeem(coupon)}
+                className={`px-4 py-1 rounded-full font-medium ${
+                  canRedeem
+                    ? "bg-blue-600 hover:bg-blue-700 text-white"
+                    : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                }`}
+              >
+                {isProcessing ? "Processing..." : "Redeem"}
+              </button>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+};
+
+export default Reward;
