@@ -2,7 +2,8 @@
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { useUserProfile } from "../Lesson/hooks/useUserProfile";
-import { usePointHistory } from "./hooks/userPointHistory";
+// ไม่ใช้ History ใน logic ปุ่ม/การแสดงผลเพื่อเลี่ยงปุ่มเทาหลัง redeem
+// import { usePointHistory } from "./hooks/userPointHistory";
 
 interface Coupon {
   id: string;
@@ -19,29 +20,22 @@ type RewardProps = {
   token: string;
 };
 
-// คีย์เฉพาะต่อการ์ด เพื่อกันกรณี id ซ้ำ
+// คีย์เฉพาะต่อการ์ด (กันกรณี id ซ้ำ)
 const keyOf = (c: Coupon) => `${c.id}::${c.couponCode}`;
 
 const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
+  // loading แบบรายคูปอง
   const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set());
-  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
+  // แต้มคงเหลือแบบ optimistic
   const [remainingPoints, setRemainingPoints] = useState<number>(userPoints);
 
   useEffect(() => setRemainingPoints(userPoints), [userPoints]);
 
   const { email } = useUserProfile(token);
-  const { HistoryDetails } = usePointHistory(token);
+  // const { HistoryDetails } = usePointHistory(token); // ไม่ใช้เพื่อกันปุ่มเทา
 
-  // ใช้ประวัติ "เฉพาะตอนเตรียมรายการ" ไม่ใช่ใน disabled ของปุ่ม
-  const redeemedIdSet = useMemo(() => {
-    const s = new Set<string>();
-    for (const h of HistoryDetails) {
-      if (h.isRedeemed && h.couponId) s.add(String(h.couponId));
-    }
-    return s;
-  }, [HistoryDetails]);
-
+  // โหลดคูปองจาก BE ตามปกติ (BE ควรกรองใบที่เคย redeem ออกอยู่แล้ว แต่ถ้าไม่ก็แสดงทั้งหมดได้)
   useEffect(() => {
     const fetchCoupons = async () => {
       try {
@@ -50,32 +44,41 @@ const Reward = ({ userPoints, token }: RewardProps) => {
           { headers: { Authorization: `Bearer ${token}` } }
         );
         if (Array.isArray(res.data)) {
-          // กรองเฉพาะใบที่ยังไม่เคย redeem (กันซ้ำตอนแสดงผล)
-          const filtered = res.data.filter((c: Coupon) => !redeemedIdSet.has(c.id));
-          setCoupons(filtered);
+          setCoupons(res.data);
         }
       } catch (err) {
         console.error("Failed to fetch coupons:", err);
       }
     };
     fetchCoupons();
-  }, [token, redeemedIdSet]);
+  }, [token]);
 
   const handleRedeem = async (coupon: Coupon) => {
     const k = keyOf(coupon);
-    if (hiddenKeys.has(k) || loadingKeys.has(k)) return;
+    if (loadingKeys.has(k)) return;
 
+    // เช็คแต้มเฉพาะ “ใบนี้”
+    if (!coupon.active) return;
     if (remainingPoints < coupon.pointsRequired) {
       alert("คะแนนไม่พอสำหรับคูปองนี้");
       return;
     }
 
-    // optimistic: ซ่อนเฉพาะใบนี้และตั้งโหลดเฉพาะคีย์นี้
-    setHiddenKeys((s) => new Set(s).add(k));
+    // 1) Mark loading เฉพาะใบนี้
     setLoadingKeys((s) => new Set(s).add(k));
 
+    // 2) Optimistic: ตัดใบนี้ออกจาก list "ทันที" แล้วลดแต้มทันที
+    setCoupons((prev) => {
+      const idx = prev.findIndex((c) => c.id === coupon.id);
+      if (idx === -1) return prev;
+      const next = prev.slice();
+      next.splice(idx, 1);
+      return next;
+    });
     const nextPoints = remainingPoints - coupon.pointsRequired;
+    setRemainingPoints(nextPoints);
 
+    // 3) POST ไปที่เซิร์ฟเวอร์
     const payload = {
       id: crypto.randomUUID(),
       userEmail: email,
@@ -94,22 +97,22 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         payload,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-
-      // ลบเฉพาะใบที่กดออกจาก list
-      setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
-      setRemainingPoints(nextPoints);
+      // สำเร็จ: ไม่ต้องทำอะไรเพิ่ม ใบนี้ถูกลบทิ้งไปแล้ว
+      // ปล่อยให้ผู้ใช้กดใบถัดไปได้ “ทันที” เพราะเราไม่ได้บล็อกปุ่มอื่น
     } catch (err: any) {
-      // rollback เฉพาะใบนี้
-      setHiddenKeys((s) => {
-        const n = new Set(s);
-        n.delete(k);
-        return n;
+      // 4) ถ้า fail ⇒ rollback: ใส่ใบที่เอาออกกลับ “ตำแหน่งเดิม” และคืนแต้ม
+      setCoupons((prev) => {
+        // กันกรณี user เปลี่ยนลิสต์ระหว่างทาง ก็แทรกกลับหัวลิสต์พอ
+        // ถ้าอยากคืนตำแหน่งตรงเดิมจริง ๆ เก็บ index ก่อนลบไว้ใน closure ก็ได้
+        return [coupon, ...prev];
       });
+      setRemainingPoints((p) => p + coupon.pointsRequired);
+
       const status = err?.response?.status;
       alert(status === 409 ? "คุณได้ Redeem คูปองนี้ไปแล้ว" : "Redeem failed.");
       console.error(err);
     } finally {
-      // ปลดโหลดเฉพาะใบนี้ — ใบอื่นกดต่อได้ทันที
+      // 5) ปลดโหลดเฉพาะใบนี้ ⇒ ใบอื่นกดต่อได้เลย
       setLoadingKeys((s) => {
         const n = new Set(s);
         n.delete(k);
@@ -118,11 +121,8 @@ const Reward = ({ userPoints, token }: RewardProps) => {
     }
   };
 
-  // แสดงเฉพาะใบที่ไม่ได้ถูกซ่อนแบบ optimistic
-  const visibleCoupons = useMemo(
-    () => coupons.filter((c) => !hiddenKeys.has(keyOf(c))),
-    [coupons, hiddenKeys]
-  );
+  // ไม่มี hiddenKeys อีกต่อไป เพราะเรา “ลบทิ้งจริง” แบบ optimistic แล้ว
+  const visibleCoupons = useMemo(() => coupons, [coupons]);
 
   return (
     <div className="space-y-4">
@@ -140,7 +140,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
           const k = keyOf(coupon);
           const isProcessing = loadingKeys.has(k);
 
-          // ✅ เงื่อนไขปุ่ม “แคบ” เฉพาะใบนี้เท่านั้น
+          // ✅ ปุ่มใช้เงื่อนไขแคบ ๆ เฉพาะใบนี้เท่านั้น
           const canRedeem =
             coupon.active &&
             remainingPoints >= coupon.pointsRequired &&
