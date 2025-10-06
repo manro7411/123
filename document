@@ -1,3 +1,4 @@
+// Reward.tsx
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { useUserProfile } from "../Lesson/hooks/useUserProfile";
@@ -14,16 +15,19 @@ interface Coupon {
 }
 
 type RewardProps = {
-  userPoints: number; // initial balance from parent
+  userPoints: number;
   token: string;
 };
 
+// คีย์เฉพาะต่อ "การ์ด" หนึ่งใบ (กันกรณี id ซ้ำ)
+const keyOf = (c: Coupon) => `${c.id}::${c.couponCode}`;
+
 const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [loadingId, setLoadingId] = useState<string | null>(null);
-
-  // hide instantly by id (optimistic)
-  const [hiddenById, setHiddenById] = useState<Record<string, boolean>>({});
+  // โหลดแบบ “หลายปุ่มพร้อมกันได้” ด้วย Set ของคีย์
+  const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set());
+  // ซ่อนแบบ optimistic เป็นรายการ์ด
+  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
 
   const [remainingPoints, setRemainingPoints] = useState(userPoints);
   useEffect(() => setRemainingPoints(userPoints), [userPoints]);
@@ -31,20 +35,15 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   const { email } = useUserProfile(token);
   const { HistoryDetails } = usePointHistory(token);
 
-  // Build a redeemed-id set from history (BE now sends couponId)
+  // ใช้ couponId จากประวัติ เพื่อกัน redeem ซ้ำ (ฝั่ง BE ควรส่งมาแล้ว)
   const redeemedIdSet = useMemo(() => {
     const s = new Set<string>();
     for (const h of HistoryDetails) {
-      if (h.isRedeemed && h.couponId) {
-        s.add(String(h.couponId));
-      }
+      if (h.isRedeemed && h.couponId) s.add(String(h.couponId));
     }
     return s;
   }, [HistoryDetails]);
 
-  const isHidden = (id: string) => !!hiddenById[id];
-
-  // Initial load: BE already excludes redeemed coupons, but we keep this robust
   useEffect(() => {
     const fetchCoupons = async () => {
       try {
@@ -53,7 +52,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
           { headers: { Authorization: `Bearer ${token}` } }
         );
         if (Array.isArray(res.data)) {
-          // (Optional) double safety: drop any that appear in redemption history
+          // เผื่อปลอดภัย: ตัดใบที่เคย redeem ไปแล้วออก
           const filtered = res.data.filter((c: Coupon) => !redeemedIdSet.has(c.id));
           setCoupons(filtered);
         }
@@ -65,15 +64,19 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   }, [token, redeemedIdSet]);
 
   const handleRedeem = async (coupon: Coupon) => {
-    if (isHidden(coupon.id)) return;
+    const k = keyOf(coupon);
+
+    // บล็อกเฉพาะการ์ดนี้เท่านั้น
+    if (hiddenKeys.has(k) || loadingKeys.has(k)) return;
+
     if (remainingPoints < coupon.pointsRequired) {
       alert("คะแนนไม่พอสำหรับคูปองนี้");
       return;
     }
 
-    // optimistic: hide this id only
-    setHiddenById((prev) => ({ ...prev, [coupon.id]: true }));
-    setLoadingId(coupon.id);
+    // optimistic: ซ่อนการ์ดนี้ และตั้งโหลดเฉพาะคีย์นี้
+    setHiddenKeys((s) => new Set(s).add(k));
+    setLoadingKeys((s) => new Set(s).add(k));
 
     const nextPoints = remainingPoints - coupon.pointsRequired;
 
@@ -84,7 +87,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
       couponTitle: coupon.couponTitle,
       couponDescription: coupon.couponDescription,
       userEarnPoints: coupon.pointsRequired,
-      couponId: coupon.id, // สำคัญ: ใช้ id
+      couponId: coupon.id,
       redeemTime: new Date().toISOString(),
       currentUserPoints: nextPoints,
     };
@@ -96,34 +99,34 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      // success: remove by id only
+      // ลบเฉพาะใบที่กด (ตาม id เท่านั้น เพื่อไม่กระทบใบอื่นที่ code ซ้ำ)
       setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
       setRemainingPoints(nextPoints);
-
-      alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
+      // ไม่ต้อง alert ก็ได้ ถ้ากวนใจ
+      // alert(`Redeemed: ${coupon.couponTitle}`);
     } catch (err: any) {
-      // rollback optimistic hide
-      setHiddenById((prev) => {
-        const copy = { ...prev };
-        delete copy[coupon.id];
-        return copy;
+      // rollback เฉพาะคีย์นี้
+      setHiddenKeys((s) => {
+        const n = new Set(s);
+        n.delete(k);
+        return n;
       });
-
       const status = err?.response?.status;
-      if (status === 409) {
-        alert("คุณได้ Redeem คูปองนี้ไปแล้ว");
-      } else {
-        alert("Redeem failed.");
-      }
+      alert(status === 409 ? "คุณได้ Redeem คูปองนี้ไปแล้ว" : "Redeem failed.");
       console.error(err);
     } finally {
-      setLoadingId(null);
+      // ปลดโหลดเฉพาะคีย์นี้ เพื่อให้ "การ์ดอื่น" กดต่อได้ทันที
+      setLoadingKeys((s) => {
+        const n = new Set(s);
+        n.delete(k);
+        return n;
+      });
     }
   };
 
   const visibleCoupons = useMemo(
-    () => coupons.filter((c) => !isHidden(c.id)),
-    [coupons, hiddenById]
+    () => coupons.filter((c) => !hiddenKeys.has(keyOf(c))),
+    [coupons, hiddenKeys]
   );
 
   return (
@@ -139,15 +142,17 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         <div className="text-gray-500">No coupons available.</div>
       ) : (
         visibleCoupons.map((coupon) => {
-          const isProcessing = loadingId === coupon.id;
+          const k = keyOf(coupon);
+          const isProcessing = loadingKeys.has(k);
           const canRedeem =
             coupon.active &&
             remainingPoints >= coupon.pointsRequired &&
-            !isProcessing;
+            !isProcessing &&
+            !redeemedIdSet.has(coupon.id); // กันซ้ำตามประวัติ
 
           return (
             <div
-              key={coupon.id}
+              key={k}
               className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
             >
               <div>
