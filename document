@@ -1,3 +1,4 @@
+// src/components/Reward.tsx
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { useUserProfile } from "../Lesson/hooks/useUserProfile";
@@ -14,7 +15,7 @@ interface Coupon {
 }
 
 type RewardProps = {
-  userPoints: number;
+  userPoints: number; // initial balance from parent
   token: string;
 };
 
@@ -22,21 +23,35 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loadingCouponId, setLoadingCouponId] = useState<string | null>(null);
 
+  // Optimistic UI: hide immediately when user clicks redeem
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [hiddenCodes, setHiddenCodes] = useState<Set<string>>(new Set());
+
+  // Track remaining points locally (optimistic)
+  const [remainingPoints, setRemainingPoints] = useState<number>(userPoints);
+  useEffect(() => setRemainingPoints(userPoints), [userPoints]);
+
   const { email } = useUserProfile(token);
   const { HistoryDetails } = usePointHistory(token);
 
-  // Build a set of redeemed coupon IDs from history
-  const redeemedSet = useMemo(() => {
-    const s = new Set<string>();
+  // Build a redeemed registry from history by BOTH id and code
+  const redeemedKeys = useMemo(() => {
+    const ids = new Set<string>();
+    const codes = new Set<string>();
     for (const h of HistoryDetails) {
-      if (h.isRedeemed && h.couponId) {
-        s.add(h.couponId);
+      if (h.isRedeemed) {
+        if (h.couponId) ids.add(h.couponId);
+        if (h.couponCode) codes.add(h.couponCode);
       }
     }
-    return s;
+    return { ids, codes };
   }, [HistoryDetails]);
 
-  const isCouponRedeemed = (c: Coupon) => redeemedSet.has(c.id);
+  const isCouponRedeemedFromHistory = (c: Coupon) =>
+    redeemedKeys.ids.has(c.id) || redeemedKeys.codes.has(c.couponCode);
+
+  const isCouponHiddenOptimistically = (c: Coupon) =>
+    hiddenIds.has(c.id) || hiddenCodes.has(c.couponCode);
 
   useEffect(() => {
     const fetchCoupons = async () => {
@@ -56,9 +71,21 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   }, [token]);
 
   const handleRedeem = async (coupon: Coupon) => {
-    if (isCouponRedeemed(coupon)) return;
-    if (userPoints < coupon.pointsRequired) return;
+    // Block duplicate redeem attempts (history or current optimistic state)
+    if (isCouponRedeemedFromHistory(coupon) || isCouponHiddenOptimistically(coupon)) return;
+
+    // Use local remaining points (not the stale prop)
+    if (remainingPoints < coupon.pointsRequired) {
+      alert("คะแนนไม่พอสำหรับคูปองนี้");
+      return;
+    }
+
+    // Optimistic: hide immediately and set loading for this coupon
+    setHiddenIds((s) => new Set(s).add(coupon.id));
+    setHiddenCodes((s) => new Set(s).add(coupon.couponCode));
     setLoadingCouponId(coupon.id);
+
+    const nextPoints = remainingPoints - coupon.pointsRequired;
 
     const payload = {
       id: crypto.randomUUID(),
@@ -69,7 +96,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
       userEarnPoints: coupon.pointsRequired,
       couponId: coupon.id,
       redeemTime: new Date().toISOString(),
-      currentUserPoints: userPoints - coupon.pointsRequired,
+      currentUserPoints: nextPoints,
     };
 
     try {
@@ -78,31 +105,71 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         payload,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+
+      // Keep UI small and consistent with server by pruning redeemed coupon
+      setCoupons((prev) =>
+        prev.filter(
+          (c) => c.id !== coupon.id && c.couponCode !== coupon.couponCode
+        )
+      );
+      setRemainingPoints(nextPoints);
+
       alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
-      // ✅ Remove redeemed coupon from the list
-      setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
-    } catch (err) {
-      alert("Redeem failed.");
+    } catch (err: any) {
+      // Rollback optimistic hide on failure
+      setHiddenIds((s) => {
+        const n = new Set(s);
+        n.delete(coupon.id);
+        return n;
+      });
+      setHiddenCodes((s) => {
+        const n = new Set(s);
+        n.delete(coupon.couponCode);
+        return n;
+      });
+
+      // Optional: surface BE message if exists
+      const msg =
+        err?.response?.status === 409
+          ? "คุณได้ Redeem คูปองนี้ไปแล้ว"
+          : "Redeem failed.";
+      alert(msg);
       console.error(err);
     } finally {
       setLoadingCouponId(null);
     }
   };
 
+  // Only show coupons that are not redeemed historically and not optimistically hidden
+  const visibleCoupons = useMemo(
+    () =>
+      coupons.filter(
+        (c) =>
+          !isCouponRedeemedFromHistory(c) && !isCouponHiddenOptimistically(c)
+      ),
+    [coupons, redeemedKeys, hiddenIds, hiddenCodes]
+  );
+
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
-      {coupons.length === 0 ? (
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
+        <div className="text-sm text-gray-700">
+          Remaining points: <span className="font-semibold">{remainingPoints}</span>
+        </div>
+      </div>
+
+      {visibleCoupons.length === 0 ? (
         <div className="text-gray-500">No coupons available.</div>
       ) : (
-        coupons.map((coupon) => {
-          const canRedeem = coupon.active && userPoints >= coupon.pointsRequired;
+        visibleCoupons.map((coupon) => {
           const isProcessing = loadingCouponId === coupon.id;
-          const isRedeemed = isCouponRedeemed(coupon);
+          const canRedeem =
+            coupon.active && remainingPoints >= coupon.pointsRequired && !isProcessing;
 
           return (
             <div
-              key={coupon.id}
+              key={`${coupon.id}-${coupon.couponCode}`}
               className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
             >
               <div>
@@ -117,21 +184,15 @@ const Reward = ({ userPoints, token }: RewardProps) => {
                 </div>
               </div>
               <button
-                disabled={!canRedeem || isRedeemed || isProcessing}
+                disabled={!canRedeem}
                 onClick={() => handleRedeem(coupon)}
                 className={`px-4 py-1 rounded-full font-medium ${
-                  isRedeemed
-                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                    : canRedeem && !isProcessing
+                  canRedeem
                     ? "bg-blue-600 hover:bg-blue-700 text-white"
                     : "bg-gray-300 text-gray-500 cursor-not-allowed"
                 }`}
               >
-                {isRedeemed
-                  ? "Redeemed"
-                  : isProcessing
-                  ? "Processing..."
-                  : "Redeem"}
+                {isProcessing ? "Processing..." : "Redeem"}
               </button>
             </div>
           );
