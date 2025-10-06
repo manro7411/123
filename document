@@ -15,27 +15,25 @@ interface Coupon {
 }
 
 type RewardProps = {
-  userPoints: number;
+  userPoints: number; // initial points from parent
   token: string;
 };
 
-// คีย์เฉพาะต่อ "การ์ด" หนึ่งใบ (กันกรณี id ซ้ำ)
+// คีย์เฉพาะต่อการ์ด เพื่อกันกรณี id ซ้ำ
 const keyOf = (c: Coupon) => `${c.id}::${c.couponCode}`;
 
 const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
-  // โหลดแบบ “หลายปุ่มพร้อมกันได้” ด้วย Set ของคีย์
   const [loadingKeys, setLoadingKeys] = useState<Set<string>>(new Set());
-  // ซ่อนแบบ optimistic เป็นรายการ์ด
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
+  const [remainingPoints, setRemainingPoints] = useState<number>(userPoints);
 
-  const [remainingPoints, setRemainingPoints] = useState(userPoints);
   useEffect(() => setRemainingPoints(userPoints), [userPoints]);
 
   const { email } = useUserProfile(token);
   const { HistoryDetails } = usePointHistory(token);
 
-  // ใช้ couponId จากประวัติ เพื่อกัน redeem ซ้ำ (ฝั่ง BE ควรส่งมาแล้ว)
+  // ใช้ประวัติ "เฉพาะตอนเตรียมรายการ" ไม่ใช่ใน disabled ของปุ่ม
   const redeemedIdSet = useMemo(() => {
     const s = new Set<string>();
     for (const h of HistoryDetails) {
@@ -52,7 +50,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
           { headers: { Authorization: `Bearer ${token}` } }
         );
         if (Array.isArray(res.data)) {
-          // เผื่อปลอดภัย: ตัดใบที่เคย redeem ไปแล้วออก
+          // กรองเฉพาะใบที่ยังไม่เคย redeem (กันซ้ำตอนแสดงผล)
           const filtered = res.data.filter((c: Coupon) => !redeemedIdSet.has(c.id));
           setCoupons(filtered);
         }
@@ -65,8 +63,6 @@ const Reward = ({ userPoints, token }: RewardProps) => {
 
   const handleRedeem = async (coupon: Coupon) => {
     const k = keyOf(coupon);
-
-    // บล็อกเฉพาะการ์ดนี้เท่านั้น
     if (hiddenKeys.has(k) || loadingKeys.has(k)) return;
 
     if (remainingPoints < coupon.pointsRequired) {
@@ -74,7 +70,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
       return;
     }
 
-    // optimistic: ซ่อนการ์ดนี้ และตั้งโหลดเฉพาะคีย์นี้
+    // optimistic: ซ่อนเฉพาะใบนี้และตั้งโหลดเฉพาะคีย์นี้
     setHiddenKeys((s) => new Set(s).add(k));
     setLoadingKeys((s) => new Set(s).add(k));
 
@@ -99,13 +95,11 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      // ลบเฉพาะใบที่กด (ตาม id เท่านั้น เพื่อไม่กระทบใบอื่นที่ code ซ้ำ)
+      // ลบเฉพาะใบที่กดออกจาก list
       setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
       setRemainingPoints(nextPoints);
-      // ไม่ต้อง alert ก็ได้ ถ้ากวนใจ
-      // alert(`Redeemed: ${coupon.couponTitle}`);
     } catch (err: any) {
-      // rollback เฉพาะคีย์นี้
+      // rollback เฉพาะใบนี้
       setHiddenKeys((s) => {
         const n = new Set(s);
         n.delete(k);
@@ -115,7 +109,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
       alert(status === 409 ? "คุณได้ Redeem คูปองนี้ไปแล้ว" : "Redeem failed.");
       console.error(err);
     } finally {
-      // ปลดโหลดเฉพาะคีย์นี้ เพื่อให้ "การ์ดอื่น" กดต่อได้ทันที
+      // ปลดโหลดเฉพาะใบนี้ — ใบอื่นกดต่อได้ทันที
       setLoadingKeys((s) => {
         const n = new Set(s);
         n.delete(k);
@@ -124,6 +118,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
     }
   };
 
+  // แสดงเฉพาะใบที่ไม่ได้ถูกซ่อนแบบ optimistic
   const visibleCoupons = useMemo(
     () => coupons.filter((c) => !hiddenKeys.has(keyOf(c))),
     [coupons, hiddenKeys]
@@ -144,11 +139,12 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         visibleCoupons.map((coupon) => {
           const k = keyOf(coupon);
           const isProcessing = loadingKeys.has(k);
+
+          // ✅ เงื่อนไขปุ่ม “แคบ” เฉพาะใบนี้เท่านั้น
           const canRedeem =
             coupon.active &&
             remainingPoints >= coupon.pointsRequired &&
-            !isProcessing &&
-            !redeemedIdSet.has(coupon.id); // กันซ้ำตามประวัติ
+            !isProcessing;
 
           return (
             <div
