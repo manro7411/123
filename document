@@ -105,4 +105,78 @@ const Reward = ({ userPoints, token }: RewardProps) => {
       refetchHistory?.();
       fetchCoupons(); // ไม่ต้อง await
     } catch (err: any) {
-      // 5)
+      // 5) FAIL ⇒ ROLLBACK: ใส่คูปองกลับ + คืนแต้ม
+      setCoupons((prev) => [coupon, ...prev]); // แทรกกลับไว้บนสุดพอ
+      setRemainingPoints((p) => p + coupon.pointsRequired);
+
+      const status = err?.response?.status;
+      alert(status === 409 ? "คุณได้ Redeem คูปองนี้ไปแล้ว" : "Redeem failed.");
+      console.error(err);
+    } finally {
+      // 6) ปลดโหลดเฉพาะใบนี้ ⇒ ปุ่มใบอื่นไม่ถูกล็อก
+      setLoadingKeys((s) => {
+        const n = new Set(s);
+        n.delete(k);
+        return n;
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
+        <div className="text-sm text-gray-700">
+          Remaining points: <span className="font-semibold">{remainingPoints}</span>
+        </div>
+      </div>
+
+      {coupons.length === 0 ? (
+        <div className="text-gray-500">No coupons available.</div>
+      ) : (
+        coupons.map((coupon) => {
+          const k = keyOf(coupon);
+          const isProcessing = loadingKeys.has(k);
+
+          // ✅ ปุ่มของ "ใบอื่น" จะยังไม่เทา เพราะเงื่อนไขแคบเฉพาะใบนี้
+          const canRedeem =
+            coupon.active &&
+            remainingPoints >= coupon.pointsRequired &&
+            !isProcessing;
+
+          return (
+            <div
+              key={k}
+              className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
+            >
+              <div>
+                <div className="text-base font-semibold text-blue-800">
+                  {coupon.couponTitle}
+                </div>
+                <div className="text-xs text-blue-600">
+                  {coupon.pointsRequired} points to redeem
+                </div>
+                <div className="text-xs text-gray-700">
+                  {coupon.couponDescription}
+                </div>
+              </div>
+              <button
+                disabled={!canRedeem}
+                onClick={() => handleRedeem(coupon)}
+                className={`px-4 py-1 rounded-full font-medium ${
+                  canRedeem
+                    ? "bg-blue-600 hover:bg-blue-700 text-white"
+                    : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                }`}
+              >
+                {isProcessing ? "Processing..." : "Redeem"}
+              </button>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+};
+
+export default Reward;
