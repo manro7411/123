@@ -22,28 +22,21 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loadingCouponId, setLoadingCouponId] = useState<string | null>(null);
 
-  // NEW: track optimistic hides so it disappears instantly
-  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
-  const [hiddenCodes, setHiddenCodes] = useState<Set<string>>(new Set());
-
   const { email } = useUserProfile(token);
   const { HistoryDetails } = usePointHistory(token);
 
-  // Build redeemed set from history (by id OR code)
-  const redeemedKeys = useMemo(() => {
-    const ids = new Set<string>();
-    const codes = new Set<string>();
+  // Build a set of redeemed coupon IDs from history
+  const redeemedSet = useMemo(() => {
+    const s = new Set<string>();
     for (const h of HistoryDetails) {
-      if (h.isRedeemed) {
-        if (h.couponId) ids.add(h.couponId);
-        if (h.couponCode) codes.add(h.couponCode);
+      if (h.isRedeemed && h.couponId) {
+        s.add(h.couponId);
       }
     }
-    return { ids, codes };
+    return s;
   }, [HistoryDetails]);
 
-  const isCouponRedeemed = (c: Coupon) =>
-    redeemedKeys.ids.has(c.id) || redeemedKeys.codes.has(c.couponCode);
+  const isCouponRedeemed = (c: Coupon) => redeemedSet.has(c.id);
 
   useEffect(() => {
     const fetchCoupons = async () => {
@@ -52,7 +45,9 @@ const Reward = ({ userPoints, token }: RewardProps) => {
           "http://localhost:8080/coupon-usage-tracking/Get-All-Coupons-For-User",
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        if (Array.isArray(res.data)) setCoupons(res.data);
+        if (Array.isArray(res.data)) {
+          setCoupons(res.data);
+        }
       } catch (err) {
         console.error("Failed to fetch coupons:", err);
       }
@@ -61,9 +56,8 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   }, [token]);
 
   const handleRedeem = async (coupon: Coupon) => {
-    // optimistic hide immediately
-    setHiddenIds((s) => new Set(s).add(coupon.id));
-    setHiddenCodes((s) => new Set(s).add(coupon.couponCode));
+    if (isCouponRedeemed(coupon)) return;
+    if (userPoints < coupon.pointsRequired) return;
     setLoadingCouponId(coupon.id);
 
     const payload = {
@@ -84,27 +78,10 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         payload,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-
-      // prune the redeemed coupon from server list too (keeps state small)
-      setCoupons((prev) =>
-        prev.filter(
-          (c) => c.id !== coupon.id && c.couponCode !== coupon.couponCode
-        )
-      );
-
       alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
+      // ✅ Remove redeemed coupon from the list
+      setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
     } catch (err) {
-      // rollback optimistic hide on failure
-      setHiddenIds((s) => {
-        const next = new Set(s);
-        next.delete(coupon.id);
-        return next;
-      });
-      setHiddenCodes((s) => {
-        const next = new Set(s);
-        next.delete(coupon.couponCode);
-        return next;
-      });
       alert("Redeem failed.");
       console.error(err);
     } finally {
@@ -112,33 +89,20 @@ const Reward = ({ userPoints, token }: RewardProps) => {
     }
   };
 
-  // Hide if redeemed historically OR optimistically hidden
-  const visibleCoupons = useMemo(
-    () =>
-      coupons.filter(
-        (c) =>
-          !isCouponRedeemed(c) &&
-          !hiddenIds.has(c.id) &&
-          !hiddenCodes.has(c.couponCode)
-      ),
-    [coupons, redeemedKeys, hiddenIds, hiddenCodes]
-  );
-
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
-
-      {visibleCoupons.length === 0 ? (
+      {coupons.length === 0 ? (
         <div className="text-gray-500">No coupons available.</div>
       ) : (
-        visibleCoupons.map((coupon) => {
-          const canRedeem =
-            coupon.active && userPoints >= coupon.pointsRequired;
+        coupons.map((coupon) => {
+          const canRedeem = coupon.active && userPoints >= coupon.pointsRequired;
           const isProcessing = loadingCouponId === coupon.id;
+          const isRedeemed = isCouponRedeemed(coupon);
 
           return (
             <div
-              key={`${coupon.id}-${coupon.couponCode}`}
+              key={coupon.id}
               className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
             >
               <div>
@@ -153,15 +117,21 @@ const Reward = ({ userPoints, token }: RewardProps) => {
                 </div>
               </div>
               <button
-                disabled={!canRedeem || isProcessing}
+                disabled={!canRedeem || isRedeemed || isProcessing}
                 onClick={() => handleRedeem(coupon)}
                 className={`px-4 py-1 rounded-full font-medium ${
-                  canRedeem && !isProcessing
+                  isRedeemed
+                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    : canRedeem && !isProcessing
                     ? "bg-blue-600 hover:bg-blue-700 text-white"
                     : "bg-gray-300 text-gray-500 cursor-not-allowed"
                 }`}
               >
-                {isProcessing ? "Processing..." : "Redeem"}
+                {isRedeemed
+                  ? "Redeemed"
+                  : isProcessing
+                  ? "Processing..."
+                  : "Redeem"}
               </button>
             </div>
           );
