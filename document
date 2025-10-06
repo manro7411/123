@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { useUserProfile } from "../Lesson/hooks/useUserProfile";
-import { usePointHistory } from "../PointHistory/hooks/usePointHistory"; // <- adjust path
+import { usePointHistory } from "./hooks/userPointHistory";
 
 interface Coupon {
   id: string;
@@ -20,26 +20,24 @@ type RewardProps = {
 
 const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loadingCouponId, setLoadingCouponId] = useState<string | null>(null);
 
   const { email } = useUserProfile(token);
   const { HistoryDetails } = usePointHistory(token);
 
-  // 1) Build a set of redeemed keys from history (by couponId or couponCode)
+  // Build a set of redeemed coupon IDs from history
   const redeemedSet = useMemo(() => {
     const s = new Set<string>();
     for (const h of HistoryDetails) {
-      if (h.isRedeemed) {
-        if (h.couponId) s.add(`id:${h.couponId}`);
-        if (h.couponCode) s.add(`code:${h.couponCode}`);
+      if (h.isRedeemed && h.couponId) {
+        s.add(h.couponId);
       }
     }
     return s;
   }, [HistoryDetails]);
 
-  // Helper to check if a coupon is redeemed by either id or code
-  const isCouponRedeemed = (c: Coupon) =>
-    redeemedSet.has(`id:${c.id}`) || redeemedSet.has(`code:${c.couponCode}`);
+  // Helper to check if a coupon is redeemed
+  const isCouponRedeemed = (c: Coupon) => redeemedSet.has(c.id);
 
   useEffect(() => {
     const fetchCoupons = async () => {
@@ -59,10 +57,9 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   }, [token]);
 
   const handleRedeem = async (coupon: Coupon) => {
-    // 2) Block double-redeem right away
     if (isCouponRedeemed(coupon)) return;
     if (userPoints < coupon.pointsRequired) return;
-    setLoading(true);
+    setLoadingCouponId(coupon.id);
 
     const payload = {
       id: crypto.randomUUID(),
@@ -82,25 +79,18 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         payload,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-
-      // 3) Optimistically remove the redeemed coupon from the list
-      setCoupons((prev) =>
-        prev.filter(
-          (c) =>
-            c.id !== coupon.id && c.couponCode !== coupon.couponCode
-        )
-      );
-
+      // Remove only the redeemed coupon from the list
+      setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
       alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
     } catch (err) {
       alert("Redeem failed.");
       console.error(err);
     } finally {
-      setLoading(false);
+      setLoadingCouponId(null);
     }
   };
 
-  // 4) Hide already-redeemed coupons from the UI
+  // Hide already-redeemed coupons from the UI
   const visibleCoupons = useMemo(
     () => coupons.filter((c) => !isCouponRedeemed(c)),
     [coupons, redeemedSet]
@@ -109,17 +99,17 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
-
       {visibleCoupons.length === 0 ? (
         <div className="text-gray-500">No coupons available.</div>
       ) : (
         visibleCoupons.map((coupon) => {
           const canRedeem =
             coupon.active && userPoints >= coupon.pointsRequired;
+          const isProcessing = loadingCouponId === coupon.id;
 
           return (
             <div
-              key={`${coupon.id}-${coupon.couponCode}`}
+              key={coupon.id}
               className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
             >
               <div>
@@ -134,15 +124,15 @@ const Reward = ({ userPoints, token }: RewardProps) => {
                 </div>
               </div>
               <button
-                disabled={!canRedeem || loading}
+                disabled={!canRedeem || isProcessing}
                 onClick={() => handleRedeem(coupon)}
                 className={`px-4 py-1 rounded-full font-medium ${
-                  canRedeem && !loading
+                  canRedeem && !isProcessing
                     ? "bg-blue-600 hover:bg-blue-700 text-white"
                     : "bg-gray-300 text-gray-500 cursor-not-allowed"
                 }`}
               >
-                {loading ? "Processing..." : "Redeem"}
+                {isProcessing ? "Processing..." : "Redeem"}
               </button>
             </div>
           );
