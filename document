@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { useUserProfile } from "../Lesson/hooks/useUserProfile";
+import { usePointHistory } from "../PointHistory/hooks/usePointHistory"; // <- adjust path
 
 interface Coupon {
   id: string;
@@ -19,10 +20,26 @@ type RewardProps = {
 
 const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [redeemed, setRedeemed] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
   const { email } = useUserProfile(token);
+  const { HistoryDetails } = usePointHistory(token);
+
+  // 1) Build a set of redeemed keys from history (by couponId or couponCode)
+  const redeemedSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const h of HistoryDetails) {
+      if (h.isRedeemed) {
+        if (h.couponId) s.add(`id:${h.couponId}`);
+        if (h.couponCode) s.add(`code:${h.couponCode}`);
+      }
+    }
+    return s;
+  }, [HistoryDetails]);
+
+  // Helper to check if a coupon is redeemed by either id or code
+  const isCouponRedeemed = (c: Coupon) =>
+    redeemedSet.has(`id:${c.id}`) || redeemedSet.has(`code:${c.couponCode}`);
 
   useEffect(() => {
     const fetchCoupons = async () => {
@@ -42,9 +59,11 @@ const Reward = ({ userPoints, token }: RewardProps) => {
   }, [token]);
 
   const handleRedeem = async (coupon: Coupon) => {
-    if (redeemed.includes(coupon.id)) return;
+    // 2) Block double-redeem right away
+    if (isCouponRedeemed(coupon)) return;
     if (userPoints < coupon.pointsRequired) return;
     setLoading(true);
+
     const payload = {
       id: crypto.randomUUID(),
       userEmail: email,
@@ -55,16 +74,23 @@ const Reward = ({ userPoints, token }: RewardProps) => {
       couponId: coupon.id,
       redeemTime: new Date().toISOString(),
       currentUserPoints: userPoints - coupon.pointsRequired,
-      
     };
-    console.log(payload)
+
     try {
       await axios.post(
         "http://localhost:8080/coupon-usage-tracking/coupon-redemptions",
         payload,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      setRedeemed((prev) => [...prev, coupon.id]);
+
+      // 3) Optimistically remove the redeemed coupon from the list
+      setCoupons((prev) =>
+        prev.filter(
+          (c) =>
+            c.id !== coupon.id && c.couponCode !== coupon.couponCode
+        )
+      );
+
       alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
     } catch (err) {
       alert("Redeem failed.");
@@ -74,37 +100,49 @@ const Reward = ({ userPoints, token }: RewardProps) => {
     }
   };
 
+  // 4) Hide already-redeemed coupons from the UI
+  const visibleCoupons = useMemo(
+    () => coupons.filter((c) => !isCouponRedeemed(c)),
+    [coupons, redeemedSet]
+  );
+
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
-      {coupons.length === 0 ? (
+
+      {visibleCoupons.length === 0 ? (
         <div className="text-gray-500">No coupons available.</div>
       ) : (
-        coupons.map((coupon) => {
-          const canRedeem = coupon.active && userPoints >= coupon.pointsRequired;
-          console.log(canRedeem)
-          const isRedeemed = redeemed.includes(coupon.id);
+        visibleCoupons.map((coupon) => {
+          const canRedeem =
+            coupon.active && userPoints >= coupon.pointsRequired;
 
           return (
             <div
-              key={coupon.id}
+              key={`${coupon.id}-${coupon.couponCode}`}
               className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
             >
               <div>
-                <div className="text-base font-semibold text-blue-800">{coupon.couponTitle}</div>
-                <div className="text-xs text-blue-600">{coupon.pointsRequired} points to redeem</div>
-                <div className="text-xs text-gray-700">{coupon.couponDescription}</div>
+                <div className="text-base font-semibold text-blue-800">
+                  {coupon.couponTitle}
+                </div>
+                <div className="text-xs text-blue-600">
+                  {coupon.pointsRequired} points to redeem
+                </div>
+                <div className="text-xs text-gray-700">
+                  {coupon.couponDescription}
+                </div>
               </div>
               <button
-                disabled={!canRedeem || isRedeemed || loading}
+                disabled={!canRedeem || loading}
                 onClick={() => handleRedeem(coupon)}
                 className={`px-4 py-1 rounded-full font-medium ${
-                  canRedeem && !isRedeemed && !loading
+                  canRedeem && !loading
                     ? "bg-blue-600 hover:bg-blue-700 text-white"
                     : "bg-gray-300 text-gray-500 cursor-not-allowed"
                 }`}
               >
-                {isRedeemed ? "Redeemed" : loading ? "Processing..." : "Redeem"}
+                {loading ? "Processing..." : "Redeem"}
               </button>
             </div>
           );
@@ -115,101 +153,3 @@ const Reward = ({ userPoints, token }: RewardProps) => {
 };
 
 export default Reward;
-
-import axios from "axios";
-import { useEffect, useState } from "react";
-import { useUserProfile } from "../../Lesson/hooks/useUserProfile";
-
-export interface PointHistoryItem {
-  id: string;
-  userEmail: string;
-  couponCode: string;
-  couponTitle: string;
-  couponDescription: string;
-  userEarnPoints: number;
-  couponId: string | null;
-  redeemTime: string;
-  currentUserPoints: number;
-  isRedeemed?: boolean; // Add this property
-}
-
-export const usePointHistory = (token: string | null) => {
-  const [HistoryDetails, setHistoryDetails] = useState<PointHistoryItem[]>([]);
-  const { email } = useUserProfile(token);
-
-  useEffect(() => {
-    if (!token || !email) return;
-    const fetchPointHistory = async () => {
-      try {
-        const res = await axios.get(
-          `/api/coupon-usage-tracking/coupon-redemptions/${email}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
-        if (res.status === 200) {
-          // Add isRedeemed: true to each item
-          const mapped = Array.isArray(res.data)
-            ? res.data.map((item: PointHistoryItem) => ({
-                ...item,
-                isRedeemed: true,
-              }))
-            : [];
-            console.log(mapped)
-          setHistoryDetails(mapped);
-        } else if (res.status === 401) {
-          throw new Error("Invalid Credentials");
-        }
-      } catch (error) {
-        console.error("Something went wrong:", error);
-      }
-    };
-    fetchPointHistory();
-  }, [token, email]);
-
-  return { HistoryDetails };
-};
-
-
-[{…}]
-0
-: 
-couponCode
-: 
-"TRAIN50TRAIN50TRAIN50TRAIN50TRAIN50TRAIN50TRAIN50TRAIN50"
-couponDescription
-: 
-"Get 50% off your next training session."
-couponId
-: 
-null
-couponTitle
-: 
-"50% Off Training"
-currentUserPoints
-: 
-7
-id
-: 
-"c1d5ce48-956b-46dd-95d4-1dbd4df6c873"
-isRedeemed
-: 
-true
-redeemTime
-: 
-"2025-10-06T13:23:44.260028"
-redeemed
-: 
-true
-userEarnPoints
-: 
-10
-userEmail
-: 
-"ratchanon@gmail.com"
-[[Prototype]]
-: 
-Object
-userPointHistory.ts:42 
