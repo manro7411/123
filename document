@@ -1,4 +1,144 @@
-// src/components/Reward.tsx
+package PointSystem.Resources;
+import PointSystem.DTOs.CouponUsageTrackingDTO;
+import PointSystem.DTOs.CreatedCouponDTO;
+import PointSystem.Entity.CouponEntity;
+import PointSystem.Entity.CouponUsageEntity;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.util.UUID;
+
+@Path("/coupon-usage-tracking")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class CouponUsageTrackingResources {
+    public static final String ROLE_USER = "user"
+            , ROLE_ADMIN = "admin"
+            , ROLE_EMPLOYEE = "employee"
+            , ROLE_SUPERVISOR = "supervisor"
+            , ROLE_ADMINISTRATOR = "administrator";
+
+    public static final Logger log = LoggerFactory.getLogger(CreateCouponForUserResources.class);
+
+    @Inject
+    EntityManager entityManager;
+
+    @GET
+    @Transactional
+    @RolesAllowed(ROLE_USER)
+    @Path("coupon-redemptions/{userEmail}")
+    public Response getCouponRedemptionsByUser(@PathParam("userEmail") String userEmail, @Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        log.info("User {} is retrieving coupon redemptions for userEmail: {}", currentUser, userEmail);
+
+        try {
+            var query = entityManager.createQuery(
+                    "SELECT u FROM CouponUsageEntity u WHERE u.userEmail = :userEmail", CouponUsageEntity.class);
+            query.setParameter("userEmail", userEmail);
+            var redemptions = query.getResultList();
+
+            var responseList = redemptions.stream().map(u -> {
+                var dto = new CouponUsageTrackingDTO();
+                dto.setId(u.getId());
+                dto.setUserEmail(u.getUserEmail());
+                dto.setCouponCode(u.getCouponCode());
+                dto.setCouponTitle(u.getCouponTitle());
+                dto.setCouponDescription(u.getCouponDescription());
+                dto.setUserEarnPoints(u.getUserEarnPoints());
+                dto.setCurrentUserPoints(u.getCurrentUserPoints());
+                dto.setRedeemTime(u.getRedeemTime());
+                dto.setRedeemed(u.getRedeemed());
+                return dto;
+            }).toList();
+
+            return Response.ok(responseList).build();
+        } catch (Exception e) {
+            log.error("Error retrieving coupon redemptions for userEmail: {}", userEmail, e);
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity("An error occurred while retrieving coupon redemptions.")
+                    .build();
+        }
+    }
+
+    @GET
+    @Transactional
+    @Path("Get-All-Coupons-For-User")
+    @RolesAllowed(ROLE_USER)
+    public Response getAllCouponsForUser(@Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        log.info("User -> {} is retrieving all available coupons", currentUser);
+
+        try {
+            var query = entityManager.createQuery(
+                    "SELECT c FROM CouponEntity c", CouponEntity.class);
+            var coupons = query.getResultList();
+
+            var responseList = coupons.stream().map(c -> {
+                var dto = new CreatedCouponDTO();
+                dto.setId(c.getId());
+                dto.setCouponCode(c.getCouponCode());
+                dto.setCouponTitle(c.getCouponTitle());
+                dto.setCouponDescription(c.getCouponDescription());
+                dto.setActive(c.getActive());
+                dto.setStartDate(c.getStartDate());
+                dto.setEndDate(c.getEndDate());
+                dto.setPointsRequired(c.getPointRequirement());
+                return dto;
+            }).toList();
+
+            return Response.ok(responseList).build();
+        } catch (Exception e) {
+            log.error("Error retrieving coupons for user", e);
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity("An error occurred while retrieving coupons.")
+                    .build();
+        }
+    }
+
+    @POST
+    @Transactional
+    @Path("coupon-redemptions")
+    @RolesAllowed(ROLE_USER)
+    public Response createCouponRedemption(CouponUsageTrackingDTO request , @Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        UUID couponID = request.getCouponId();
+        log.info("User {} is creating a CouponRedemption", currentUser);
+        CouponEntity coupon = entityManager.find(CouponEntity.class, couponID);
+        if (coupon == null) {
+            log.warn("No CouponEntity found with ID: {}", couponID);
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity("Invalid Coupon ID")
+                    .build();
+        }
+        CouponUsageEntity usage = new CouponUsageEntity();
+        usage.setUserEmail(request.getUserEmail());
+        usage.setCouponCode(request.getCouponCode());
+        usage.setCouponTitle(request.getCouponTitle());
+        usage.setCoupon(coupon);
+        usage.setCouponDescription(request.getCouponDescription());
+        usage.setUserEarnPoints(request.getUserEarnPoints());
+        usage.setCurrentUserPoints(request.getCurrentUserPoints());
+        usage.setRedeemTime(request.getRedeemTime());
+        usage.setRedeemed(true);
+
+        entityManager.persist(usage);
+
+        log.info("Successfully created CouponRedemption with ID: {}", request.getId());
+        return Response.ok().entity("Coupon redeemed successfully").build();
+    }
+}
+
+-----
+
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { useUserProfile } from "../Lesson/hooks/useUserProfile";
@@ -21,20 +161,13 @@ type RewardProps = {
 
 const Reward = ({ userPoints, token }: RewardProps) => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [loadingId, setLoadingId] = useState<string | null>(null);
-
-  // ใช้ object map เพื่อหลีกเลี่ยงปัญหา reference ของ Set
-  const [hiddenById, setHiddenById] = useState<Record<string, boolean>>({});
-
-  // แสดงคะแนนคงเหลือแบบ optimistic
-  const [remainingPoints, setRemainingPoints] = useState(userPoints);
-  useEffect(() => setRemainingPoints(userPoints), [userPoints]);
+  const [loadingCouponId, setLoadingCouponId] = useState<string | null>(null);
 
   const { email } = useUserProfile(token);
   const { HistoryDetails } = usePointHistory(token);
 
-  // ประวัติที่เคย redeem แล้ว (อิงเฉพาะ couponId)
-  const redeemedIdSet = useMemo(() => {
+  // Build a set of redeemed coupon IDs from history
+  const redeemedSet = useMemo(() => {
     const s = new Set<string>();
     for (const h of HistoryDetails) {
       if (h.isRedeemed && h.couponId) {
@@ -44,8 +177,7 @@ const Reward = ({ userPoints, token }: RewardProps) => {
     return s;
   }, [HistoryDetails]);
 
-  const isRedeemedFromHistory = (c: Coupon) => redeemedIdSet.has(c.id);
-  const isHidden = (c: Coupon) => !!hiddenById[c.id];
+  const isCouponRedeemed = (c: Coupon) => redeemedSet.has(c.id);
 
   useEffect(() => {
     const fetchCoupons = async () => {
@@ -55,32 +187,21 @@ const Reward = ({ userPoints, token }: RewardProps) => {
           { headers: { Authorization: `Bearer ${token}` } }
         );
         if (Array.isArray(res.data)) {
-          setCoupons(res.data);
-          console.log("[Reward] fetched coupons:", res.data);
-        } else {
-          console.warn("[Reward] coupons response is not array:", res.data);
+          // Filter out redeemed coupons
+          const filtered = res.data.filter((c: Coupon) => !redeemedSet.has(c.id));
+          setCoupons(filtered);
         }
       } catch (err) {
-        console.error("[Reward] fetch coupons error:", err);
+        console.error("Failed to fetch coupons:", err);
       }
     };
     fetchCoupons();
-  }, [token]);
+  }, [token, redeemedSet]);
 
   const handleRedeem = async (coupon: Coupon) => {
-    // กันซ้ำ: ถ้าใบนี้ถูกซ่อนไปแล้วหรือเคย redeem แล้ว ให้ return
-    if (isHidden(coupon) || isRedeemedFromHistory(coupon)) return;
-
-    if (remainingPoints < coupon.pointsRequired) {
-      alert("คะแนนไม่พอสำหรับคูปองนี้");
-      return;
-    }
-
-    // ซ่อนทันทีด้วย id เท่านั้น
-    setHiddenById((prev) => ({ ...prev, [coupon.id]: true }));
-    setLoadingId(coupon.id);
-
-    const nextPoints = remainingPoints - coupon.pointsRequired;
+    if (isCouponRedeemed(coupon)) return;
+    if (userPoints < coupon.pointsRequired) return;
+    setLoadingCouponId(coupon.id);
 
     const payload = {
       id: crypto.randomUUID(),
@@ -91,10 +212,8 @@ const Reward = ({ userPoints, token }: RewardProps) => {
       userEarnPoints: coupon.pointsRequired,
       couponId: coupon.id,
       redeemTime: new Date().toISOString(),
-      currentUserPoints: nextPoints,
+      currentUserPoints: userPoints - coupon.pointsRequired,
     };
-
-    console.log("[Reward] redeem payload:", payload);
 
     try {
       await axios.post(
@@ -102,60 +221,31 @@ const Reward = ({ userPoints, token }: RewardProps) => {
         payload,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-
-      // สำเร็จ: ตัดทิ้งจากลิสต์ด้วย id เท่านั้น
-      setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
-      setRemainingPoints(nextPoints);
-
       alert(`คุณได้ Redeem ${coupon.couponTitle} เรียบร้อยแล้ว!`);
-    } catch (err: any) {
-      // ล้มเหลว: rollback การซ่อน
-      setHiddenById((prev) => {
-        const copy = { ...prev };
-        delete copy[coupon.id];
-        return copy;
-      });
-      const msg =
-        err?.response?.status === 409
-          ? "คุณได้ Redeem คูปองนี้ไปแล้ว"
-          : "Redeem failed.";
-      alert(msg);
-      console.error("[Reward] redeem error:", err);
+      // Remove redeemed coupon from the list
+      setCoupons((prev) => prev.filter((c) => c.id !== coupon.id));
+    } catch (err) {
+      alert("Redeem failed.");
+      console.error(err);
     } finally {
-      setLoadingId(null);
+      setLoadingCouponId(null);
     }
   };
 
-  // แสดงเฉพาะใบที่ไม่ถูกซ่อน (optimistic) — ใช้ id เท่านั้น
-  const visibleCoupons = useMemo(
-    () => coupons.filter((c) => !isHidden(c)),
-    [coupons, hiddenById]
-  );
-
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
-        <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
-        <div className="text-sm text-gray-700">
-          Remaining points: <span className="font-semibold">{remainingPoints}</span>
-        </div>
-      </div>
-
-      {visibleCoupons.length === 0 ? (
+      <h2 className="text-xl font-bold text-gray-800">Reward Coupons</h2>
+      {coupons.length === 0 ? (
         <div className="text-gray-500">No coupons available.</div>
       ) : (
-        visibleCoupons.map((coupon) => {
-          const isProcessing = loadingId === coupon.id;
-          // ปุ่มจะปิดถ้า: ไม่ active, คะแนนไม่พอ, กำลังโหลด, หรือ "เคย redeem ใบนั้นแล้ว" (จากประวัติ)
-          const canRedeem =
-            coupon.active &&
-            remainingPoints >= coupon.pointsRequired &&
-            !isProcessing &&
-            !isRedeemedFromHistory(coupon);
+        coupons.map((coupon) => {
+          const canRedeem = coupon.active && userPoints >= coupon.pointsRequired;
+          const isProcessing = loadingCouponId === coupon.id;
+          const isRedeemed = isCouponRedeemed(coupon);
 
           return (
             <div
-              key={coupon.id} // ใช้ id เป็น key เท่านั้น
+              key={coupon.id}
               className="flex items-center justify-between bg-blue-100 px-6 py-4 rounded-full shadow text-sm"
             >
               <div>
@@ -170,15 +260,21 @@ const Reward = ({ userPoints, token }: RewardProps) => {
                 </div>
               </div>
               <button
-                disabled={!canRedeem}
+                disabled={!canRedeem || isRedeemed || isProcessing}
                 onClick={() => handleRedeem(coupon)}
                 className={`px-4 py-1 rounded-full font-medium ${
-                  canRedeem
+                  isRedeemed
+                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    : canRedeem && !isProcessing
                     ? "bg-blue-600 hover:bg-blue-700 text-white"
                     : "bg-gray-300 text-gray-500 cursor-not-allowed"
                 }`}
               >
-                {isProcessing ? "Processing..." : "Redeem"}
+                {isRedeemed
+                  ? "Redeemed"
+                  : isProcessing
+                  ? "Processing..."
+                  : "Redeem"}
               </button>
             </div>
           );
