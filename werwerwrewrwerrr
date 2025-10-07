@@ -15,7 +15,8 @@ import java.net.URI;
 import java.util.*;
 import java.util.stream.Collectors;
 
-@Path("/teams") // << ให้ตรงกับ frontend
+// ให้ตรงกับฝั่ง FE ที่เรียก /api/teams
+@Path("/api/teams")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class TeamResource {
@@ -29,16 +30,15 @@ public class TeamResource {
     }
 
     private static TeamSummary toSummary(TeamEntity team) {
-        // supervisor = สมาชิกที่ role = "supervisor"
         String supervisorId = null;
         List<String> memberIds = new ArrayList<>();
         if (team.getMemberEntities() != null) {
             for (MemberEntity m : team.getMemberEntities()) {
                 if (m == null) continue;
                 if ("supervisor".equalsIgnoreCase(m.getRole())) {
-                    supervisorId = m.getUserEmail(); // เก็บเป็น userId/email ตามที่คุณใช้
+                    supervisorId = m.getUserId(); // ใช้ field จริงใน MemberEntity
                 } else {
-                    memberIds.add(m.getUserEmail());
+                    memberIds.add(m.getUserId());
                 }
             }
         }
@@ -61,22 +61,38 @@ public class TeamResource {
     public TeamSummary getTeam(@PathParam("id") String id) {
         TeamEntity team = em.find(TeamEntity.class, id);
         if (team == null) throw new NotFoundException("Team not found");
-        // ensure members loaded
-        team.getMemberEntities().size();
+        team.getMemberEntities().size(); // ensure members loaded
         return toSummary(team);
     }
 
+    // ดึงทีมที่ผู้ใช้คนหนึ่งสังกัด (รองรับอีเมลเป็น userId ได้)
     @GET
     @Path("/my-teams/{userId}")
     public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {
-        // เดิมใช้ m.userID แต่ใน create/set ใช้ userEmail -> ให้ใช้ userEmail ให้ตรงกัน
+        // ใช้ชื่อ field ที่มีจริงใน MemberEntity: userId (ไม่ใช่ userEmail)
         List<TeamEntity> teams = em.createQuery(
-                        "SELECT DISTINCT m.team FROM MemberEntity m " +
-                                "LEFT JOIN FETCH m.team.memberEntities " +
-                                "WHERE LOWER(m.userEmail) = LOWER(:userId)",
-                        TeamEntity.class
-                ).setParameter("userId", userId)
-                .getResultList();
+                "SELECT DISTINCT t FROM TeamEntity t " +
+                        "JOIN t.memberEntities m " +
+                        "LEFT JOIN FETCH t.memberEntities " +
+                        "WHERE LOWER(m.userId) = LOWER(:uid)",
+                TeamEntity.class
+        ).setParameter("uid", userId).getResultList();
+
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
+
+    // (สำรอง) เรียกแบบ query param ถ้ากังวล path ที่มี @
+    @GET
+    @Path("/my-teams")
+    public List<TeamSummary> getTeamsByUserIdQuery(@QueryParam("userId") String userId) {
+        if (userId == null || userId.isBlank()) throw new BadRequestException("userId is required");
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t " +
+                        "JOIN t.memberEntities m " +
+                        "LEFT JOIN FETCH t.memberEntities " +
+                        "WHERE LOWER(m.userId) = LOWER(:uid)",
+                TeamEntity.class
+        ).setParameter("uid", userId).getResultList();
 
         return teams.stream().map(TeamResource::toSummary).toList();
     }
@@ -101,25 +117,25 @@ public class TeamResource {
         team.setCreateBy(request.createBy);       // optional
         team.setJoinCode(String.format("%06d", new Random().nextInt(1_000_000)));
 
-        // เตรียมสมาชิก: ใส่ supervisor เป็นสมาชิกด้วย role = "supervisor"
         List<MemberEntity> members = new ArrayList<>();
 
+        // เพิ่ม supervisor เข้าเป็นสมาชิกของทีมด้วย role = supervisor
         MemberEntity sup = new MemberEntity();
         sup.setId(genId());
         sup.setTeam(team);
-        sup.setUserEmail(request.supervisorId); // ใช้เป็น userId/email ให้สอดคล้องกับ frontend
+        sup.setUserId(request.supervisorId); // ใช้ userId (field จริง)
         sup.setRole("supervisor");
-        sup.setNameMembers(request.supervisorId); // ถ้ายังไม่มีชื่อจริง ใช้รหัสแทนไปก่อน
+        sup.setNameMembers(request.supervisorId); // ถ้ายังไม่มีชื่อจริง
         members.add(sup);
 
-        // ใส่สมาชิกทีมทั่วไป
+        // สมาชิกทั่วไป
         for (String mid : request.memberIds.stream().filter(Objects::nonNull).collect(Collectors.toSet())) {
             MemberEntity m = new MemberEntity();
             m.setId(genId());
             m.setTeam(team);
-            m.setUserEmail(mid);
+            m.setUserId(mid);
             m.setRole("member");
-            m.setNameMembers(mid); // ถ้ามีชื่อจริง ค่อยอัปเดตภายหลัง
+            m.setNameMembers(mid);
             members.add(m);
         }
 
@@ -145,7 +161,6 @@ public class TeamResource {
             team.setDescription(updatedTeam.getDescription());
         }
 
-        // ส่งกลับเป็น TeamSummary เพื่อให้ frontend ใช้รูปแบบเดียวกัน
         team.getMemberEntities().size();
         return Response.ok(toSummary(team)).build();
     }
@@ -160,7 +175,62 @@ public class TeamResource {
         return Response.noContent().build();
     }
 
-    // -------- keep your existing join by code but align field names --------
+    // --- จัดการสมาชิกในทีม: ใช้โดย Supervisor ตั้ง/ถอน Trainer ---
+
+    @GET
+    @Path("/{teamId}/members")
+    public List<Map<String, Object>> getTeamMembers(@PathParam("teamId") String teamId) {
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found");
+        team.getMemberEntities().size();
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (MemberEntity m : team.getMemberEntities()) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("userId", m.getUserId());
+            row.put("name", m.getNameMembers());
+            row.put("role", m.getRole()); // member | trainer | supervisor
+            out.add(row);
+        }
+        return out;
+    }
+
+    @PUT
+    @Path("/{teamId}/members/{userId}/role")
+    @Transactional
+    public Response setMemberRoleInTeam(
+            @PathParam("teamId") String teamId,
+            @PathParam("userId") String userId,
+            Map<String, String> body
+    ) {
+        String role = Optional.ofNullable(body.get("role")).orElse("").toLowerCase(Locale.ROOT);
+        if (!role.equals("trainer") && !role.equals("member")) {
+            throw new BadRequestException("role must be 'trainer' or 'member'");
+        }
+
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found");
+        team.getMemberEntities().size();
+
+        // TODO: เช็คสิทธิ์ว่า caller เป็น supervisor ของทีมนี้ (ขึ้นกับระบบ auth ของคุณ)
+
+        MemberEntity target = team.getMemberEntities().stream()
+                .filter(m -> m.getUserId() != null && m.getUserId().equalsIgnoreCase(userId))
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException("Member not found in the team"));
+
+        if ("supervisor".equalsIgnoreCase(target.getRole())) {
+            throw new WebApplicationException("Cannot change supervisor role", 409);
+        }
+
+        target.setRole(role); // 'trainer' หรือ 'member'
+        em.merge(target);
+
+        // คืนรายการสมาชิกล่าสุดให้ FE
+        return Response.ok(getTeamMembers(teamId)).build();
+    }
+
+    // -------- join by code (คงพฤติกรรมเดิม แต่ใช้ userId ให้ตรง entity) --------
     @POST
     @Path("/joining")
     @Transactional
@@ -180,10 +250,9 @@ public class TeamResource {
 
         TeamEntity team = teams.get(0);
 
-        boolean alreadyExists = team.getMemberEntities()
-                .stream()
-                .anyMatch(member -> member.getUserEmail() != null &&
-                        member.getUserEmail().equalsIgnoreCase(request.userId));
+        boolean alreadyExists = team.getMemberEntities().stream()
+                .anyMatch(member -> member.getUserId() != null &&
+                        member.getUserId().equalsIgnoreCase(request.userId));
 
         if (alreadyExists) {
             throw new WebApplicationException("User already in the team", 409);
@@ -192,7 +261,7 @@ public class TeamResource {
         MemberEntity member = new MemberEntity();
         member.setId(genId());
         member.setTeam(team);
-        member.setUserEmail(request.userId);
+        member.setUserId(request.userId);
         member.setRole(Optional.ofNullable(request.getRole()).orElse("member"));
         member.setNameMembers(Optional.ofNullable(request.userName).orElse(request.userId));
         team.getMemberEntities().add(member);
