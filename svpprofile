@@ -1,0 +1,379 @@
+import { useEffect, useState, useContext, useMemo, useRef } from "react";
+import axios from "axios";
+import { AuthContext } from "../../Authentication/AuthContext";
+import { useNavigate } from "react-router-dom";
+import SupervisorSidebarWidget from "./Widgets/SupervisorSideBar";
+import { Camera, Loader2, Check, X, Info, Mail, User as UserIcon, Trash2, Upload } from "lucide-react";
+
+interface FormState {
+  fullName: string;
+  email: string;
+}
+
+type Toast = { type: "success" | "error"; message: string } | null;
+
+const MAX_IMAGE_MB = 5;
+
+const SupervisorProfile = () => {
+  const { token } = useContext(AuthContext);
+  const navigate = useNavigate();
+
+  const [form, setForm] = useState<FormState>({ fullName: "", email: "" });
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  const [profilePicture, setProfilePicture] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const [toast, setToast] = useState<Toast>(null);
+  const [errors, setErrors] = useState<{ fullName?: string; image?: string }>({});
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ----- guards -----
+  useEffect(() => {
+    if (!token) navigate("/");
+  }, [token, navigate]);
+
+  // ----- load profile -----
+  useEffect(() => {
+    if (!token) return;
+
+    (async () => {
+      try {
+        const res = await axios.get("/api/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        setForm({
+          fullName: res.data.name ?? "",
+          email: res.data.email ?? "",
+        });
+
+        if (res.data.avatarUrl) {
+          const filename = String(res.data.avatarUrl).split("/").pop();
+          setPreviewUrl(`/api/profile/avatars/${filename}`);
+        }
+      } catch (e) {
+        setToast({ type: "error", message: "Unauthorized or token expired" });
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [token]);
+
+  // ----- helpers -----
+  const isDirty = useMemo(() => {
+    // คร่าว ๆ: ถ้าชื่อเปลี่ยนหรือมีไฟล์ใหม่ถือว่า dirty
+    return Boolean(profilePicture) || errors.fullName !== undefined;
+  }, [profilePicture, errors.fullName]);
+
+  const validate = () => {
+    const next: typeof errors = {};
+    if (!form.fullName.trim()) next.fullName = "กรุณากรอกชื่อเต็ม";
+    if (profilePicture && profilePicture.size > MAX_IMAGE_MB * 1024 * 1024) {
+      next.image = `ไฟล์รูปต้องไม่เกิน ${MAX_IMAGE_MB}MB`;
+    }
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const handleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
+    const { name, value } = e.target;
+    setForm((p) => ({ ...p, [name]: value }));
+    if (name === "fullName" && value.trim()) {
+      setErrors((prev) => ({ ...prev, fullName: undefined }));
+    }
+  };
+
+  const reset = () => {
+    setForm({ fullName: "", email: "" });
+    // ล้างรูป
+    setProfilePicture(null);
+    setPreviewUrl(null);
+    setErrors({});
+  };
+
+  const onDrop = (file?: File) => {
+    if (!file) return;
+    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+      setErrors((e) => ({ ...e, image: `ไฟล์รูปต้องไม่เกิน ${MAX_IMAGE_MB}MB` }));
+      return;
+    }
+    setErrors((e) => ({ ...e, image: undefined }));
+    setProfilePicture(file);
+    setPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const submit: React.FormEventHandler = async (e) => {
+    e.preventDefault();
+    if (!validate()) return;
+
+    setSubmitting(true);
+    const formData = new FormData();
+    formData.append("name", form.fullName);
+    formData.append("email", form.email);
+    if (profilePicture) {
+      formData.append("profilePicture", profilePicture);
+    }
+
+    try {
+      await axios.put("/api/profile", formData, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "multipart/form-data",
+        },
+      });
+      setToast({ type: "success", message: "Profile updated!" });
+      // ค่อยกลับหลังจากแสดง toast เล็กน้อย หรืออยู่หน้าเดิมก็ได้
+      // setTimeout(() => navigate("/supervisor"), 600);
+    } catch {
+      setToast({ type: "error", message: "Update failed" });
+    } finally {
+      setSubmitting(false);
+      setTimeout(() => setToast(null), 2500);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex">
+        <SupervisorSidebarWidget />
+        <main className="flex-1 p-8">
+          <div className="max-w-3xl animate-pulse">
+            <div className="h-8 w-40 bg-gray-200 rounded mb-6" />
+            <div className="bg-white rounded-xl shadow p-8 space-y-6">
+              <div className="h-32 w-32 rounded-full bg-gray-200" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="h-12 bg-gray-200 rounded" />
+                <div className="h-12 bg-gray-200 rounded" />
+              </div>
+              <div className="flex gap-4">
+                <div className="h-10 w-36 bg-gray-200 rounded" />
+                <div className="h-10 w-28 bg-gray-200 rounded" />
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex">
+      <SupervisorSidebarWidget />
+
+      <main className="flex-1 p-6 lg:p-10">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold tracking-tight">Account Settings</h1>
+          <p className="text-gray-600 mt-1">
+            อัปเดตชื่อและรูปโปรไฟล์ของคุณได้ที่นี่ — อีเมลเป็นข้อมูลยืนยันตัวตนจึงแก้ไขไม่ได้
+          </p>
+        </div>
+
+        {/* Form Card */}
+        <form onSubmit={submit} className="max-w-3xl space-y-8">
+          <section className="rounded-2xl border bg-white p-6 shadow-sm">
+            <div className="mb-5">
+              <div className="flex items-center gap-2 font-semibold">
+                <Camera className="w-4 h-4" /> Profile Picture
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                รองรับไฟล์ภาพ (สูงสุด {MAX_IMAGE_MB}MB). ลากไฟล์มาวางหรือกดเลือกไฟล์
+              </p>
+            </div>
+
+            {/* Avatar uploader */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-6">
+              <div className="relative">
+                {previewUrl ? (
+                  <img
+                    src={previewUrl}
+                    alt="Preview"
+                    className="w-32 h-32 rounded-full object-cover border shadow-sm"
+                  />
+                ) : (
+                  <div className="w-32 h-32 rounded-full border-2 border-dashed border-gray-300 bg-white flex items-center justify-center text-gray-400">
+                    <UserIcon className="w-10 h-10" />
+                  </div>
+                )}
+
+                {previewUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfilePicture(null);
+                      setPreviewUrl(null);
+                    }}
+                    className="absolute -bottom-2 -right-2 inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-white border shadow hover:bg-gray-50"
+                    title="Remove"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> ลบรูป
+                  </button>
+                )}
+              </div>
+
+              <div className="flex-1">
+                <div
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) onDrop(file);
+                  }}
+                  className="rounded-xl border border-dashed bg-gray-50 hover:bg-gray-100 transition p-4"
+                >
+                  <div className="flex items-center gap-3">
+                    <Upload className="w-5 h-5 text-gray-600" />
+                    <div className="text-sm">
+                      <div className="font-medium">Drag & drop รูปภาพมาที่นี่</div>
+                      <div className="text-gray-500">หรือ</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="ml-auto px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50"
+                    >
+                      เลือกไฟล์
+                    </button>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) onDrop(file);
+                    }}
+                    className="hidden"
+                  />
+                </div>
+
+                {errors.image && (
+                  <div className="mt-2 text-xs text-red-600">{errors.image}</div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border bg-white p-6 shadow-sm space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Field
+                label="Full name"
+                name="fullName"
+                value={form.fullName}
+                onChange={handleChange}
+                icon={<UserIcon className="w-4 h-4 text-gray-500" />}
+                placeholder="เช่น Ratchanon SVP"
+                error={errors.fullName}
+                onBlur={() => {
+                  if (!form.fullName.trim()) {
+                    setErrors((e) => ({ ...e, fullName: "กรุณากรอกชื่อเต็ม" }));
+                  }
+                }}
+              />
+
+              <Field
+                label="Email"
+                name="email"
+                value={form.email}
+                icon={<Mail className="w-4 h-4 text-gray-500" />}
+                disabled
+                readOnly
+              />
+            </div>
+
+            <p className="text-xs text-gray-500 inline-flex items-center gap-2">
+              <Info className="w-4 h-4" />
+              หากต้องการเปลี่ยนอีเมล กรุณาติดต่อผู้ดูแลระบบ
+            </p>
+          </section>
+
+          {/* Action bar */}
+          <div className="sticky bottom-6">
+            <div className="rounded-2xl border bg-white p-3 shadow-lg flex items-center justify-between">
+              <div className="text-xs text-gray-600">
+                สถานะฟอร์ม:{" "}
+                <span className={`font-medium ${isDirty ? "text-amber-700" : "text-green-700"}`}>
+                  {isDirty ? "มีการเปลี่ยนแปลง" : "ข้อมูลล่าสุด"}
+                </span>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={reset}
+                  className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50"
+                >
+                  Reset
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={submitting || !!errors.fullName}
+                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 text-white shadow hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" /> Updating…
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" /> Update Profile
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        {/* Toast */}
+        {toast && (
+          <div className="fixed bottom-4 right-4 rounded-xl border bg-white shadow p-3 flex items-center gap-2 text-sm">
+            {toast.type === "success" ? (
+              <Check className="w-4 h-4 text-green-700" />
+            ) : (
+              <X className="w-4 h-4 text-red-700" />
+            )}
+            <span>{toast.message}</span>
+            <button
+              className="ml-2 opacity-60 hover:opacity-100"
+              onClick={() => setToast(null)}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+function Field(
+  props: {
+    label: string;
+    icon?: React.ReactNode;
+    error?: string;
+  } & React.InputHTMLAttributes<HTMLInputElement>
+) {
+  const { label, icon, error, ...rest } = props;
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <div
+        className={`flex items-center gap-2 rounded-xl border bg-gray-50 focus-within:bg-white px-3 py-2 transition ${error ? "border-red-400" : "border-gray-200"
+          }`}
+      >
+        {icon}
+        <input
+          {...rest}
+          className="w-full bg-transparent outline-none text-sm placeholder:text-gray-400"
+        />
+      </div>
+      {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
+    </div>
+  );
+}
+
+export default SupervisorProfile;
