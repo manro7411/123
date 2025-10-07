@@ -1,3 +1,314 @@
+{
+    "message": "Request failed with status code 500",
+    "name": "AxiosError",
+    "stack": "AxiosError: Request failed with status code 500\n    at settle (http://localhost:5173/node_modules/.vite/deps/axios.js?v=b84471ba:1253:12)\n    at XMLHttpRequest.onloadend (http://localhost:5173/node_modules/.vite/deps/axios.js?v=b84471ba:1585:7)\n    at Axios.request (http://localhost:5173/node_modules/.vite/deps/axios.js?v=b84471ba:2143:41)\n    at async fetchMyTeams (http://localhost:5173/src/pages/Supervisor/Supervisordashboard.tsx?t=1759818207985:218:24)\n    at async Promise.all (index 0)\n    at async http://localhost:5173/src/pages/Supervisor/Supervisordashboard.tsx?t=1759818207985:240:9",
+    "config": {
+        "transitional": {
+            "silentJSONParsing": true,
+            "forcedJSONParsing": true,
+            "clarifyTimeoutError": false
+        },
+        "adapter": [
+            "xhr",
+            "http",
+            "fetch"
+        ],
+        "transformRequest": [
+            null
+        ],
+        "transformResponse": [
+            null
+        ],
+        "timeout": 0,
+        "xsrfCookieName": "XSRF-TOKEN",
+        "xsrfHeaderName": "X-XSRF-TOKEN",
+        "maxContentLength": -1,
+        "maxBodyLength": -1,
+        "env": {},
+        "headers": {
+            "Accept": "application/json, text/plain, */*",
+            "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJyb2xlIjoic3VwZXJ2aXNvciIsInVwbiI6InN2cEBnbWFpbC5jb20iLCJlbWFpbCI6InN2cEBnbWFpbC5jb20iLCJuYW1lIjoiUmF0Y2hhbm9uIFNWUCIsImlzcyI6Imh0dHBzOi8vZXhhbXBsZS5jb20vaXNzdWVyIiwic3ViIjoic3ZwQGdtYWlsLmNvbSIsImdyb3VwcyI6WyJzdXBlcnZpc29yIl0sImlhdCI6MTc1OTgxNzU1MiwiZXhwIjoxNzU5ODI0NzUyLCJqdGkiOiJlZjZlYjczNy04YjJhLTQ4YWItYjE4Mi03NjZjZjA1ZTZiNDQifQ.nftyELhjKd8e39cpAJOXfKWlhB2EC5_hgBY8sUcgBP8HCVnm-1YJYKPD171u5WahcIf7CuEIAN9yp7EyQ0Zhqila5LU91QQ3u9RsJI9rQkJAzNdDVhNpYSeCsduCusg_It1TFMYTENZLTlgupfJF_LnpW1UI4-IwzdpaXyKAI1KWoquO3DgdGpgNMw4HC1UWjeB9vDnMDFH2pMMJpdSFiEtg-svG9D7NGDzxdGoh_s8DzE1Bt4wl4wVBYMeiZ_zSWnwOuGMF9U8FNctJUHSzfD2IU-3Sfs1QjpPQt3Nl0K3aH3Eg49l8YATWkwaw0IzcxBK4eJrBvr052zuti_sr8A"
+        },
+        "baseURL": "/",
+        "params": {
+            "userId": "svp@gmail.com"
+        },
+        "method": "get",
+        "url": "/api/teams/my-teams",
+        "allowAbsoluteUrls": true
+    },
+    "code": "ERR_BAD_RESPONSE",
+    "status": 500
+}
+
+package Testing;
+
+import dto.CreateTeamRequestSimple;
+import dto.TeamSummary;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.MemberEntity;
+import model.TeamEntity;
+
+import java.net.URI;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Path("/teams") // ให้ตรงกับ frontend
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamResource {
+
+    @Inject
+    EntityManager em;
+
+    // ---------- Helpers ----------
+    private static String genId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+    }
+
+    private static TeamSummary toSummary(TeamEntity team) {
+        String supervisorId = null;
+        List<String> memberIds = new ArrayList<>();
+        if (team.getMemberEntities() != null) {
+            for (MemberEntity m : team.getMemberEntities()) {
+                if (m == null) continue;
+                if ("supervisor".equalsIgnoreCase(m.getRole())) {
+                    supervisorId = m.getId();   // << ใช้ memberId
+                } else {
+                    memberIds.add(m.getId());   // << ใช้ memberId
+                }
+            }
+        }
+        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
+    }
+
+    // ---------- APIs ----------
+
+    @GET
+    public List<TeamSummary> getTeams() {
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities",
+                TeamEntity.class
+        ).getResultList();
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
+
+    @GET
+    @Path("/{id}")
+    public TeamSummary getTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        team.getMemberEntities().size(); // ensure members loaded
+        return toSummary(team);
+    }
+
+    // ดึงทีมที่ผู้ใช้สังกัด (เทียบด้วย memberId = อีเมล/ไอดีของผู้ใช้)
+    @GET
+    @Path("/my-teams/{userId}")
+    public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t " +
+                        "JOIN t.memberEntities m " +
+                        "LEFT JOIN FETCH t.memberEntities " +
+                        "WHERE LOWER(m.memberId) = LOWER(:uid)",    // << ใช้ m.memberId
+                TeamEntity.class
+        ).setParameter("uid", userId).getResultList();
+
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
+
+    // สำรอง: เรียกแบบ query param ถ้ากังวล path ที่มี '@'
+    @GET
+    @Path("/my-teams")
+    public List<TeamSummary> getTeamsByUserIdQuery(@QueryParam("userId") String userId) {
+        if (userId == null || userId.isBlank()) throw new BadRequestException("userId is required");
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t " +
+                        "JOIN t.memberEntities m " +
+                        "LEFT JOIN FETCH t.memberEntities " +
+                        "WHERE LOWER(m.memberId) = LOWER(:uid)",    // << ใช้ m.memberId
+                TeamEntity.class
+        ).setParameter("uid", userId).getResultList();
+
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
+
+    @POST
+    @Transactional
+    public Response createTeam(CreateTeamRequestSimple request) {
+        if (request == null || request.name == null || request.name.trim().isEmpty()) {
+            throw new BadRequestException("Team name is required");
+        }
+        if (request.supervisorId == null || request.supervisorId.isBlank()) {
+            throw new BadRequestException("supervisorId is required");
+        }
+        if (request.memberIds == null) {
+            request.memberIds = List.of();
+        }
+
+        TeamEntity team = new TeamEntity();
+        team.setId(genId());
+        team.setName(request.name.trim());
+        team.setDescription(request.description); // optional
+        team.setCreateBy(request.createBy);       // optional
+        team.setJoinCode(String.format("%06d", new Random().nextInt(1_000_000)));
+
+        List<MemberEntity> members = new ArrayList<>();
+
+        // supervisor เข้าเป็นสมาชิกด้วย
+        MemberEntity sup = new MemberEntity();
+        sup.setId(genId());
+        sup.setTeam(team);
+        sup.setMemberId(request.supervisorId);        // << ใช้ memberId
+        sup.setRole("supervisor");
+        sup.setNameMembers(request.supervisorId);     // << nameMembers
+        members.add(sup);
+
+        // สมาชิกทั่วไป
+        for (String mid : request.memberIds.stream().filter(Objects::nonNull).collect(Collectors.toSet())) {
+            MemberEntity m = new MemberEntity();
+            m.setId(genId());
+            m.setTeam(team);
+            m.setMemberId(mid);                       // << ใช้ memberId
+            m.setRole("member");
+            m.setNameMembers(mid);                    // << nameMembers
+            members.add(m);
+        }
+
+        team.setMemberEntities(members);
+        em.persist(team);
+
+        return Response.created(URI.create("/api/teams/" + team.getId()))
+                .entity(toSummary(team))
+                .build();
+    }
+
+    @PUT
+    @Path("/{id}")
+    @Transactional
+    public Response updateTeam(@PathParam("id") String id, TeamEntity updatedTeam) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+
+        if (updatedTeam.getName() != null) {
+            team.setName(updatedTeam.getName());
+        }
+        if (updatedTeam.getDescription() != null) {
+            team.setDescription(updatedTeam.getDescription());
+        }
+
+        team.getMemberEntities().size();
+        return Response.ok(toSummary(team)).build();
+    }
+
+    @DELETE
+    @Path("/{id}")
+    @Transactional
+    public Response deleteTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        em.remove(team);
+        return Response.noContent().build();
+    }
+
+    // ---- จัดการสมาชิก (Supervisor ตั้ง/ถอน Trainer) ----
+
+    @GET
+    @Path("/{teamId}/members")
+    public List<Map<String, Object>> getTeamMembers(@PathParam("teamId") String teamId) {
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found");
+        team.getMemberEntities().size();
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (MemberEntity m : team.getMemberEntities()) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("userId", m.getMemberId());       // FE ใช้คีย์ userId
+            row.put("name", m.getNameMembers());      // nameMembers
+            row.put("role", m.getRole());
+            out.add(row);
+        }
+        return out;
+        // ถ้าอยากคุม serialization สวยกว่านี้ สร้าง DTO เฉพาะสมาชิกทีมได้
+    }
+
+    @PUT
+    @Path("/{teamId}/members/{userId}/role")
+    @Transactional
+    public Response setMemberRoleInTeam(
+            @PathParam("teamId") String teamId,
+            @PathParam("userId") String userId,
+            Map<String, String> body
+    ) {
+        String role = Optional.ofNullable(body.get("role")).orElse("").toLowerCase(Locale.ROOT);
+        if (!role.equals("trainer") && !role.equals("member")) {
+            throw new BadRequestException("role must be 'trainer' or 'member'");
+        }
+
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found");
+        team.getMemberEntities().size();
+
+        MemberEntity target = team.getMemberEntities().stream()
+                .filter(m -> m.getMemberId() != null && m.getMemberId().equalsIgnoreCase(userId)) // << memberId
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException("Member not found in the team"));
+
+        if ("supervisor".equalsIgnoreCase(target.getRole())) {
+            throw new WebApplicationException("Cannot change supervisor role", 409);
+        }
+
+        target.setRole(role);
+        em.merge(target);
+
+        return Response.ok(getTeamMembers(teamId)).build();
+    }
+
+    // ---- join โดยใช้ joinCode ----
+    @POST
+    @Path("/joining")
+    @Transactional
+    public Response joinTeamByCode(dto.CreateMemberRequest request) {
+        if (request == null || request.joinCode == null || request.joinCode.trim().length() != 6) {
+            throw new BadRequestException("Join code is invalid");
+        }
+
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities WHERE t.joinCode = :joinCode",
+                TeamEntity.class
+        ).setParameter("joinCode", request.joinCode).getResultList();
+
+        if (teams.isEmpty()) {
+            throw new BadRequestException("Join code is invalid");
+        }
+
+        TeamEntity team = teams.get(0);
+
+        boolean alreadyExists = team.getMemberEntities().stream()
+                .anyMatch(member -> member.getMemberId() != null &&
+                        member.getMemberId().equalsIgnoreCase(request.userId)); // << เทียบกับ userId จาก req
+
+        if (alreadyExists) {
+            throw new WebApplicationException("User already in the team", 409);
+        }
+
+        MemberEntity member = new MemberEntity();
+        member.setId(genId());
+        member.setTeam(team);
+        member.setMemberId(request.userId);                   // << memberId
+        member.setRole(Optional.ofNullable(request.getRole()).orElse("member"));
+        member.setNameMembers(Optional.ofNullable(request.userName).orElse(request.userId)); // nameMembers
+        team.getMemberEntities().add(member);
+
+        em.persist(member);
+        return Response.ok().entity(toSummary(team)).build();
+    }
+}
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import SupervisorSidebarWidget from "./Widgets/SupervisorSideBar";
