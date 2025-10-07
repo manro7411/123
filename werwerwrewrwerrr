@@ -1,65 +1,19 @@
-GET http://localhost:5173/api/teams/my-teams/svp%40gmail.com 500 (Internal Server Error)
-dispatchXhrRequest @ xhr.js:195
-xhr @ xhr.js:15
-dispatchRequest @ dispatchRequest.js:51
-Promise.then
-_request @ Axios.js:163
-request @ Axios.js:40
-Axios.<computed> @ Axios.js:213
-wrap @ bind.js:5
-fetchMyTeams @ Supervisordashboard.tsx:179
-(anonymous) @ Supervisordashboard.tsx:204
-await in (anonymous)
-(anonymous) @ Supervisordashboard.tsx:209
-commitHookEffectListMount @ react-dom.development.js:23189
-commitPassiveMountOnFiber @ react-dom.development.js:24965
-commitPassiveMountEffects_complete @ react-dom.development.js:24930
-commitPassiveMountEffects_begin @ react-dom.development.js:24917
-commitPassiveMountEffects @ react-dom.development.js:24905
-flushPassiveEffectsImpl @ react-dom.development.js:27078
-flushPassiveEffects @ react-dom.development.js:27023
-(anonymous) @ react-dom.development.js:26808
-workLoop @ scheduler.development.js:266
-flushWork @ scheduler.development.js:239
-performWorkUntilDeadline @ scheduler.development.js:533
-Supervisordashboard.tsx:183  AxiosError {message: 'Request failed with status code 500', name: 'AxiosError', code: 'ERR_BAD_RESPONSE', config: {…}, request: XMLHttpRequest, …}
-fetchMyTeams @ Supervisordashboard.tsx:183
-await in fetchMyTeams
-(anonymous) @ Supervisordashboard.tsx:204
-await in (anonymous)
-(anonymous) @ Supervisordashboard.tsx:209
-commitHookEffectListMount @ react-dom.development.js:23189
-commitPassiveMountOnFiber @ react-dom.development.js:24965
-commitPassiveMountEffects_complete @ react-dom.development.js:24930
-commitPassiveMountEffects_begin @ react-dom.development.js:24917
-commitPassiveMountEffects @ react-dom.development.js:24905
-flushPassiveEffectsImpl @ react-dom.development.js:27078
-flushPassiveEffects @ react-dom.development.js:27023
-(anonymous) @ react-dom.development.js:26808
-workLoop @ scheduler.development.js:266
-flushWork @ scheduler.development.js:239
-performWorkUntilDeadline @ scheduler.development.js:533
-xhr.js:195   GET http://localhost:5173/api/teams/my-teams/svp%40gmail.com 500 (Internal Server Error)
-dispatchXhrRequest @ xhr.js:195
-xhr @ xhr.js:15
-dispatchRequest @ dispatchRequest.js:51
-Promise.then
-_request @ Axios.js:163
-request @ Axios.js:40
-Axios.<computed> @ Axios.js:213
-wrap @ bind.js:5
-fetchMyTeams @ Supervisordashboard.tsx:179
-(anonymous) @ Supervisordashboard.tsx:204
-await in (anonymous)
-(anonymous) @ Supervisordashboard.tsx:209
-commitHookEffectListMount @ react-dom.development.js:23189
-invokePassiveEffectMountInDEV @ react-dom.development.js:25193
-invokeEffectsInDev @ react-dom.development.js:27390
-commitDoubleInvokeEffectsInDEV @ react-dom.development.js:27369
-flushPassiveEffectsImpl @ react-dom.development.js:27095
-flushPassiveEffects @ react-dom.development.js:27023
-(anonymous) @ react-dom.development.js:26808
-workLoop @ scheduler.development.js:266
-flushWork @ scheduler.development.js:239
-performWorkUntilDeadline @ scheduler.development.js:533
-Supervisordashboard.tsx:183  AxiosError {message: 'Request failed with status code 500', name: 'AxiosError', code: 'ERR_BAD_RESPONSE', config: {…}, request: XMLHttpRequest, …}
+@GET
+@Path("/my-teams/{userId}")
+public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {
+    // ล็อกดูว่าได้อะไรมา
+    System.out.println("[my-teams] userId: " + userId);
+
+    List<TeamEntity> teams = em.createQuery(
+            // เลือกทีมผ่าน MemberEntity ที่ผูกกับ userEmail (ไม่ใช่ userID)
+            "SELECT DISTINCT t FROM MemberEntity m " +
+            "JOIN m.team t " +
+            "LEFT JOIN FETCH t.memberEntities " +
+            "WHERE LOWER(m.userEmail) = LOWER(:uid)",
+            TeamEntity.class
+    )
+    .setParameter("uid", userId)
+    .getResultList();
+
+    return teams.stream().map(TeamResource::toSummary).toList();
+}
