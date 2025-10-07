@@ -1,107 +1,203 @@
-2025-10-07 13:12:33,827 ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-7) HTTP Request to /teams/my-teams/svp%40gmail.com failed, error id: 3d4505c7-55a0-44b6-89cd-34e8d82b8173-23
+package Testing;
 
-Exception in TeamResource.java:73
-          71      public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {                                                                                                                                   
-          72          // ����� m.userID ��� create/set �� userEmail -> ����� userEmail ���ç�ѹ                                                                                                                                       
-        ? 73          List<TeamEntity> teams = em.createQuery(                                                                                                                                                                      
-          74                          "SELECT DISTINCT m.team FROM MemberEntity m " +                                                                                                                                               
-          75                                  "LEFT JOIN FETCH m.team.memberEntities " +                                                                                                                                            
+import dto.CreateTeamRequestSimple;
+import dto.TeamSummary;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.MemberEntity;
+import model.TeamEntity;
 
-Exception in TeamResource.java:73
-          71      public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {                                                                                                                                   
-          72          // ����� m.userID ��� create/set �� userEmail -> ����� userEmail ���ç�ѹ                                                                                                                                       
-        ? 73          List<TeamEntity> teams = em.createQuery(                                                                                                                                                                      
-          74                          "SELECT DISTINCT m.team FROM MemberEntity m " +                                                                                                                                               
-          75                                  "LEFT JOIN FETCH m.team.memberEntities " +                                                                                                                                            
+import java.net.URI;
+import java.util.*;
+import java.util.stream.Collectors;
 
-Exception in TeamResource.java:73
-          71      public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {                                                                                                                                   
-          72          // ����� m.userID ��� create/set �� userEmail -> ����� userEmail ���ç�ѹ                                                                                                                                       
-        ? 73          List<TeamEntity> teams = em.createQuery(                                                                                                                                                                      
-          74                          "SELECT DISTINCT m.team FROM MemberEntity m " +                                                                                                                                               
-          75                                  "LEFT JOIN FETCH m.team.memberEntities " +: java.lang.IllegalArgumentException: org.hibernate.query.sqm.UnknownPathException: Could not resolve attribute 'userEmail' of 'model.MemberEntity' [SELECT DISTINCT m.team FROM MemberEntity m LEFT JOIN FETCH m.team.memberEntities WHERE LOWER(m.userEmail) = LOWER(:userId)]                                                                                                
-        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:143)                                                                                                                                   
-        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:167)                                                                                                                                   
-        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:173)                                                                                                                                   
-        at org.hibernate.internal.AbstractSharedSessionContract.createQuery(AbstractSharedSessionContract.java:886)                                                                                                                 
-        at org.hibernate.internal.AbstractSharedSessionContract.createQuery(AbstractSharedSessionContract.java:143)                                                                                                                 
-        at io.quarkus.hibernate.orm.runtime.session.TransactionScopedSession.createQuery(TransactionScopedSession.java:414)                                                                                                         
-        at org.hibernate.engine.spi.SessionLazyDelegator.createQuery(SessionLazyDelegator.java:552)                                                                                                                                 
-        at org.hibernate.engine.spi.SessionLazyDelegator.createQuery(SessionLazyDelegator.java:68)                                                                                                                                  
-        at org.hibernate.Session_OpdLahisOZ9nWRPXMsEFQmQU03A_Synthetic_ClientProxy.createQuery(Unknown Source)                                                                                                                      
-        at Testing.TeamResource.getTeamsByUserId(TeamResource.java:73)                                                                                                                                                              
-        at Testing.TeamResource$quarkusrestinvoker$getTeamsByUserId_9b6dfd37285525dc4edada4e1f6383081e77ca4f.invoke(Unknown Source)                                                                                                 
-        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
-        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
-        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
-        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
-        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
-        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
-        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
-Caused by: org.hibernate.query.sqm.UnknownPathException: Could not resolve attribute 'userEmail' of 'model.MemberEntity' [SELECT DISTINCT m.team FROM MemberEntity m LEFT JOIN FETCH m.team.memberEntities WHERE LOWER(m.userEmail) = LOWER(:userId)]                                                                                                                                                                                                                   
-        at org.hibernate.query.hql.internal.StandardHqlTranslator.translate(StandardHqlTranslator.java:88)                                                                                                                          
-        at org.hibernate.query.internal.QueryInterpretationCacheStandardImpl.createHqlInterpretation(QueryInterpretationCacheStandardImpl.java:145)                                                                                 
-        at org.hibernate.query.internal.QueryInterpretationCacheStandardImpl.resolveHqlInterpretation(QueryInterpretationCacheStandardImpl.java:132)                                                                                
-        at org.hibernate.query.spi.QueryEngine.interpretHql(QueryEngine.java:54)                                                                                                                                                    
-        at org.hibernate.internal.AbstractSharedSessionContract.interpretHql(AbstractSharedSessionContract.java:832)                                                                                                                
-        at org.hibernate.internal.AbstractSharedSessionContract.createQuery(AbstractSharedSessionContract.java:878)                                                                                                                 
-        ... 19 more                                                                                                                                                                                                                 
-Caused by: org.hibernate.query.sqm.PathElementException: Could not resolve attribute 'userEmail' of 'model.MemberEntity'                                                                                                            
-        at org.hibernate.query.sqm.SqmPathSource.getSubPathSource(SqmPathSource.java:95)                                                                                                                                            
-        at org.hibernate.query.sqm.tree.domain.AbstractSqmPath.get(AbstractSqmPath.java:198)                                                                                                                                        
-        at org.hibernate.query.sqm.tree.domain.AbstractSqmFrom.resolvePathPart(AbstractSqmFrom.java:198)                                                                                                                            
-        at org.hibernate.query.hql.internal.DomainPathPart.resolvePathPart(DomainPathPart.java:42)                                                                                                                                  
-        at org.hibernate.query.hql.internal.BasicDotIdentifierConsumer.consumeIdentifier(BasicDotIdentifierConsumer.java:92)                                                                                                        
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitSimplePath(SemanticQueryBuilder.java:5465)                                                                                                                    
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitGeneralPathFragment(SemanticQueryBuilder.java:5298)                                                                                                           
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitGeneralPathExpression(SemanticQueryBuilder.java:1891)                                                                                                         
-        at org.hibernate.grammars.hql.HqlParser$GeneralPathExpressionContext.accept(HqlParser.java:8268)                                                                                                                            
-        at org.antlr.v4.runtime.tree.AbstractParseTreeVisitor.visitChildren(AbstractParseTreeVisitor.java:46)                                                                                                                       
-        at org.hibernate.grammars.hql.HqlParserBaseVisitor.visitBarePrimaryExpression(HqlParserBaseVisitor.java:812)                                                                                                                
-        at org.hibernate.grammars.hql.HqlParser$BarePrimaryExpressionContext.accept(HqlParser.java:7726)                                                                                                                            
-        at org.antlr.v4.runtime.tree.AbstractParseTreeVisitor.visitChildren(AbstractParseTreeVisitor.java:46)                                                                                                                       
-        at org.hibernate.grammars.hql.HqlParserBaseVisitor.visitExpressionOrPredicate(HqlParserBaseVisitor.java:945)                                                                                                                
-        at org.hibernate.grammars.hql.HqlParser$ExpressionOrPredicateContext.accept(HqlParser.java:8468)                                                                                                                            
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitFinalFunctionArgument(SemanticQueryBuilder.java:4407)                                                                                                         
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitGenericFunctionArguments(SemanticQueryBuilder.java:4384)                                                                                                      
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitGenericFunctionArguments(SemanticQueryBuilder.java:277)                                                                                                       
-        at org.hibernate.grammars.hql.HqlParser$GenericFunctionArgumentsContext.accept(HqlParser.java:13160)                                                                                                                        
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.getFunctionArguments(SemanticQueryBuilder.java:4287)                                                                                                               
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitGenericFunction(SemanticQueryBuilder.java:4152)                                                                                                               
-        at org.hibernate.grammars.hql.HqlParser$GenericFunctionContext.accept(HqlParser.java:12785)                                                                                                                                 
-        at org.antlr.v4.runtime.tree.AbstractParseTreeVisitor.visitChildren(AbstractParseTreeVisitor.java:46)                                                                                                                       
-        at org.hibernate.grammars.hql.HqlParserBaseVisitor.visitFunction(HqlParserBaseVisitor.java:1344)                                                                                                                            
-        at org.hibernate.grammars.hql.HqlParser$FunctionContext.accept(HqlParser.java:12260)                                                                                                                                        
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitFunctionExpression(SemanticQueryBuilder.java:1902)                                                                                                            
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitFunctionExpression(SemanticQueryBuilder.java:27                                                                                                               
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
---                                                                                                                                                                                                                                  
-                                                                                                              7)
-        at org.hibernate.grammars.hql.HqlParser$FunctionExpressionContext.accept(HqlParser.java:8148)                                                                                                                               
-        at org.antlr.v4.runtime.tree.AbstractParseTreeVisitor.visitChildren(AbstractParseTreeVisitor.java:46)                                                                                                                       
-        at org.hibernate.grammars.hql.HqlParserBaseVisitor.visitBarePrimaryExpression(HqlParserBaseVisitor.java:812)                                                                                                                
-        at org.hibernate.grammars.hql.HqlParser$BarePrimaryExpressionContext.accept(HqlParser.java:7726)                                                                                                                            
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.createComparisonPredicate(SemanticQueryBuilder.java:2548)                                                                                                          
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitComparisonPredicate(SemanticQueryBuilder.java:2509)                                                                                                           
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitComparisonPredicate(SemanticQueryBuilder.java:277)                                                                                                            
-        at org.hibernate.grammars.hql.HqlParser$ComparisonPredicateContext.accept(HqlParser.java:6611)                                                                                                                              
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitWhereClause(SemanticQueryBuilder.java:2361)                                                                                                                   
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitWhereClause(SemanticQueryBuilder.java:277)                                                                                                                    
-        at org.hibernate.grammars.hql.HqlParser$WhereClauseContext.accept(HqlParser.java:6302)                                                                                                                                      
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitQuery(SemanticQueryBuilder.java:1259)                                                                                                                         
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitQuerySpecExpression(SemanticQueryBuilder.java:1040)                                                                                                           
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitQuerySpecExpression(SemanticQueryBuilder.java:277)                                                                                                            
-        at org.hibernate.grammars.hql.HqlParser$QuerySpecExpressionContext.accept(HqlParser.java:2134)                                                                                                                              
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitSimpleQueryGroup(SemanticQueryBuilder.java:1025)                                                                                                              
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitSimpleQueryGroup(SemanticQueryBuilder.java:277)                                                                                                               
-        at org.hibernate.grammars.hql.HqlParser$SimpleQueryGroupContext.accept(HqlParser.java:2005)                                                                                                                                 
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitSelectStatement(SemanticQueryBuilder.java:492)                                                                                                                
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.visitStatement(SemanticQueryBuilder.java:451)                                                                                                                      
-        at org.hibernate.query.hql.internal.SemanticQueryBuilder.buildSemanticModel(SemanticQueryBuilder.java:324)                                                                                                                  
+@Path("/teams") // << ให้ตรงกับ frontend
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamResource {
+
+    @Inject
+    EntityManager em;
+
+    // ---------- Helpers ----------
+    private static String genId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+    }
+
+    private static TeamSummary toSummary(TeamEntity team) {
+        // supervisor = สมาชิกที่ role = "supervisor"
+        String supervisorId = null;
+        List<String> memberIds = new ArrayList<>();
+        if (team.getMemberEntities() != null) {
+            for (MemberEntity m : team.getMemberEntities()) {
+                if (m == null) continue;
+                if ("supervisor".equalsIgnoreCase(m.getRole())) {
+                    supervisorId = m.getUserEmail(); // เก็บเป็น userId/email ตามที่คุณใช้
+                } else {
+                    memberIds.add(m.getUserEmail());
+                }
+            }
+        }
+        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
+    }
+
+    // ---------- APIs ----------
+
+    @GET
+    public List<TeamSummary> getTeams() {
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities",
+                TeamEntity.class
+        ).getResultList();
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
+
+    @GET
+    @Path("/{id}")
+    public TeamSummary getTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        // ensure members loaded
+        team.getMemberEntities().size();
+        return toSummary(team);
+    }
+
+    @GET
+    @Path("/my-teams/{userId}")
+    public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {
+        // เดิมใช้ m.userID แต่ใน create/set ใช้ userEmail -> ให้ใช้ userEmail ให้ตรงกัน
+        List<TeamEntity> teams = em.createQuery(
+                        "SELECT DISTINCT m.team FROM MemberEntity m " +
+                                "LEFT JOIN FETCH m.team.memberEntities " +
+                                "WHERE LOWER(m.userEmail) = LOWER(:userId)",
+                        TeamEntity.class
+                ).setParameter("userId", userId)
+                .getResultList();
+
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
+
+    @POST
+    @Transactional
+    public Response createTeam(CreateTeamRequestSimple request) {
+        if (request == null || request.name == null || request.name.trim().isEmpty()) {
+            throw new BadRequestException("Team name is required");
+        }
+        if (request.supervisorId == null || request.supervisorId.isBlank()) {
+            throw new BadRequestException("supervisorId is required");
+        }
+        if (request.memberIds == null) {
+            request.memberIds = List.of();
+        }
+
+        TeamEntity team = new TeamEntity();
+        team.setId(genId());
+        team.setName(request.name.trim());
+        team.setDescription(request.description); // optional
+        team.setCreateBy(request.createBy);       // optional
+        team.setJoinCode(String.format("%06d", new Random().nextInt(1_000_000)));
+
+        // เตรียมสมาชิก: ใส่ supervisor เป็นสมาชิกด้วย role = "supervisor"
+        List<MemberEntity> members = new ArrayList<>();
+
+        MemberEntity sup = new MemberEntity();
+        sup.setId(genId());
+        sup.setTeam(team);
+        sup.setUserEmail(request.supervisorId); // ใช้เป็น userId/email ให้สอดคล้องกับ frontend
+        sup.setRole("supervisor");
+        sup.setNameMembers(request.supervisorId); // ถ้ายังไม่มีชื่อจริง ใช้รหัสแทนไปก่อน
+        members.add(sup);
+
+        // ใส่สมาชิกทีมทั่วไป
+        for (String mid : request.memberIds.stream().filter(Objects::nonNull).collect(Collectors.toSet())) {
+            MemberEntity m = new MemberEntity();
+            m.setId(genId());
+            m.setTeam(team);
+            m.setUserEmail(mid);
+            m.setRole("member");
+            m.setNameMembers(mid); // ถ้ามีชื่อจริง ค่อยอัปเดตภายหลัง
+            members.add(m);
+        }
+
+        team.setMemberEntities(members);
+        em.persist(team);
+
+        return Response.created(URI.create("/api/teams/" + team.getId()))
+                .entity(toSummary(team))
+                .build();
+    }
+
+    @PUT
+    @Path("/{id}")
+    @Transactional
+    public Response updateTeam(@PathParam("id") String id, TeamEntity updatedTeam) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+
+        if (updatedTeam.getName() != null) {
+            team.setName(updatedTeam.getName());
+        }
+        if (updatedTeam.getDescription() != null) {
+            team.setDescription(updatedTeam.getDescription());
+        }
+
+        // ส่งกลับเป็น TeamSummary เพื่อให้ frontend ใช้รูปแบบเดียวกัน
+        team.getMemberEntities().size();
+        return Response.ok(toSummary(team)).build();
+    }
+
+    @DELETE
+    @Path("/{id}")
+    @Transactional
+    public Response deleteTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        em.remove(team);
+        return Response.noContent().build();
+    }
+
+    // -------- keep your existing join by code but align field names --------
+    @POST
+    @Path("/joining")
+    @Transactional
+    public Response joinTeamByCode(dto.CreateMemberRequest request) {
+        if (request == null || request.joinCode == null || request.joinCode.trim().length() != 6) {
+            throw new BadRequestException("Join code is invalid");
+        }
+
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities WHERE t.joinCode = :joinCode",
+                TeamEntity.class
+        ).setParameter("joinCode", request.joinCode).getResultList();
+
+        if (teams.isEmpty()) {
+            throw new BadRequestException("Join code is invalid");
+        }
+
+        TeamEntity team = teams.get(0);
+
+        boolean alreadyExists = team.getMemberEntities()
+                .stream()
+                .anyMatch(member -> member.getUserEmail() != null &&
+                        member.getUserEmail().equalsIgnoreCase(request.userId));
+
+        if (alreadyExists) {
+            throw new WebApplicationException("User already in the team", 409);
+        }
+
+        MemberEntity member = new MemberEntity();
+        member.setId(genId());
+        member.setTeam(team);
+        member.setUserEmail(request.userId);
+        member.setRole(Optional.ofNullable(request.getRole()).orElse("member"));
+        member.setNameMembers(Optional.ofNullable(request.userName).orElse(request.userId));
+        team.getMemberEntities().add(member);
+
+        em.persist(member);
+        return Response.ok().entity(toSummary(team)).build();
+    }
+}
