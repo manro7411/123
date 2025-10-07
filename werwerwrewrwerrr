@@ -1,305 +1,203 @@
-import { useEffect, useMemo, useState } from "react";
-import axios from "axios";
-import SupervisorSidebarWidget from "./Widgets/SupervisorSideBar";
-import UserListWidget from "./Widgets/UserListWidget"; // optional (global role mgmt)
+package Testing;
 
-// ----------------------
-// Axios client + token
-// ----------------------
-const axiosClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "/",
-});
-axiosClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-  if (token) {
-    config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
-  }
-  return config;
-});
+import dto.CreateTeamRequestSimple;
+import dto.TeamSummary;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.MemberEntity;
+import model.TeamEntity;
 
-// ----------------------
-// Types
-// ----------------------
-export type User = {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-};
+import java.net.URI;
+import java.util.*;
+import java.util.stream.Collectors;
 
-export type Team = {
-  id: string;
-  name: string;
-  supervisorId: string;
-  memberIds: string[];
-};
+@Path("/api/teams") // << ให้ตรงกับ frontend
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamResource {
 
-export type TeamMember = {
-  userId: string; // MemberEntity.memberId
-  name?: string;  // MemberEntity.nameMembers
-  role: string;   // member | trainer | supervisor
-};
+    @Inject
+    EntityManager em;
 
-// ----------------------
-// Team Members Manager
-// ----------------------
-function TeamMembersManager({ teamId, canManage }: { teamId: string; canManage: boolean }) {
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<TeamMember | null>(null);
-
-  const fetchMembers = async () => {
-    try {
-      const { data } = await axiosClient.get<TeamMember[]>(`/api/teams/${teamId}/members`);
-      setMembers(data);
-      if (data?.length) setSelected((prev) => prev && data.find(d => d.userId === prev.userId) || data[0]);
-      setError(null);
-    } catch (e: any) {
-      console.error(e);
-      setError(e?.response?.data?.message || "โหลดสมาชิกทีมไม่สำเร็จ");
-    } finally {
-      setLoading(false);
+    // ---------- Helpers ----------
+    private static String genId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
     }
-  };
 
-  useEffect(() => { setLoading(true); fetchMembers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [teamId]);
-
-  const setTrainer = async (userId: string, nextRole: 'trainer' | 'member') => {
-    if (!canManage) return;
-    try {
-      await axiosClient.put(`/api/teams/${teamId}/members/${encodeURIComponent(userId)}/role`, { role: nextRole });
-      const { data } = await axiosClient.get<TeamMember[]>(`/api/teams/${teamId}/members`);
-      setMembers(data);
-      const after = data.find(m => m.userId === userId);
-      setSelected(after ?? null);
-    } catch (e: any) {
-      alert(e?.response?.data?.message || "อัปเดตบทบาทในทีมไม่สำเร็จ");
+    private static TeamSummary toSummary(TeamEntity team) {
+        // supervisor = สมาชิกที่ role = "supervisor"
+        String supervisorId = null;
+        List<String> memberIds = new ArrayList<>();
+        if (team.getMemberEntities() != null) {
+            for (MemberEntity m : team.getMemberEntities()) {
+                if (m == null) continue;
+                if ("supervisor".equalsIgnoreCase(m.getRole())) {
+                    supervisorId = m.getUserEmail(); // เก็บเป็น userId/email ตามที่คุณใช้
+                } else {
+                    memberIds.add(m.getUserEmail());
+                }
+            }
+        }
+        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
     }
-  };
 
-  if (loading) return <div className="text-sm opacity-70">กำลังโหลดสมาชิกทีม...</div>;
-  if (error) return <div className="text-sm text-red-600">{error}</div>;
+    // ---------- APIs ----------
 
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      {/* รายชื่อสมาชิก */}
-      <div className="md:col-span-1 rounded-2xl border bg-white/60 overflow-hidden">
-        <div className="px-4 py-3 border-b font-semibold">สมาชิกทีม</div>
-        <div className="max-h-96 overflow-auto divide-y">
-          {members.map((m) => (
-            <button
-              key={m.userId}
-              onClick={() => setSelected(m)}
-              className={`w-full text-left p-3 hover:bg-gray-50 ${selected?.userId === m.userId ? 'bg-gray-50' : ''}`}
-            >
-              <div className="font-medium">{m.name || m.userId}</div>
-              <div className="text-xs opacity-70">บทบาทในทีม: {m.role}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* รายละเอียดสมาชิก */}
-      <div className="md:col-span-2 rounded-2xl border bg-white/60 p-4">
-        {selected ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-lg font-semibold">{selected.name || selected.userId}</div>
-                <div className="text-sm opacity-70">บทบาทในทีมปัจจุบัน: {selected.role}</div>
-              </div>
-            </div>
-            {canManage && selected.role !== 'supervisor' && (
-              <div className="flex gap-2">
-                {selected.role !== 'trainer' ? (
-                  <button className="rounded-xl px-4 py-2 border" onClick={() => setTrainer(selected.userId, 'trainer')}>
-                    ตั้งเป็น Trainer
-                  </button>
-                ) : (
-                  <button className="rounded-xl px-4 py-2 border" onClick={() => setTrainer(selected.userId, 'member')}>
-                    ถอน Trainer
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="text-sm opacity-70">เลือกสมาชิกทางซ้ายเพื่อดูรายละเอียด</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ----------------------
-// SupervisorDashboard
-// ----------------------
-export default function SupervisorDashboard() {
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
-  const [users, setUsers] = useState<User[]>([]); // optional
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-
-  // --- helpers: หา userId จากหลายแหล่ง ---
-  const parseJwt = (token: string | null): any | null => {
-    if (!token) return null;
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    try {
-      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-      return payload;
-    } catch { return null; }
-  };
-
-  const resolveCurrentUserId = async () => {
-    const stored = localStorage.getItem('userId') || sessionStorage.getItem('userId');
-    if (stored) return stored;
-
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-    const payload = parseJwt(token);
-    const jwtId = payload?.sub || payload?.userId || payload?.email || null;
-    if (jwtId) return String(jwtId);
-
-    try {
-      const { data } = await axiosClient.get<any>('/api/profile/me');
-      return data?.id || data?.userId || data?.email || null;
-    } catch {
-      return null;
+    @GET
+    public List<TeamSummary> getTeams() {
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities",
+                TeamEntity.class
+        ).getResultList();
+        return teams.stream().map(TeamResource::toSummary).toList();
     }
-  };
 
-  // ใช้แบบ query param เพื่อลดปัญหา path ที่มี '@'
-  const fetchMyTeams = async (uid: string) => {
-    try {
-      const { data } = await axiosClient.get<Team[]>("/api/teams/my-teams", { params: { userId: uid } });
-      setTeams(data || []);
-      if (data?.length && !selectedTeamId) setSelectedTeamId(data[0].id);
-    } catch (e: any) {
-      console.error(e);
-      setError(e?.response?.data?.message || e?.message || 'โหลดทีมของฉันไม่สำเร็จ');
+    @GET
+    @Path("/{id}")
+    public TeamSummary getTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        // ensure members loaded
+        team.getMemberEntities().size();
+        return toSummary(team);
     }
-  };
 
-  const fetchUsers = async () => {
-    try {
-      const { data } = await axiosClient.get<User[]>("/api/profile/users/for-supervisor");
-      setUsers(data);
-    } catch {
-      // optional
+    @GET
+    @Path("/my-teams/{userId}")
+    public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {
+        // เดิมใช้ m.userID แต่ใน create/set ใช้ userEmail -> ให้ใช้ userEmail ให้ตรงกัน
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT m.team FROM MemberEntity m " +
+                        "LEFT JOIN FETCH m.team.memberEntities " +
+                        "WHERE LOWER(m.userEmail) = LOWER(:userId)",
+                TeamEntity.class
+        ).setParameter("userId", userId)
+         .getResultList();
+
+        return teams.stream().map(TeamResource::toSummary).toList();
     }
-  };
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const uid = await resolveCurrentUserId();
-      if (uid) {
-        setCurrentUserId(uid);
-        await Promise.all([fetchMyTeams(uid), fetchUsers()]);
-      } else {
-        setError('ไม่พบ userId ของผู้ใช้ปัจจุบัน — ตรวจสอบการเข้าสู่ระบบ/โทเคน');
-      }
-      setLoading(false);
-    })();
-  }, []);
+    @POST
+    @Transactional
+    public Response createTeam(CreateTeamRequestSimple request) {
+        if (request == null || request.name == null || request.name.trim().isEmpty()) {
+            throw new BadRequestException("Team name is required");
+        }
+        if (request.supervisorId == null || request.supervisorId.isBlank()) {
+            throw new BadRequestException("supervisorId is required");
+        }
+        if (request.memberIds == null) {
+            request.memberIds = List.of();
+        }
 
-  const assignRoleGlobal = async (userId: string, role: string) => {
-    const confirmAssign = window.confirm(`Are you sure you want to assign role "${role}" to this user?`);
-    if (!confirmAssign) return;
-    try {
-      await axiosClient.put(`/api/profile/users/${userId}/role`, { role });
-      alert(`Role updated to ${role}`);
-      fetchUsers();
-    } catch {
-      alert('Failed to update role');
+        TeamEntity team = new TeamEntity();
+        team.setId(genId());
+        team.setName(request.name.trim());
+        team.setDescription(request.description); // optional
+        team.setCreateBy(request.createBy);       // optional
+        team.setJoinCode(String.format("%06d", new Random().nextInt(1_000_000)));
+
+        // เตรียมสมาชิก: ใส่ supervisor เป็นสมาชิกด้วย role = "supervisor"
+        List<MemberEntity> members = new ArrayList<>();
+
+        MemberEntity sup = new MemberEntity();
+        sup.setId(genId());
+        sup.setTeam(team);
+        sup.setUserEmail(request.supervisorId); // ใช้เป็น userId/email ให้สอดคล้องกับ frontend
+        sup.setRole("supervisor");
+        sup.setNameMembers(request.supervisorId); // ถ้ายังไม่มีชื่อจริง ใช้รหัสแทนไปก่อน
+        members.add(sup);
+
+        // ใส่สมาชิกทีมทั่วไป
+        for (String mid : request.memberIds.stream().filter(Objects::nonNull).collect(Collectors.toSet())) {
+            MemberEntity m = new MemberEntity();
+            m.setId(genId());
+            m.setTeam(team);
+            m.setUserEmail(mid);
+            m.setRole("member");
+            m.setNameMembers(mid); // ถ้ามีชื่อจริง ค่อยอัปเดตภายหลัง
+            members.add(m);
+        }
+
+        team.setMemberEntities(members);
+        em.persist(team);
+
+        return Response.created(URI.create("/api/teams/" + team.getId()))
+                .entity(toSummary(team))
+                .build();
     }
-  };
 
-  const selectedTeam = useMemo(() => teams.find(t => t.id === selectedTeamId) || null, [teams, selectedTeamId]);
+    @PUT
+    @Path("/{id}")
+    @Transactional
+    public Response updateTeam(@PathParam("id") String id, TeamEntity updatedTeam) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
 
-  if (loading) {
-    return (
-      <div className="flex h-screen">
-        <SupervisorSidebarWidget />
-        <div className="flex-1 p-8">กำลังโหลด...</div>
-      </div>
-    );
-  }
+        if (updatedTeam.getName() != null) {
+            team.setName(updatedTeam.getName());
+        }
+        if (updatedTeam.getDescription() != null) {
+            team.setDescription(updatedTeam.getDescription());
+        }
 
-  return (
-    <div className="flex h-screen">
-      <SupervisorSidebarWidget />
+        // ส่งกลับเป็น TeamSummary เพื่อให้ frontend ใช้รูปแบบเดียวกัน
+        team.getMemberEntities().size();
+        return Response.ok(toSummary(team)).build();
+    }
 
-      <div className="flex-1 p-8 overflow-y-auto space-y-8">
-        <div className="flex justify-between items-center mb-2">
-          <h1 className="text-3xl font-bold">Supervisor Dashboard</h1>
-        </div>
+    @DELETE
+    @Path("/{id}")
+    @Transactional
+    public Response deleteTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        em.remove(team);
+        return Response.noContent().build();
+    }
 
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700 flex items-center justify-between">
-            <span>{error}</span>
-            {!currentUserId && (
-              <button
-                className="ml-3 rounded-lg border px-3 py-1"
-                onClick={async () => {
-                  setLoading(true);
-                  const uid = await resolveCurrentUserId();
-                  if (uid) {
-                    setCurrentUserId(uid);
-                    setError(null);
-                    await fetchMyTeams(uid);
-                  }
-                  setLoading(false);
-                }}
-              >
-                ลองดึงข้อมูลผู้ใช้ใหม่
-              </button>
-            )}
-          </div>
-        )}
+    // -------- keep your existing join by code but align field names --------
+    @POST
+    @Path("/joining")
+    @Transactional
+    public Response joinTeamByCode(dto.CreateMemberRequest request) {
+        if (request == null || request.joinCode == null || request.joinCode.trim().length() != 6) {
+            throw new BadRequestException("Join code is invalid");
+        }
 
-        {/* แถวเลือกทีมของฉัน */}
-        <div className="rounded-2xl border bg-white/60 p-4">
-          <div className="mb-3 font-semibold">ทีมของฉัน</div>
-          {teams.length ? (
-            <div className="flex gap-2 flex-wrap">
-              {teams.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setSelectedTeamId(t.id)}
-                  className={`rounded-xl px-3 py-2 border ${selectedTeamId === t.id ? 'bg-black text-white' : 'bg-white'}`}
-                >
-                  {t.name}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="text-sm opacity-70">ยังไม่มีทีมที่คุณดูแล</div>
-          )}
-        </div>
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities WHERE t.joinCode = :joinCode",
+                TeamEntity.class
+        ).setParameter("joinCode", request.joinCode).getResultList();
 
-        {/* รายละเอียดทีมที่เลือก + จัดการสมาชิก (ตั้ง Trainer) */}
-        {selectedTeam && (
-          <div className="rounded-2xl border bg-white/60 p-4">
-            <div className="mb-3">
-              <div className="text-lg font-semibold">รายละเอียดทีม: {selectedTeam.name}</div>
-              <div className="text-sm opacity-70">ตั้ง/ถอน Trainer ให้สมาชิกในทีมนี้</div>
-            </div>
-            <TeamMembersManager teamId={selectedTeam.id} canManage={true} />
-          </div>
-        )}
+        if (teams.isEmpty()) {
+            throw new BadRequestException("Join code is invalid");
+        }
 
-        {/* (ตัวเลือก) Global user roles */}
-        {false && (
-          <div className="space-y-3">
-            <p className="opacity-80">Manage user roles (global)</p>
-            <UserListWidget users={users} assignRole={assignRoleGlobal} error={null} />
-          </div>
-        )}
-      </div>
-    </div>
-  );
+        TeamEntity team = teams.get(0);
+
+        boolean alreadyExists = team.getMemberEntities()
+                .stream()
+                .anyMatch(member -> member.getUserEmail() != null &&
+                        member.getUserEmail().equalsIgnoreCase(request.userId));
+
+        if (alreadyExists) {
+            throw new WebApplicationException("User already in the team", 409);
+        }
+
+        MemberEntity member = new MemberEntity();
+        member.setId(genId());
+        member.setTeam(team);
+        member.setUserEmail(request.userId);
+        member.setRole(Optional.ofNullable(request.getRole()).orElse("member"));
+        member.setNameMembers(Optional.ofNullable(request.userName).orElse(request.userId));
+        team.getMemberEntities().add(member);
+
+        em.persist(member);
+        return Response.ok().entity(toSummary(team)).build();
+    }
 }
