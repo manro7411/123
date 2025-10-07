@@ -1,30 +1,7 @@
-xhr.js:195 
- 
- GET http://localhost:5173/api/profile/users/for-supervisor 500 (Internal Server Error)
-Supervisordashboard.tsx:193 
- โหลดรายชื่อผู้ใช้ (optional) ไม่สำเร็จ
-xhr.js:195 
- 
- GET http://localhost:5173/api/profile/users/for-supervisor 500 (Internal Server Error)
-Supervisordashboard.tsx:193 
- โหลดรายชื่อผู้ใช้ (optional) ไม่สำเร็จ
-xhr.js:195 
- 
- GET http://localhost:5173/api/teams/my-teams/svp%40gmail.com 500 (Internal Server Error)
-Supervisordashboard.tsx:183 
- 
-AxiosError {message: 'Request failed with status code 500', name: 'AxiosError', code: 'ERR_BAD_RESPONSE', config: {…}, request: XMLHttpRequest, …}
-xhr.js:195 
- 
- GET http://localhost:5173/api/teams/my-teams/svp%40gmail.com 500 (Internal Server Error)
-Supervisordashboard.tsx:183 
- 
-AxiosError {message: 'Request failed with status code 500', name: 'AxiosError', code: 'ERR_BAD_RESPONSE', config: {…}, request: XMLHttpRequest, …}
-
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import SupervisorSidebarWidget from "./Widgets/SupervisorSideBar";
-import UserListWidget from "./Widgets/UserListWidget"; // ยังเก็บไว้ ถ้าต้องการใช้เดิม
+import UserListWidget from "./Widgets/UserListWidget"; // optional (global role mgmt)
 
 // ----------------------
 // Axios client + token
@@ -44,10 +21,10 @@ axiosClient.interceptors.request.use((config) => {
 // Types
 // ----------------------
 export type User = {
-  id: string; // userId (เราจะใช้เป็น email/userId ที่ backend เก็บใน Member.userEmail)
+  id: string; // global userId/email
   name: string;
   email: string;
-  role: string; // global role (ระบบ)
+  role: string; // global role (system)
 };
 
 export type Team = {
@@ -58,13 +35,13 @@ export type Team = {
 };
 
 export type TeamMember = {
-  userId: string;
-  name?: string;
-  role: string; // member | trainer | supervisor (บทบาทในทีม)
+  userId: string; // maps to MemberEntity.memberId
+  name?: string;  // maps to MemberEntity.nameMembers
+  role: string;   // member | trainer | supervisor (per-team role)
 };
 
 // ----------------------
-// Team Members Manager (ตั้ง/ถอน Trainer ในทีมสำหรับ Supervisor)
+// Team Members Manager (ตั้ง/ถอน Trainer ในทีม สำหรับ Supervisor)
 // ----------------------
 function TeamMembersManager({ teamId, canManage }: { teamId: string; canManage: boolean }) {
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -76,7 +53,7 @@ function TeamMembersManager({ teamId, canManage }: { teamId: string; canManage: 
     try {
       const { data } = await axiosClient.get<TeamMember[]>(`/api/teams/${teamId}/members`);
       setMembers(data);
-      if (data?.length) setSelected(data[0]);
+      if (data?.length) setSelected((prev) => prev && data.find(d => d.userId === prev.userId) || data[0]);
       setError(null);
     } catch (e: any) {
       console.error(e);
@@ -86,15 +63,17 @@ function TeamMembersManager({ teamId, canManage }: { teamId: string; canManage: 
     }
   };
 
-  useEffect(() => { setLoading(true); fetchMembers(); }, [teamId]);
+  useEffect(() => { setLoading(true); fetchMembers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [teamId]);
 
   const setTrainer = async (userId: string, nextRole: 'trainer' | 'member') => {
     if (!canManage) return;
     try {
       await axiosClient.put(`/api/teams/${teamId}/members/${encodeURIComponent(userId)}/role`, { role: nextRole });
-      await fetchMembers();
-      const found = members.find(m => m.userId === userId);
-      if (found) setSelected({ ...found, role: nextRole });
+      // รีเฟรชจากแหล่งจริง เพื่อให้ state ตรง backend เสมอ
+      const { data } = await axiosClient.get<TeamMember[]>(`/api/teams/${teamId}/members`);
+      setMembers(data);
+      const after = data.find(m => m.userId === userId);
+      setSelected(after ?? null);
     } catch (e: any) {
       alert(e?.response?.data?.message || "อัปเดตบทบาทในทีมไม่สำเร็จ");
     }
@@ -190,16 +169,16 @@ export default function SupervisorDashboard() {
     // 3) call /api/profile/me (ให้ backend คืน { id/email/... })
     try {
       const { data } = await axiosClient.get<any>('/api/profile/me');
-      // เดาป้ายกำกับที่พบบ่อย
       return data?.id || data?.userId || data?.email || null;
     } catch {
       return null;
     }
   };
 
+  // ใช้แบบ query param เพื่อลดปัญหา path ที่มี '@'
   const fetchMyTeams = async (uid: string) => {
     try {
-      const { data } = await axiosClient.get<Team[]>(`/api/teams/my-teams/${encodeURIComponent(uid)}`);
+      const { data } = await axiosClient.get<Team[]>("/api/teams/my-teams", { params: { userId: uid } });
       setTeams(data || []);
       if (data?.length && !selectedTeamId) setSelectedTeamId(data[0].id);
     } catch (e: any) {
@@ -230,6 +209,7 @@ export default function SupervisorDashboard() {
       }
       setLoading(false);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const assignRoleGlobal = async (userId: string, role: string) => {
@@ -320,12 +300,12 @@ export default function SupervisorDashboard() {
         )}
 
         {/* (ตัวเลือก) ส่วนเดิมสำหรับจัดการ global role ของผู้ใช้ทั้งหมด */}
-        {/*
-        <div className="space-y-3">
-          <p className="opacity-80">Manage user roles (global)</p>
-          <UserListWidget users={users} assignRole={assignRoleGlobal} error={null} />
-        </div>
-        */}
+        {false && (
+          <div className="space-y-3">
+            <p className="opacity-80">Manage user roles (global)</p>
+            <UserListWidget users={users} assignRole={assignRoleGlobal} error={null} />
+          </div>
+        )}
       </div>
     </div>
   );
