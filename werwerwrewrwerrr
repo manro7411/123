@@ -1,23 +1,309 @@
-Supervisordashboard.tsx:153 
- Error: ไม่พบ userId ของผู้ใช้ปัจจุบัน
-    at fetchMyTeams (Supervisordashboard.tsx:148:35)
-    at Supervisordashboard.tsx:172:26
-    at Supervisordashboard.tsx:174:5
-    at commitHookEffectListMount (react-dom.development.js:23189:26)
-    at commitPassiveMountOnFiber (react-dom.development.js:24965:13)
-    at commitPassiveMountEffects_complete (react-dom.development.js:24930:9)
-    at commitPassiveMountEffects_begin (react-dom.development.js:24917:7)
-    at commitPassiveMountEffects (react-dom.development.js:24905:3)
-    at flushPassiveEffectsImpl (react-dom.development.js:27078:3)
-    at flushPassiveEffects (react-dom.development.js:27023:14)
-Supervisordashboard.tsx:153 
- Error: ไม่พบ userId ของผู้ใช้ปัจจุบัน
-    at fetchMyTeams (Supervisordashboard.tsx:148:35)
-    at Supervisordashboard.tsx:172:26
-    at Supervisordashboard.tsx:174:5
-    at commitHookEffectListMount (react-dom.development.js:23189:26)
-    at invokePassiveEffectMountInDEV (react-dom.development.js:25193:13)
-    at invokeEffectsInDev (react-dom.development.js:27390:11)
-    at commitDoubleInvokeEffectsInDEV (react-dom.development.js:27369:7)
-    at flushPassiveEffectsImpl (react-dom.development.js:27095:5)
-    at flushPassiveEffects (react-dom.development.js:27023:14)
+import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
+import SupervisorSidebarWidget from "./Widgets/SupervisorSideBar";
+import UserListWidget from "./Widgets/UserListWidget"; // ยังเก็บไว้ ถ้าต้องการใช้เดิม
+
+// ----------------------
+// Axios client + token
+// ----------------------
+const axiosClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "/",
+});
+axiosClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+  if (token) {
+    config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+  }
+  return config;
+});
+
+// ----------------------
+// Types
+// ----------------------
+export type User = {
+  id: string; // userId (เราจะใช้เป็น email/userId ที่ backend เก็บใน Member.userEmail)
+  name: string;
+  email: string;
+  role: string; // global role (ระบบ)
+};
+
+export type Team = {
+  id: string;
+  name: string;
+  supervisorId: string;
+  memberIds: string[];
+};
+
+export type TeamMember = {
+  userId: string;
+  name?: string;
+  role: string; // member | trainer | supervisor (บทบาทในทีม)
+};
+
+// ----------------------
+// Team Members Manager (ตั้ง/ถอน Trainer ในทีมสำหรับ Supervisor)
+// ----------------------
+function TeamMembersManager({ teamId, canManage }: { teamId: string; canManage: boolean }) {
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<TeamMember | null>(null);
+
+  const fetchMembers = async () => {
+    try {
+      const { data } = await axiosClient.get<TeamMember[]>(`/api/teams/${teamId}/members`);
+      setMembers(data);
+      if (data?.length) setSelected(data[0]);
+      setError(null);
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.response?.data?.message || "โหลดสมาชิกทีมไม่สำเร็จ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { setLoading(true); fetchMembers(); }, [teamId]);
+
+  const setTrainer = async (userId: string, nextRole: 'trainer' | 'member') => {
+    if (!canManage) return;
+    try {
+      await axiosClient.put(`/api/teams/${teamId}/members/${encodeURIComponent(userId)}/role`, { role: nextRole });
+      await fetchMembers();
+      const found = members.find(m => m.userId === userId);
+      if (found) setSelected({ ...found, role: nextRole });
+    } catch (e: any) {
+      alert(e?.response?.data?.message || "อัปเดตบทบาทในทีมไม่สำเร็จ");
+    }
+  };
+
+  if (loading) return <div className="text-sm opacity-70">กำลังโหลดสมาชิกทีม...</div>;
+  if (error) return <div className="text-sm text-red-600">{error}</div>;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* รายชื่อสมาชิก */}
+      <div className="md:col-span-1 rounded-2xl border bg-white/60 overflow-hidden">
+        <div className="px-4 py-3 border-b font-semibold">สมาชิกทีม</div>
+        <div className="max-h-96 overflow-auto divide-y">
+          {members.map((m) => (
+            <button
+              key={m.userId}
+              onClick={() => setSelected(m)}
+              className={`w-full text-left p-3 hover:bg-gray-50 ${selected?.userId === m.userId ? 'bg-gray-50' : ''}`}
+            >
+              <div className="font-medium">{m.name || m.userId}</div>
+              <div className="text-xs opacity-70">บทบาทในทีม: {m.role}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* รายละเอียดสมาชิก */}
+      <div className="md:col-span-2 rounded-2xl border bg-white/60 p-4">
+        {selected ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-lg font-semibold">{selected.name || selected.userId}</div>
+                <div className="text-sm opacity-70">บทบาทในทีมปัจจุบัน: {selected.role}</div>
+              </div>
+            </div>
+            {canManage && selected.role !== 'supervisor' && (
+              <div className="flex gap-2">
+                {selected.role !== 'trainer' ? (
+                  <button className="rounded-xl px-4 py-2 border" onClick={() => setTrainer(selected.userId, 'trainer')}>
+                    ตั้งเป็น Trainer
+                  </button>
+                ) : (
+                  <button className="rounded-xl px-4 py-2 border" onClick={() => setTrainer(selected.userId, 'member')}>
+                    ถอน Trainer
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm opacity-70">เลือกสมาชิกทางซ้ายเพื่อดูรายละเอียด</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ----------------------
+// SupervisorDashboard
+// ----------------------
+export default function SupervisorDashboard() {
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [users, setUsers] = useState<User[]>([]); // optional (global role mgmt)
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  // --- helpers: หา userId จากหลายแหล่ง ---
+  const parseJwt = (token: string | null): any | null => {
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    try {
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return payload;
+    } catch { return null; }
+  };
+
+  const resolveCurrentUserId = async () => {
+    // 1) explicit storage
+    const stored = localStorage.getItem('userId') || sessionStorage.getItem('userId');
+    if (stored) return stored;
+
+    // 2) decode from JWT (sub | userId | email)
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    const payload = parseJwt(token);
+    const jwtId = payload?.sub || payload?.userId || payload?.email || null;
+    if (jwtId) return String(jwtId);
+
+    // 3) call /api/profile/me (ให้ backend คืน { id/email/... })
+    try {
+      const { data } = await axiosClient.get<any>('/api/profile/me');
+      // เดาป้ายกำกับที่พบบ่อย
+      return data?.id || data?.userId || data?.email || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const fetchMyTeams = async (uid: string) => {
+    try {
+      const { data } = await axiosClient.get<Team[]>(`/api/teams/my-teams/${encodeURIComponent(uid)}`);
+      setTeams(data || []);
+      if (data?.length && !selectedTeamId) setSelectedTeamId(data[0].id);
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.response?.data?.message || e?.message || 'โหลดทีมของฉันไม่สำเร็จ');
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      const { data } = await axiosClient.get<User[]>("/api/profile/users/for-supervisor");
+      setUsers(data);
+    } catch (err) {
+      console.warn('โหลดรายชื่อผู้ใช้ (optional) ไม่สำเร็จ');
+    }
+  };
+
+  // init currentUserId -> แล้วค่อยโหลดทีม
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const uid = await resolveCurrentUserId();
+      if (uid) {
+        setCurrentUserId(uid);
+        await Promise.all([fetchMyTeams(uid), fetchUsers()]);
+      } else {
+        setError('ไม่พบ userId ของผู้ใช้ปัจจุบัน — ตรวจสอบการเข้าสู่ระบบ/โทเคน');
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+  const assignRoleGlobal = async (userId: string, role: string) => {
+    const confirmAssign = window.confirm(`Are you sure you want to assign role "${role}" to this user?`);
+    if (!confirmAssign) return;
+    try {
+      await axiosClient.put(`/api/profile/users/${userId}/role`, { role });
+      alert(`Role updated to ${role}`);
+      fetchUsers();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update role');
+    }
+  };
+
+  const selectedTeam = useMemo(() => teams.find(t => t.id === selectedTeamId) || null, [teams, selectedTeamId]);
+
+  if (loading) {
+    return (
+      <div className="flex h-screen">
+        <SupervisorSidebarWidget />
+        <div className="flex-1 p-8">กำลังโหลด...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen">
+      <SupervisorSidebarWidget />
+
+      <div className="flex-1 p-8 overflow-y-auto space-y-8">
+        <div className="flex justify-between items-center mb-2">
+          <h1 className="text-3xl font-bold">Supervisor Dashboard</h1>
+        </div>
+
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700 flex items-center justify-between">
+            <span>{error}</span>
+            {!currentUserId && (
+              <button
+                className="ml-3 rounded-lg border px-3 py-1"
+                onClick={async () => {
+                  setLoading(true);
+                  const uid = await resolveCurrentUserId();
+                  if (uid) {
+                    setCurrentUserId(uid);
+                    setError(null);
+                    await fetchMyTeams(uid);
+                  }
+                  setLoading(false);
+                }}
+              >
+                ลองดึงข้อมูลผู้ใช้ใหม่
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* แถวเลือกทีมของฉัน */}
+        <div className="rounded-2xl border bg-white/60 p-4">
+          <div className="mb-3 font-semibold">ทีมของฉัน</div>
+          {teams.length ? (
+            <div className="flex gap-2 flex-wrap">
+              {teams.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setSelectedTeamId(t.id)}
+                  className={`rounded-xl px-3 py-2 border ${selectedTeamId === t.id ? 'bg-black text-white' : 'bg-white'}`}
+                >
+                  {t.name}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm opacity-70">ยังไม่มีทีมที่คุณดูแล</div>
+          )}
+        </div>
+
+        {/* รายละเอียดทีมที่เลือก + จัดการสมาชิก (ตั้ง Trainer) */}
+        {selectedTeam && (
+          <div className="rounded-2xl border bg-white/60 p-4">
+            <div className="mb-3">
+              <div className="text-lg font-semibold">รายละเอียดทีม: {selectedTeam.name}</div>
+              <div className="text-sm opacity-70">ตั้ง/ถอน Trainer ให้สมาชิกในทีมนี้</div>
+            </div>
+            <TeamMembersManager teamId={selectedTeam.id} canManage={true} />
+          </div>
+        )}
+
+        {/* (ตัวเลือก) ส่วนเดิมสำหรับจัดการ global role ของผู้ใช้ทั้งหมด */}
+        {/*
+        <div className="space-y-3">
+          <p className="opacity-80">Manage user roles (global)</p>
+          <UserListWidget users={users} assignRole={assignRoleGlobal} error={null} />
+        </div>
+        */}
+      </div>
+    </div>
+  );
+}
