@@ -1,0 +1,631 @@
+import React, { useContext, useEffect, useMemo, useState } from "react";
+import axios from "axios";
+import { useNavigate } from "react-router-dom";
+import SupervisorSidebarWidget from "../Widgets/SupervisorSideBar";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import {
+  Megaphone,
+  Sparkles,
+  Users,
+  User,
+  X,
+  Check,
+  Loader2,
+  Search,
+  ChevronDown,
+  Info,
+} from "lucide-react";
+
+/** ========================
+ *  TOGGLE MOCK / LIVE
+ * ========================= */
+const USE_MOCK = false;
+
+/** ========================
+ *  TYPES
+ * ========================= */
+type UserT = { id: string; name: string };
+type TeamT = { id: string; name: string };
+type Target = "ALL" | "TEAM" | "USER";
+
+type FormState = {
+  message: string;
+  target: Target;
+  selectedUsers: string[];
+  selectedTeamIds: string[];
+};
+
+/** ========================
+ *  CONSTANTS
+ * ========================= */
+const INITIAL_STATE: FormState = {
+  message: "",
+  target: "ALL",
+  selectedUsers: [],
+  selectedTeamIds: [],
+};
+
+const MAX_LEN = 500;
+
+const TEMPLATES = [
+  "📢 ประกาศ: โปรดเข้าร่วมอบรมตามคอร์สที่กำหนดภายในสัปดาห์นี้",
+  "🎯 Feedback: ผลการเรียนครั้งล่าสุดดีมาก! รักษามาตรฐานนี้ต่อไปนะ",
+  "⚠️ แจ้งเตือน: คุณมีกิจกรรมที่ยังไม่เสร็จ โปรดเข้าเรียนเพื่ออัปเดตความคืบหน้า",
+];
+
+const MOCK_USERS: UserT[] = [
+  { id: "alice@example.com", name: "Alice" },
+  { id: "bob@example.com", name: "Bob" },
+  { id: "charlie@example.com", name: "Charlie" },
+  { id: "daisy@example.com", name: "Daisy" },
+  { id: "ethan@example.com", name: "Ethan" },
+];
+
+const MOCK_TEAMS: TeamT[] = [
+  { id: "T-001", name: "Onboarding Squad" },
+  { id: "T-002", name: "Sales Enablement" },
+  { id: "T-003", name: "Tech Academy" },
+];
+
+/** ========================
+ *  SMALL UI HELPERS
+ * ========================= */
+function Chip({
+  children,
+  onRemove,
+}: {
+  children: React.ReactNode;
+  onRemove?: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs bg-white shadow-sm">
+      {children}
+      {onRemove && (
+        <button
+          className="opacity-60 hover:opacity-100 transition"
+          onClick={onRemove}
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+function Segmented({
+  value,
+  onChange,
+  options,
+}: {
+  value: Target;
+  onChange: (v: Target) => void;
+  options: { value: Target; label: string }[];
+}) {
+  return (
+    <div className="inline-flex rounded-xl border bg-white p-1 shadow-sm">
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={`px-3 py-1.5 rounded-lg text-sm transition ${
+              active ? "bg-blue-600 text-white" : "text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Card({
+  title,
+  icon,
+  right,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 font-semibold">
+          {icon}
+          {title}
+        </div>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** ========================
+ *  MULTI SELECT (with search)
+ * ========================= */
+function MultiSelectList({
+  items,
+  selected,
+  setSelected,
+  icon,
+  placeholder,
+  emptyText,
+  idKey = "id",
+  labelKey = "name",
+}: {
+  items: any[];
+  selected: string[];
+  setSelected: (ids: string[]) => void;
+  icon?: React.ReactNode;
+  placeholder: string;
+  emptyText: string;
+  idKey?: string;
+  labelKey?: string;
+}) {
+  const [q, setQ] = useState("");
+
+  const filtered = useMemo(() => {
+    const qq = q.trim().toLowerCase();
+    if (!qq) return items;
+    return items.filter(
+      (it) =>
+        String(it[idKey]).toLowerCase().includes(qq) ||
+        String(it[labelKey]).toLowerCase().includes(qq)
+    );
+  }, [items, q, idKey, labelKey]);
+
+  const toggle = (id: string) => {
+    setSelected(
+      selected.includes(id)
+        ? selected.filter((x) => x !== id)
+        : [...selected, id]
+    );
+  };
+
+  const clearAll = () => setSelected([]);
+
+  return (
+    <div className="space-y-3">
+      <div className="relative">
+        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-60" />
+        <input
+          className="w-full rounded-xl border pl-9 pr-3 py-2 bg-gray-50 focus:bg-white transition"
+          placeholder={placeholder}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </div>
+
+      <div className="max-h-56 overflow-auto rounded-xl border divide-y bg-white">
+        {filtered.length === 0 ? (
+          <div className="p-3 text-sm text-gray-500">{emptyText}</div>
+        ) : (
+          filtered.map((it) => {
+            const id = String(it[idKey]);
+            const label = String(it[labelKey]);
+            const active = selected.includes(id);
+            return (
+              <button
+                type="button"
+                key={id}
+                onClick={() => toggle(id)}
+                className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition ${
+                  active ? "bg-gray-50" : ""
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  {icon}
+                  <div className="truncate">
+                    <div className="truncate">{label}</div>
+                    <div className="text-xs text-gray-500 truncate">{id}</div>
+                  </div>
+                </div>
+                {active ? (
+                  <Check className="w-4 h-4 text-green-700" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 opacity-40 -rotate-90" />
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      {!!selected.length && (
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-gray-600">
+            เลือกแล้ว {selected.length} รายการ
+          </div>
+          <button
+            type="button"
+            onClick={clearAll}
+            className="text-xs px-2 py-1 rounded-lg border hover:bg-gray-50"
+          >
+            ล้างทั้งหมด
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** ========================
+ *  MAIN COMPONENT
+ * ========================= */
+const Svpsendfeedback: React.FC = () => {
+  const navigate = useNavigate();
+  const { token: ctxToken } = useContext(AuthContext);
+  const token =
+    ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
+
+  const [form, setForm] = useState<FormState>(INITIAL_STATE);
+  const [users, setUsers] = useState<UserT[]>([]);
+  const [teams, setTeams] = useState<TeamT[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [initLoading, setInitLoading] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const charsLeft = MAX_LEN - form.message.length;
+  const overLimit = charsLeft < 0;
+
+  useEffect(() => {
+    (async () => {
+      if (!token && !USE_MOCK) {
+        navigate("/");
+        return;
+      }
+      setInitLoading(true);
+
+      if (USE_MOCK) {
+        setUsers(MOCK_USERS);
+        setTeams(MOCK_TEAMS);
+        setInitLoading(false);
+        return;
+      }
+
+      try {
+        const [uRes, tRes] = await Promise.all([
+          axios.get<UserT[]>("/api/profile/users", {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          axios.get<TeamT[]>("/api/teams", {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
+        setUsers(uRes.data ?? []);
+        setTeams(tRes.data ?? []);
+      } catch (err) {
+        console.error("Load failed:", err);
+        setUsers([]);
+        setTeams([]);
+      } finally {
+        setInitLoading(false);
+      }
+    })();
+  }, [token, navigate]);
+
+  const canSubmit = useMemo(() => {
+    if (!form.message.trim() || overLimit) return false;
+    if (form.target === "TEAM" && form.selectedTeamIds.length === 0) return false;
+    if (form.target === "USER" && form.selectedUsers.length === 0) return false;
+    return true;
+  }, [form, overLimit]);
+
+  const setTarget = (t: Target) =>
+    setForm((p) => ({ ...p, target: t, selectedTeamIds: [], selectedUsers: [] }));
+
+  const applyTemplate = (txt: string) =>
+    setForm((p) => ({ ...p, message: p.message ? `${p.message}\n\n${txt}` : txt }));
+
+  const removeUser = (id: string) =>
+    setForm((p) => ({ ...p, selectedUsers: p.selectedUsers.filter((x) => x !== id) }));
+
+  const removeTeam = (id: string) =>
+    setForm((p) => ({
+      ...p,
+      selectedTeamIds: p.selectedTeamIds.filter((x) => x !== id),
+    }));
+
+  const handleSubmit: React.FormEventHandler = async (e) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+
+    const payload = {
+      message: form.message.trim(),
+      target: form.target,
+      userIds: form.target === "USER" ? form.selectedUsers : [],
+      teamIds: form.target === "TEAM" ? form.selectedTeamIds : [],
+      type: form.target,
+    };
+
+    try {
+      setSubmitting(true);
+      if (USE_MOCK) {
+        await new Promise((r) => setTimeout(r, 800));
+        setToast(`✅ Mock: ส่ง Feedback แบบ ${form.target} สำเร็จ!`);
+      } else {
+        await axios.post("/api/notifications", payload, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setToast("✅ Notification sent!");
+      }
+      setForm(INITIAL_STATE);
+    } catch (err: unknown) {
+      console.error(err);
+      setToast("❌ Failed to send. Please try again.");
+    } finally {
+      setSubmitting(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
+  if (!token && !USE_MOCK) return null;
+
+  // selected chips
+  const selectedUserChips = form.selectedUsers.map((uid) => {
+    const u = users.find((x) => x.id === uid);
+    return (
+      <Chip key={uid} onRemove={() => removeUser(uid)}>
+        <User className="w-3.5 h-3.5" />
+        {u?.name || uid}
+      </Chip>
+    );
+  });
+
+  const selectedTeamChips = form.selectedTeamIds.map((tid) => {
+    const t = teams.find((x) => x.id === tid);
+    return (
+      <Chip key={tid} onRemove={() => removeTeam(tid)}>
+        <Users className="w-3.5 h-3.5" />
+        {t?.name || tid}
+      </Chip>
+    );
+  });
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex">
+      <SupervisorSidebarWidget />
+
+      <main className="flex-1 p-6 lg:p-10 overflow-y-auto">
+        {/* HERO */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between">
+            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-blue-600 text-white shadow">
+                <Megaphone className="w-5 h-5" />
+              </span>
+              Send Feedback
+            </h1>
+            <span className="text-xs text-gray-500">
+              Mode: <b>{USE_MOCK ? "Mock" : "Live"}</b>
+            </span>
+          </div>
+          <p className="text-gray-600 mt-2">
+            ส่งประกาศ / คำติชม ถึงผู้ใช้ทั้งระบบ ทีม หรือเฉพาะรายบุคคล พร้อมพรีวิวแบบเรียลไทม์
+          </p>
+        </div>
+
+        {/* LAYOUT */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          {/* LEFT + MIDDLE (form) */}
+          <div className="xl:col-span-2 space-y-6">
+            {/* Target + Templates */}
+            <Card
+              title="ผู้รับข้อความ"
+              icon={<Users className="w-4 h-4" />}
+              right={
+                <Segmented
+                  value={form.target}
+                  onChange={setTarget}
+                  options={[
+                    { value: "ALL", label: "All" },
+                    { value: "TEAM", label: "Teams" },
+                    { value: "USER", label: "Users" },
+                  ]}
+                />
+              }
+            >
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* Teams */}
+                {form.target === "TEAM" && (
+                  <div>
+                    <div className="text-sm font-medium mb-2">เลือกทีม</div>
+                    <MultiSelectList
+                      items={teams}
+                      selected={form.selectedTeamIds}
+                      setSelected={(ids) =>
+                        setForm((p) => ({ ...p, selectedTeamIds: ids }))
+                      }
+                      icon={<Users className="w-4 h-4 opacity-60" />}
+                      placeholder="ค้นหาชื่อทีม หรือไอดีทีม"
+                      emptyText="ไม่พบทีมที่ตรงกับคำค้นหา"
+                      idKey="id"
+                      labelKey="name"
+                    />
+                    {!!form.selectedTeamIds.length && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {selectedTeamChips}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Users */}
+                {form.target === "USER" && (
+                  <div>
+                    <div className="text-sm font-medium mb-2">เลือกผู้ใช้</div>
+                    <MultiSelectList
+                      items={users}
+                      selected={form.selectedUsers}
+                      setSelected={(ids) =>
+                        setForm((p) => ({ ...p, selectedUsers: ids }))
+                      }
+                      icon={<User className="w-4 h-4 opacity-60" />}
+                      placeholder="ค้นหาชื่อผู้ใช้ หรืออีเมล"
+                      emptyText="ไม่พบผู้ใช้ที่ตรงกับคำค้นหา"
+                      idKey="id"
+                      labelKey="name"
+                    />
+                    {!!form.selectedUsers.length && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {selectedUserChips}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Templates */}
+                <div className={`${form.target === "ALL" ? "lg:col-span-2" : ""}`}>
+                  <div className="text-sm font-medium mb-2 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" />
+                    Quick Templates
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {TEMPLATES.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => applyTemplate(t)}
+                        className="px-3 py-1.5 rounded-full border bg-white hover:bg-gray-50 text-sm shadow-sm transition"
+                      >
+                        {t.length > 42 ? `${t.slice(0, 42)}…` : t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* Message */}
+            <Card title="ข้อความ" icon={<Megaphone className="w-4 h-4" />}>
+              <div className="space-y-2">
+                <textarea
+                  name="message"
+                  rows={8}
+                  value={form.message}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, message: e.target.value }))
+                  }
+                  className={`w-full p-4 rounded-xl border bg-gray-50 focus:bg-white transition shadow-sm ${
+                    overLimit ? "border-red-400" : ""
+                  }`}
+                  placeholder="พิมพ์ประกาศ หรือ Feedback ของคุณที่นี่…"
+                />
+                <div className="flex items-center justify-between text-xs">
+                  <div className="inline-flex items-center gap-2 text-gray-500">
+                    <Info className="w-4 h-4" />
+                    แนะนำให้ความยาวไม่เกิน {MAX_LEN} ตัวอักษร
+                  </div>
+                  <div className={overLimit ? "text-red-600" : "text-gray-500"}>
+                    {overLimit
+                      ? `เกินมา ${Math.abs(MAX_LEN - form.message.length)} ตัวอักษร`
+                      : `${MAX_LEN - form.message.length} ตัวอักษรที่เหลือ`}
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* Action Bar */}
+            <div className="sticky bottom-4 z-10">
+              <div className="rounded-2xl border bg-white p-3 shadow-lg flex items-center justify-between">
+                <div className="text-xs text-gray-600">
+                  เป้าหมาย:{" "}
+                  {form.target === "ALL"
+                    ? "All users"
+                    : form.target === "TEAM"
+                    ? `${form.selectedTeamIds.length} ทีม`
+                    : `${form.selectedUsers.length} ผู้ใช้`}
+                </div>
+                <button
+                  onClick={handleSubmit}
+                  disabled={submitting || !canSubmit}
+                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 text-white shadow hover:bg-blue-700 disabled:opacity-50 transition"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      กำลังส่ง…
+                    </>
+                  ) : (
+                    <>
+                      <Megaphone className="w-4 h-4" />
+                      ส่ง Feedback
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT (live preview) */}
+          <div className="xl:col-span-1">
+            <div className="xl:sticky xl:top-6 space-y-6">
+              <Card title="ตัวอย่างข้อความ (Preview)">
+                <div className="min-h-[220px] rounded-xl border bg-gray-50 p-4">
+                  <div className="text-sm whitespace-pre-wrap leading-6">
+                    {form.message ? (
+                      form.message
+                    ) : (
+                      <span className="opacity-60">
+                        พิมพ์ข้อความในช่องด้านซ้ายเพื่อดูตัวอย่าง…
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-4 text-xs text-gray-500">
+                    โหมด: <b>{USE_MOCK ? "Mock" : "Live"}</b> • เป้าหมาย:{" "}
+                    {form.target === "ALL"
+                      ? "All users"
+                      : form.target === "TEAM"
+                      ? `${form.selectedTeamIds.length} ทีม`
+                      : `${form.selectedUsers.length} ผู้ใช้`}
+                  </div>
+                </div>
+              </Card>
+
+              <Card title="Tips">
+                <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1">
+                  <li>เขียนสั้น ชัดเจน ใจความครบถ้วน</li>
+                  <li>หากมีเส้นตาย ให้ระบุวันที่/เวลาอย่างชัดเจน</li>
+                  <li>เลือกผู้รับให้เหมาะสม เพื่อลดสแปม</li>
+                </ul>
+              </Card>
+            </div>
+          </div>
+        </div>
+
+        {/* Initial overlay */}
+        {initLoading && (
+          <div className="fixed inset-0 bg-black/5 backdrop-blur-sm flex items-center justify-center z-20">
+            <div className="bg-white rounded-xl border px-4 py-3 shadow inline-flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">กำลังโหลดข้อมูล…</span>
+            </div>
+          </div>
+        )}
+
+        {/* Toast */}
+        {toast && (
+          <div className="fixed bottom-4 right-4 rounded-xl border bg-white shadow p-3 flex items-center gap-2 text-sm">
+            <Check className="w-4 h-4 text-green-700" />
+            <span>{toast}</span>
+            <button
+              className="ml-2 opacity-60 hover:opacity-100"
+              onClick={() => setToast(null)}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default Svpsendfeedback;
