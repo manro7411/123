@@ -1,65 +1,382 @@
-administratorusermanagement.tsx:255 
- 
-AxiosError {message: 'Request failed with status code 404', name: 'AxiosError', code: 'ERR_BAD_REQUEST', config: {…}, request: XMLHttpRequest, …}
-xhr.js:195 
- 
- GET http://localhost:5173/api/users 404 (Not Found)
-administratorusermanagement.tsx:255 
- 
-AxiosError {message: 'Request failed with status code 404', name: 'AxiosError', code: 'ERR_BAD_REQUEST', config: {…}, request: XMLHttpRequest, …}
-administratorusermanagement.tsx:223 
- Uncaught TypeError: Cannot read properties of undefined (reading 'length')
-    at administratorusermanagement.tsx:223:41
-    at Array.map (<anonymous>)
-    at administratorusermanagement.tsx:219:29
-    at Array.map (<anonymous>)
-    at TeamsBySupervisor (administratorusermanagement.tsx:206:15)
-    at renderWithHooks (react-dom.development.js:15486:18)
-    at mountIndeterminateComponent (react-dom.development.js:20103:13)
-    at beginWork (react-dom.development.js:21626:16)
-    at HTMLUnknownElement.callCallback2 (react-dom.development.js:4164:14)
-    at Object.invokeGuardedCallbackDev (react-dom.development.js:4213:16)
-administratorusermanagement.tsx:223 
- Uncaught TypeError: Cannot read properties of undefined (reading 'length')
-    at administratorusermanagement.tsx:223:41
-    at Array.map (<anonymous>)
-    at administratorusermanagement.tsx:219:29
-    at Array.map (<anonymous>)
-    at TeamsBySupervisor (administratorusermanagement.tsx:206:15)
-    at renderWithHooks (react-dom.development.js:15486:18)
-    at mountIndeterminateComponent (react-dom.development.js:20103:13)
-    at beginWork (react-dom.development.js:21626:16)
-    at HTMLUnknownElement.callCallback2 (react-dom.development.js:4164:14)
-    at Object.invokeGuardedCallbackDev (react-dom.development.js:4213:16)
-react-dom.development.js:18704 
- The above error occurred in the <TeamsBySupervisor> component:
+import { useEffect, useMemo, useState } from "react";
+import axios, { AxiosError } from "axios";
 
-    at TeamsBySupervisor (http://localhost:5173/src/pages/Administrator/administratorusermanagement.tsx?t=1759810802420:303:30)
-    at div
-    at div
-    at AdministratorUserManagement (http://localhost:5173/src/pages/Administrator/administratorusermanagement.tsx?t=1759810802420:384:29)
-    at RenderedRoute (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:5653:26)
-    at Routes (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:6389:3)
-    at AdministratorRoutes
-    at RenderedRoute (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:5653:26)
-    at Routes (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:6389:3)
-    at Suspense
-    at Router (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:6332:13)
-    at BrowserRouter (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:9416:3)
-    at AuthProvider (http://localhost:5173/src/Authentication/AuthContext.tsx:29:32)
-    at App
+// ถ้าคุณมีไฟล์/คอมโพเนนต์ของตัวเองอยู่แล้ว สามารถลบคอมโพเนนต์ที่เป็นตัวอย่างด้านล่างได้
+// และคงการใช้งาน <UserListWidget/> เดิมของคุณไว้ได้เหมือนเดิม
+import UserListWidget from "../Supervisor/Widgets/UserListWidget";
+import AdministratorBar from "./Widgets/AdministratorBar"; // คงชื่อไฟล์ให้สะกดตรงกัน
 
-Consider adding an error boundary to your tree to customize error handling behavior.
-Visit https://reactjs.org/link/error-boundaries to learn more about error boundaries.
-react-dom.development.js:26962 
- Uncaught TypeError: Cannot read properties of undefined (reading 'length')
-    at administratorusermanagement.tsx:223:41
-    at Array.map (<anonymous>)
-    at administratorusermanagement.tsx:219:29
-    at Array.map (<anonymous>)
-    at TeamsBySupervisor (administratorusermanagement.tsx:206:15)
-    at renderWithHooks (react-dom.development.js:15486:18)
-    at mountIndeterminateComponent (react-dom.development.js:20103:13)
-    at beginWork (react-dom.development.js:21626:16)
-    at beginWork$1 (react-dom.development.js:27465:14)
-    at performUnitOfWork (react-dom.development.js:26596:12)
+// ----------------------
+// Axios instance + BaseURL/Proxy
+// ----------------------
+// แนะนำตั้งค่า VITE_API_BASE_URL เป็น URL ของแบ็กเอนด์ เช่น http://localhost:3000
+// และ/หรือตั้ง proxy ใน vite.config.ts ดูคำอธิบายท้ายไฟล์
+const axiosClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "/",
+});
+
+axiosClient.interceptors.request.use((config) => {
+  const token =
+    localStorage.getItem("token") || sessionStorage.getItem("token") || "";
+  if (token) {
+    config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+  }
+  return config;
+});
+
+// ----------------------
+// Types
+// ----------------------
+export type User = {
+  id: string;
+  name: string;
+  email: string;
+  role: string; // 'ADMIN' | 'SUPERVISOR' | 'TRAINER' | 'LEARNER' ...
+};
+
+export type Team = {
+  id: string;
+  name: string;
+  supervisorId: string;
+  memberIds: string[]; // รวมลูกทีมทั้งหมด (ไม่ต้องรวม supervisor)
+};
+
+// ----------------------
+// Team Builder (แบบฟอร์มสร้างทีม)
+// ----------------------
+function TeamBuilderWidget({
+  users,
+  onCreated,
+}: {
+  users: User[];
+  onCreated: (team: Team) => void;
+}) {
+  const [teamName, setTeamName] = useState("");
+  const [supervisorId, setSupervisorId] = useState("");
+  const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const supervisors = useMemo(
+    () => users.filter((u) => u.role?.toUpperCase() === "SUPERVISOR"),
+    [users]
+  );
+
+  const selectableMembers = useMemo(() => {
+    // สมาชิกที่เลือกเข้าทีมได้ อาจ exclude ADMIN ก็ได้ ตาม policy ของคุณ
+    return users.filter((u) => u.role?.toUpperCase() !== "ADMIN");
+  }, [users]);
+
+  const toggleMember = (id: string) => {
+    setMemberIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const canSubmit = teamName.trim() && supervisorId && memberIds.length > 0;
+
+  const createTeam = async () => {
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      // NOTE: ปรับ endpoint ให้ตรงกับ backend ของคุณ
+      // ตัวอย่าง endpoint: POST /api/teams  body: { name, supervisorId, memberIds }
+      const { data } = await axiosClient.post<Team>(
+        "/api/teams",
+        { name: teamName.trim(), supervisorId, memberIds }
+      );
+
+      onCreated(data);
+      setTeamName("");
+      setSupervisorId("");
+      setMemberIds([]);
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.response?.data?.message || "สร้างทีมไม่สำเร็จ");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border p-4 md:p-6 space-y-4 bg-white/60">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold">สร้างทีมใหม่</h2>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="space-y-2">
+          <label className="text-sm font-medium">ชื่อทีม</label>
+          <input
+            className="w-full rounded-xl border px-3 py-2"
+            placeholder="เช่น Team A"
+            value={teamName}
+            onChange={(e) => setTeamName(e.target.value)}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium">หัวหน้าทีม (Supervisor)</label>
+          <select
+            className="w-full rounded-xl border px-3 py-2"
+            value={supervisorId}
+            onChange={(e) => setSupervisorId(e.target.value)}
+          >
+            <option value="">— เลือก Supervisor —</option>
+            {supervisors.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} ({s.email})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-2 md:col-span-1">
+          <label className="text-sm font-medium">จำนวนสมาชิกที่เลือก</label>
+          <div className="rounded-xl border px-3 py-2 text-sm">
+            {memberIds.length} คน
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium">เลือกสมาชิกเข้าทีม</label>
+        <div className="max-h-64 overflow-auto rounded-xl border divide-y">
+          {selectableMembers.map((u) => (
+            <label
+              key={u.id}
+              className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={memberIds.includes(u.id)}
+                onChange={() => toggleMember(u.id)}
+              />
+              <div className="flex-1">
+                <div className="font-medium">{u.name}</div>
+                <div className="text-xs opacity-70">{u.email} • {u.role}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {error && (
+        <div className="text-sm text-red-600">{error}</div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          disabled={!canSubmit || submitting}
+          onClick={createTeam}
+          className="rounded-xl px-4 py-2 border bg-black text-white disabled:opacity-50"
+        >
+          {submitting ? "กำลังบันทึก..." : "สร้างทีม"}
+        </button>
+        <button
+          onClick={() => {
+            setTeamName("");
+            setSupervisorId("");
+            setMemberIds([]);
+            setError(null);
+          }}
+          className="rounded-xl px-4 py-2 border"
+        >
+          ล้างค่า
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------
+// รายการทีม (ตัวอย่างวิธีแสดงโดย group ตาม Supervisor)
+// ----------------------
+function TeamsBySupervisor({ users, teams }: { users: User[]; teams: Team[] }) {
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+
+  const grouped = useMemo(() => {
+    const bySup: Record<string, Team[]> = {};
+    for (const t of teams || []) {
+      const key = t?.supervisorId || "__UNKNOWN__";
+      if (!bySup[key]) bySup[key] = [];
+      bySup[key].push(t);
+    }
+    return bySup;
+  }, [teams]);
+
+  const supIds = Object.keys(grouped);
+  if (!supIds.length) return null;
+
+  return (
+    <div className="space-y-6">
+      {supIds.map((sid) => {
+        const sup = userById.get(sid);
+        const teamsForSup = grouped[sid] ?? [];
+        return (
+          <div key={sid} className="rounded-2xl border p-4 md:p-6 bg-white/60">
+            <div className="mb-3">
+              <h3 className="text-lg font-semibold">
+                Supervisor: {sup?.name || sid} {sup?.email ? `(${sup.email})` : ""}
+              </h3>
+              <p className="text-sm opacity-70">ทีมทั้งหมดของหัวหน้าคนนี้</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {teamsForSup.map((t) => (
+                <div key={t.id} className="rounded-xl border p-3">
+                  <div className="font-medium">{t.name}</div>
+                  <div className="text-xs opacity-70">
+                    สมาชิก {t?.memberIds?.length ?? 0} คน
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ----------------------
+// หน้าหลัก: Administrator User Management
+// ----------------------
+export default function AdministratorUserManagement() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // ดึงผู้ใช้ทั้งหมด: ลองหลาย endpoint เพื่อกัน 404 ขึ้น dev
+  const fetchUsers = async () => {
+    const candidates = [
+      "/api/users", // ที่แนะนำให้ backend รองรับ
+      "/api/profile/users", // สำรอง
+      "/api/profile/users/for-supervisor", // ของเดิมที่คุณมีอยู่
+    ];
+
+    let lastError: unknown = null;
+    for (const path of candidates) {
+      try {
+        const { data } = await axiosClient.get<User[]>(path);
+        if (Array.isArray(data)) {
+          setUsers(data);
+          setError(null);
+          return;
+        }
+      } catch (e) {
+        lastError = e;
+        // ลองตัวถัดไป
+      }
+    }
+
+    console.error(lastError);
+    const msg = (lastError as AxiosError)?.response?.status === 404
+      ? "ไม่พบ endpoint สำหรับดึงผู้ใช้ (404) — ตรวจสอบเส้นทาง API หรือ proxy/baseURL"
+      : "ดึงรายชื่อผู้ใช้ไม่สำเร็จ";
+    setError(msg);
+  };
+
+  const fetchTeams = async () => {
+    try {
+      const { data } = await axiosClient.get<Team[]>("/api/teams");
+      if (Array.isArray(data)) setTeams(data);
+    } catch (err) {
+      // ไม่มีทีมครั้งแรกก็ไม่เป็นไร
+      console.warn("ทีมอาจยังไม่มี");
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      await Promise.all([fetchUsers(), fetchTeams()]);
+      setLoading(false);
+    })();
+  }, []);
+
+  const assignRole = async (userId: string, role: string) => {
+    const confirmAssign = window.confirm(
+      `ยืนยันอัปเดตรายบทบาทเป็น \"${role}\" ?`
+    );
+    if (!confirmAssign) return;
+
+    try {
+      await axiosClient.put(`/api/profile/users/${userId}/role`, { role });
+      await fetchUsers();
+      alert(`อัปเดตบทบาทเป็น ${role} แล้ว`);
+    } catch (err: any) {
+      console.error(err);
+      alert(err?.response?.data?.message || "อัปเดตบทบาทไม่สำเร็จ");
+    }
+  };
+
+  const handleTeamCreated = (team: Team) => {
+    setTeams((prev) => [team, ...prev]);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-screen">
+        <AdministratorBar />
+        <div className="flex-1 p-8">กำลังโหลด...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen">
+      <AdministratorBar />
+
+      <div className="flex-1 p-8 overflow-y-auto space-y-8">
+        <div className="flex justify-between items-center">
+          <h1 className="text-3xl font-bold">Administrator User Management</h1>
+        </div>
+
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
+            {error}
+          </div>
+        )}
+
+        {/* จัดการบทบาทผู้ใช้เดิม */}
+        <div className="space-y-3">
+          <p className="opacity-80">จัดการบทบาทผู้ใช้ และระบุ Supervisor/Trainer</p>
+          <UserListWidget users={users} assignRole={assignRole} error={error} />
+        </div>
+
+        {/* แบบฟอร์มสร้างทีมใหม่ (ต้องระบุ supervisor เป็นหัวหน้า) */}
+        <TeamBuilderWidget users={users} onCreated={handleTeamCreated} />
+
+        {/* แสดงทีม grouped by Supervisor */}
+        <TeamsBySupervisor users={users} teams={teams} />
+      </div>
+    </div>
+  );
+}
+
+// ----------------------
+// หมายเหตุการตั้งค่า Proxy (ป้องกัน 404 ไปที่ :5173)
+// ----------------------
+// ถ้า front (Vite) รันที่ :5173 แต่ backend รันอีกพอร์ต เช่น :3000
+// ให้ตั้ง proxy ใน vite.config.ts แบบนี้
+//
+// import { defineConfig } from 'vite'
+// import react from '@vitejs/plugin-react'
+//
+// export default defineConfig({
+//   plugins: [react()],
+//   server: {
+//     proxy: {
+//       '/api': {
+//         target: 'http://localhost:3000',
+//         changeOrigin: true,
+//       },
+//     },
+//   },
+// })
+//
+// จากนั้นบนฝั่งโค้ด เรียกแค่ '/api/...' ได้เลย โดยไม่โดน 404 จาก :5173
+// หรือกำหนด VITE_API_BASE_URL ให้ axios ใช้ส่งไป backend โดยตรง
