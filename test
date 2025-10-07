@@ -1,161 +1,203 @@
-import { useState, useEffect, useContext} from "react";
-import { AuthContext } from "../../Authentication/AuthContext.tsx";
-import Sidebar from "../../widgets/SidebarWidget";
-import PostCardWidget from "./PostCardWidget.tsx";
-import AddPostWidget from "./AddPostWidget.tsx";
+package Testing;
 
-export type Comment = {
-  avatarUrl: string;
-  id: string;
-  authorName: string;
-  message: string;
-  createdAt: string;
-};
+import dto.CreateTeamRequestSimple;
+import dto.TeamSummary;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.MemberEntity;
+import model.TeamEntity;
 
-export type Post = {
-  likedByUser: boolean;
-  id: string;
-  authorName: string;
-  authorEmail: string;
-  title: string;
-  message: string;
-  avatarUrl?: string;
-  createdAt: string;
-  views: number;
-  likes: number;
-  likedBy: string[]
-  comments: Comment[];
-  forumCategory:string;
-};
-const formatAvatarUrl = (rawUrl?: string): string | undefined => {
-  if (!rawUrl) return undefined;
-  if (rawUrl.startsWith("http")) return rawUrl;
+import java.net.URI;
+import java.util.*;
+import java.util.stream.Collectors;
 
-  const parts = rawUrl.split("/");
-  const filename = parts[parts.length - 1];
-  return `/api/posts/avatars/${filename}`;
-};
+@Path("/api/teams") // << ให้ตรงกับ frontend
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamResource {
 
-const KnowledgeForumLayout = () => {
-  const { token } = useContext(AuthContext);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-    const [selectedAssignType, setselectedAssignType] = useState<string>("พูดคุยทั่วไป");
+    @Inject
+    EntityManager em;
 
-
-  const fetchComments = async (postId: string): Promise<Comment[]> => {
-    try {
-      const res = await fetch(`/api/forum/posts/${postId}/comments`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      return res.ok ? await res.json() : [];
-    } catch (error) {
-      console.error("❌ Failed to fetch comments:", error);
-      return [];
+    // ---------- Helpers ----------
+    private static String genId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
     }
-  };
 
-  const fetchPosts = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/posts`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      if (!res.ok) {
-        console.warn("⚠️ Failed to fetch posts");
-        setPosts([]);
-        return;
-      }
-
-      const basePosts: Omit<Post, "comments">[] = await res.json();
-
-      const enrichedPosts: Post[] = await Promise.all(
-        basePosts.map(async (p) => ({
-          ...p,
-          avatarUrl: formatAvatarUrl(p.avatarUrl),
-          comments: await fetchComments(p.id),
-        }))
-      );
-      console.log("Entires Post: ",enrichedPosts)
-
-      setPosts(enrichedPosts);
-    } catch (err) {
-      console.error("❌ Error fetching posts:", err);
-    } finally {
-      setLoading(false);
+    private static TeamSummary toSummary(TeamEntity team) {
+        // supervisor = สมาชิกที่ role = "supervisor"
+        String supervisorId = null;
+        List<String> memberIds = new ArrayList<>();
+        if (team.getMemberEntities() != null) {
+            for (MemberEntity m : team.getMemberEntities()) {
+                if (m == null) continue;
+                if ("supervisor".equalsIgnoreCase(m.getRole())) {
+                    supervisorId = m.getUserEmail(); // เก็บเป็น userId/email ตามที่คุณใช้
+                } else {
+                    memberIds.add(m.getUserEmail());
+                }
+            }
+        }
+        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
     }
-  };
 
-  useEffect(() => {
-    void fetchPosts();
-  }, []);
+    // ---------- APIs ----------
 
-  const handlePostCreated = () => {
-    void fetchPosts();
-  };
+    @GET
+    public List<TeamSummary> getTeams() {
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities",
+                TeamEntity.class
+        ).getResultList();
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
 
-  
-  const groupPosts = posts.reduce((acc,post) =>{
-    const category = post.forumCategory || "Uncategorized"
-    console.log("Category",category)
-    if (!acc[category]) acc[category] = []; 
-    acc[category].push(post);
-    return acc
-  }, {} as Record<string,Post[]>);
+    @GET
+    @Path("/{id}")
+    public TeamSummary getTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        // ensure members loaded
+        team.getMemberEntities().size();
+        return toSummary(team);
+    }
 
+    @GET
+    @Path("/my-teams/{userId}")
+    public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {
+        // เดิมใช้ m.userID แต่ใน create/set ใช้ userEmail -> ให้ใช้ userEmail ให้ตรงกัน
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT m.team FROM MemberEntity m " +
+                        "LEFT JOIN FETCH m.team.memberEntities " +
+                        "WHERE LOWER(m.userEmail) = LOWER(:userId)",
+                TeamEntity.class
+        ).setParameter("userId", userId)
+         .getResultList();
 
-  return (
-    <div className="flex min-h-screen bg-gray-50">
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
 
-      <Sidebar />
+    @POST
+    @Transactional
+    public Response createTeam(CreateTeamRequestSimple request) {
+        if (request == null || request.name == null || request.name.trim().isEmpty()) {
+            throw new BadRequestException("Team name is required");
+        }
+        if (request.supervisorId == null || request.supervisorId.isBlank()) {
+            throw new BadRequestException("supervisorId is required");
+        }
+        if (request.memberIds == null) {
+            request.memberIds = List.of();
+        }
 
-      <main className="flex-1 overflow-y-auto p-6">
-        {loading ? (
-          <p className="text-gray-500 text-sm">Loading posts…</p>
-        ) : posts.length === 0 ? (
-          <p className="text-gray-400 text-sm">No posts available.</p>
-        ) : (
-          // <div className="space-y-4">
-          //   {posts.map((post) => (
-          //     <PostCardWidget key={post.id} post={post} />
-          //   ))}
-          // </div>
-          <div className="space-y-4">
-            <div className="flex space-x-2">
-              {["พูดคุยทั่วไป","ข่าวสาร IT","IT & งานระบบ"].map((type) =>(
-                <button key={type} onClick={() => setselectedAssignType(type)} className={`px-3 py-1 rounded-md text-sm ${
-                    selectedAssignType === type
-                      ? "bg-purple-500 text-white"
-                      : "bg-gray-200 hover:bg-gray-300"
-                  }`}>
-                      {type.charAt(0).toUpperCase() + type.slice(1)}
-                </button>
-              ))}
-            </div>
-            {Object.entries(groupPosts)
-            .filter(([category]) => category === selectedAssignType)
-            .map(([category, postsInCategory]) => (
-              <div key={category} className="mb-8">
-                <h2 className="text-xl font-semibold text-gray-700 mb-4">
-                  {category}
-                </h2>
-                <div className="space-y-4">
-                  {postsInCategory.map((post) => (
-                    <PostCardWidget key={post.id} post={post} />
-                  ))}
-                </div>
-              </div>
-          ))}
-          </div>
+        TeamEntity team = new TeamEntity();
+        team.setId(genId());
+        team.setName(request.name.trim());
+        team.setDescription(request.description); // optional
+        team.setCreateBy(request.createBy);       // optional
+        team.setJoinCode(String.format("%06d", new Random().nextInt(1_000_000)));
 
-        )}
-      </main>
-      <aside className="w-80 p-6 hidden lg:block">
-      </aside>
-      <AddPostWidget onCreated={handlePostCreated} />
-    </div>
-  );
-};
+        // เตรียมสมาชิก: ใส่ supervisor เป็นสมาชิกด้วย role = "supervisor"
+        List<MemberEntity> members = new ArrayList<>();
 
-export default KnowledgeForumLayout;
+        MemberEntity sup = new MemberEntity();
+        sup.setId(genId());
+        sup.setTeam(team);
+        sup.setUserEmail(request.supervisorId); // ใช้เป็น userId/email ให้สอดคล้องกับ frontend
+        sup.setRole("supervisor");
+        sup.setNameMembers(request.supervisorId); // ถ้ายังไม่มีชื่อจริง ใช้รหัสแทนไปก่อน
+        members.add(sup);
+
+        // ใส่สมาชิกทีมทั่วไป
+        for (String mid : request.memberIds.stream().filter(Objects::nonNull).collect(Collectors.toSet())) {
+            MemberEntity m = new MemberEntity();
+            m.setId(genId());
+            m.setTeam(team);
+            m.setUserEmail(mid);
+            m.setRole("member");
+            m.setNameMembers(mid); // ถ้ามีชื่อจริง ค่อยอัปเดตภายหลัง
+            members.add(m);
+        }
+
+        team.setMemberEntities(members);
+        em.persist(team);
+
+        return Response.created(URI.create("/api/teams/" + team.getId()))
+                .entity(toSummary(team))
+                .build();
+    }
+
+    @PUT
+    @Path("/{id}")
+    @Transactional
+    public Response updateTeam(@PathParam("id") String id, TeamEntity updatedTeam) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+
+        if (updatedTeam.getName() != null) {
+            team.setName(updatedTeam.getName());
+        }
+        if (updatedTeam.getDescription() != null) {
+            team.setDescription(updatedTeam.getDescription());
+        }
+
+        // ส่งกลับเป็น TeamSummary เพื่อให้ frontend ใช้รูปแบบเดียวกัน
+        team.getMemberEntities().size();
+        return Response.ok(toSummary(team)).build();
+    }
+
+    @DELETE
+    @Path("/{id}")
+    @Transactional
+    public Response deleteTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        em.remove(team);
+        return Response.noContent().build();
+    }
+
+    // -------- keep your existing join by code but align field names --------
+    @POST
+    @Path("/joining")
+    @Transactional
+    public Response joinTeamByCode(dto.CreateMemberRequest request) {
+        if (request == null || request.joinCode == null || request.joinCode.trim().length() != 6) {
+            throw new BadRequestException("Join code is invalid");
+        }
+
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities WHERE t.joinCode = :joinCode",
+                TeamEntity.class
+        ).setParameter("joinCode", request.joinCode).getResultList();
+
+        if (teams.isEmpty()) {
+            throw new BadRequestException("Join code is invalid");
+        }
+
+        TeamEntity team = teams.get(0);
+
+        boolean alreadyExists = team.getMemberEntities()
+                .stream()
+                .anyMatch(member -> member.getUserEmail() != null &&
+                        member.getUserEmail().equalsIgnoreCase(request.userId));
+
+        if (alreadyExists) {
+            throw new WebApplicationException("User already in the team", 409);
+        }
+
+        MemberEntity member = new MemberEntity();
+        member.setId(genId());
+        member.setTeam(team);
+        member.setUserEmail(request.userId);
+        member.setRole(Optional.ofNullable(request.getRole()).orElse("member"));
+        member.setNameMembers(Optional.ofNullable(request.userName).orElse(request.userId));
+        team.getMemberEntities().add(member);
+
+        em.persist(member);
+        return Response.ok().entity(toSummary(team)).build();
+    }
+}
