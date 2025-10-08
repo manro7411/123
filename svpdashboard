@@ -1,328 +1,102 @@
-import { useEffect, useMemo, useState } from "react";
-import axios from "axios";
-import SupervisorSidebarWidget from "./Widgets/SupervisorSideBar";
-import { ChevronRight, Shield, Users, X, Search } from "lucide-react";
-
-// ----------------------
-// Axios instance
-// ----------------------
-const axiosClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "/",
-});
-axiosClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-  if (token) {
-    config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
-  }
-  return config;
-});
-
-// ----------------------
-// Types (สอดคล้อง backend ปัจจุบัน)
-// ----------------------
-export type Team = { id: string; name: string; supervisorId?: string | null; memberIds?: string[] };
-export type TeamMember = { userId: string; name?: string; role: "member" | "trainer" | "supervisor" };
-
-// ----------------------
-// Small helpers
-// ----------------------
-function Chip({ children, onRemove }:{children: React.ReactNode; onRemove?:()=>void}){
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs bg-white">
-      {children}
-      {onRemove && (
-        <button className="opacity-60 hover:opacity-100" onClick={onRemove}>
-          <X className="w-3.5 h-3.5" />
-        </button>
-      )}
-    </span>
-  );
+@GET
+@Path("/my-teams")
+public List<TeamSummary> getTeamsByUserIdQuery(@QueryParam("userId") String userId) {
+    if (userId == null || userId.isBlank()) throw new BadRequestException("userId is required");
+    List<TeamEntity> teams = em.createQuery(
+            "SELECT DISTINCT m.team FROM MemberEntity m " +
+            "LEFT JOIN FETCH m.team.memberEntities " +
+            "WHERE LOWER(m.memberId) = LOWER(:uid)", TeamEntity.class)
+        .setParameter("uid", userId)
+        .getResultList();
+    return teams.stream().map(TeamResource::toSummary).toList();
 }
 
-// ----------------------
-// TeamMembersManager — ดูสมาชิก + ตั้งบทบาท (API)
-// ----------------------
-function TeamMembersManager({
-  teamId,
-  canManage,
-}: {
-  teamId: string;
-  canManage: boolean;
-}) {
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [selected, setSelected] = useState<TeamMember | null>(null);
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+// ตัวอย่างที่แนะนำ
+@Column(name = "member_id", nullable = false)
+private String memberId;
 
-  const fetchMembers = async () => {
-    setLoading(true);
-    try {
-      const { data } = await axiosClient.get<TeamMember[]>(`/api/teams/${teamId}/members`);
-      setMembers(data || []);
-      setSelected((prev) => prev ? data.find(d => d.userId === prev.userId) ?? data[0] ?? null : data[0] ?? null);
-      setErr(null);
-    } catch (e: any) {
-      console.error(e);
-      setErr(e?.response?.data?.message || "โหลดสมาชิกทีมไม่สำเร็จ");
-    } finally {
-      setLoading(false);
+@Column(name = "name_members")
+private String nameMembers;
+
+public String getMemberId() { return memberId; }
+public void setMemberId(String memberId) { this.memberId = memberId; }
+
+public String getNameMembers() { return nameMembers; }
+public void setNameMembers(String nameMembers) { this.nameMembers = nameMembers; }
+
+ข----------
+@PUT
+@Transactional
+@Path("/{memberId}/role")
+@RolesAllowed({"admin","supervisor","administrator"})
+public Response setRole(
+        @PathParam("teamId") String teamId,
+        @PathParam("memberId") String memberId,
+        Map<String,String> body,
+        @Context SecurityContext securityContext) {
+
+    String role = body != null ? body.getOrDefault("role", "").toLowerCase() : "";
+    if (!role.equals("member") && !role.equals("trainer")) {
+        throw new BadRequestException("role must be 'member' or 'trainer'");
     }
-  };
 
-  useEffect(() => { fetchMembers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [teamId]);
-
-  const setTrainer = async (userId: string, nextRole: "trainer" | "member") => {
-    if (!canManage) return;
-    try {
-      await axiosClient.put(`/api/teams/${teamId}/members/${encodeURIComponent(userId)}/role`, { role: nextRole });
-      await fetchMembers();
-    } catch (e: any) {
-      alert(e?.response?.data?.message || "อัปเดตบทบาทในทีมไม่สำเร็จ");
+    // (แนะนำ) ตรวจสิทธิ์: คนเรียกต้องเป็น supervisor ของทีมนี้ หรือ admin
+    String who = securityContext.getUserPrincipal().getName();
+    boolean isAdmin = securityContext.isUserInRole("admin") || securityContext.isUserInRole("administrator");
+    if (!isAdmin) {
+        boolean requesterIsSupervisor = em.createQuery(
+                "SELECT COUNT(m) FROM MemberEntity m WHERE m.team.id=:tid AND LOWER(m.memberId)=LOWER(:uid) AND LOWER(m.role)='supervisor'",
+                Long.class
+            ).setParameter("tid", teamId)
+             .setParameter("uid", who)
+             .getSingleResult() > 0;
+        if (!requesterIsSupervisor) {
+            throw new ForbiddenException("Only team supervisor can change roles.");
+        }
     }
-  };
 
-  const list = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter(m => (m.name||"").toLowerCase().includes(q) || m.userId.toLowerCase().includes(q));
-  }, [members, search]);
+    MemberEntity m = em.createQuery(
+            "SELECT m FROM MemberEntity m WHERE m.team.id = :tid AND LOWER(m.memberId) = LOWER(:uid)",
+            MemberEntity.class)
+        .setParameter("tid", teamId)
+        .setParameter("uid", memberId)
+        .getResultStream().findFirst()
+        .orElseThrow(() -> new NotFoundException("Member not found"));
 
-  if (loading) return <div className="text-sm opacity-70">กำลังโหลดสมาชิกทีม...</div>;
-  if (err) return <div className="text-sm text-red-600">{err}</div>;
+    // กันการลดบทบาท supervisor (คนสุดท้าย) — เผื่อปุ่ม FE ผิด
+    if ("supervisor".equalsIgnoreCase(m.getRole())) {
+        long supervisorCount = em.createQuery(
+                "SELECT COUNT(m) FROM MemberEntity m WHERE m.team.id = :tid AND LOWER(m.role) = 'supervisor'",
+                Long.class)
+            .setParameter("tid", teamId)
+            .getSingleResult();
+        if (supervisorCount <= 1) {
+            throw new BadRequestException("Cannot change role of the last supervisor in the team");
+        }
+    }
 
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      {/* รายชื่อสมาชิก */}
-      <div className="md:col-span-1 rounded-2xl border bg-white/60 overflow-hidden">
-        <div className="px-4 py-3 border-b font-semibold flex items-center justify-between">
-          <span>สมาชิกทีม</span>
-          <span className="text-xs opacity-70">{members.length} คน</span>
-        </div>
-        <div className="p-3 border-b bg-white">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-60" />
-            <input
-              className="w-full rounded-xl border pl-9 pr-3 py-2 bg-white"
-              placeholder="ค้นหาชื่อหรืออีเมล"
-              value={search}
-              onChange={(e)=>setSearch(e.target.value)}
-            />
-          </div>
-        </div>
-        <div className="max-h-96 overflow-auto divide-y">
-          {list.map(m => (
-            <button
-              key={`${teamId}-${m.userId}`}
-              onClick={()=>setSelected(m)}
-              className={`w-full text-left p-3 hover:bg-gray-50 flex items-center justify-between ${selected?.userId===m.userId?'bg-gray-50':''}`}
-            >
-              <div className="min-w-0">
-                <div className="font-medium truncate">{m.name || m.userId}</div>
-                <div className="text-xs opacity-70">บทบาทในทีม: {m.role}</div>
-              </div>
-              <ChevronRight className="w-4 h-4 opacity-60"/>
-            </button>
-          ))}
-        </div>
-
-        {/* NOTE: ตามสเปคใหม่ ให้ Admin เป็นคนเพิ่มสมาชิก จึงซ่อนฟอร์มเพิ่มสมาชิกในหน้าซุป */}
-      </div>
-
-      {/* รายละเอียด/ตั้งบทบาท */}
-      <div className="md:col-span-2 rounded-2xl border bg-white/60 p-4">
-        {selected ? (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-lg font-semibold">{selected.name || selected.userId}</div>
-                <div className="text-sm opacity-70">บทบาทในทีมปัจจุบัน: {selected.role}</div>
-              </div>
-              <div className="flex gap-2">
-                <Chip>
-                  <Users className="w-3.5 h-3.5"/> {selected.userId}
-                </Chip>
-                {selected.role==='trainer' && (
-                  <Chip><Shield className="w-3.5 h-3.5"/> trainer</Chip>
-                )}
-              </div>
-            </div>
-
-            {/* Promote/demote trainer */}
-            {canManage && selected.role !== 'supervisor' && (
-              <div className="flex gap-2">
-                {selected.role !== 'trainer' ? (
-                  <button
-                    className="rounded-xl px-4 py-2 border bg-white hover:bg-gray-50"
-                    onClick={()=>setTrainer(selected.userId,'trainer')}
-                  >
-                    ตั้งเป็น Trainer (สร้างคอร์สได้)
-                  </button>
-                ) : (
-                  <button
-                    className="rounded-xl px-4 py-2 border bg-white hover:bg-gray-50"
-                    onClick={()=>setTrainer(selected.userId,'member')}
-                  >
-                    ถอนบทบาท Trainer
-                  </button>
-                )}
-              </div>
-            )}
-
-            <div className="text-sm opacity-70">*บทบาท "trainer" ในทีมนี้ จะทำให้ผู้ใช้งานสามารถสร้าง/จัดการคอร์สของทีมได้</div>
-          </div>
-        ) : (
-          <div className="text-sm opacity-70">เลือกสมาชิกทางซ้ายเพื่อดูรายละเอียด</div>
-        )}
-      </div>
-    </div>
-  );
+    m.setRole(role);
+    em.merge(m);
+    return Response.ok(new dto.Team.TeamMemberDTO(m.getMemberId(), m.getNameMembers(), m.getRole())).build();
 }
-
-// ----------------------
-// Main — เลือกทีม + เชื่อม API จริง
-// ----------------------
-export default function SupervisorDashboard(){
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
-  // ดึง userId ปัจจุบัน (email) จาก token หรือ /api/profile/me
-  const parseJwt = (token: string | null): any | null => {
-    if (!token) return null;
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    try {
-      const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-      return payload;
-    } catch { return null; }
-  };
-  const resolveCurrentUserId = async (): Promise<string | null> => {
-    const stored = localStorage.getItem("userId") || sessionStorage.getItem("userId");
-    if (stored) return stored;
-    const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-    const payload = parseJwt(token);
-    const jwtId = payload?.sub || payload?.userId || payload?.email || null;
-    if (jwtId) return String(jwtId);
-    try {
-      const { data } = await axiosClient.get<any>("/api/profile/me");
-      return data?.id || data?.userId || data?.email || null;
-    } catch {
-      return null;
+-----------
+@DELETE
+@Path("/{memberId}")
+@Transactional
+@RolesAllowed({"admin","supervisor","administrator"})
+public void deleteMember(@PathParam("teamId") String teamId,
+                         @PathParam("memberId") String memberId,
+                         @Context SecurityContext securityContext) {
+    MemberEntity m = em.createQuery(
+            "SELECT m FROM MemberEntity m WHERE m.team.id=:tid AND LOWER(m.memberId)=LOWER(:uid)",
+            MemberEntity.class)
+        .setParameter("tid", teamId)
+        .setParameter("uid", memberId)
+        .getResultStream().findFirst()
+        .orElse(null);
+    if (m == null) throw new NotFoundException("Member not found");
+    if ("supervisor".equalsIgnoreCase(m.getRole())) {
+        throw new BadRequestException("Cannot remove a supervisor here (use admin flow)");
     }
-  };
-
-  const fetchMyTeams = async (uid: string) => {
-    try {
-      const { data } = await axiosClient.get<Team[]>("/api/teams/my-teams", { params: { userId: uid } });
-      setTeams(data || []);
-      if (data?.length) setSelectedTeamId((prev) => prev ?? data[0].id);
-      setErr(null);
-    } catch (e: any) {
-      console.error(e);
-      setErr(e?.response?.data?.message || "โหลดทีมของฉันไม่สำเร็จ");
-    }
-  };
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const uid = await resolveCurrentUserId();
-      if (!uid) {
-        setErr("ไม่พบ userId ของผู้ใช้ปัจจุบัน — ตรวจสอบการเข้าสู่ระบบ/โทเคน");
-        setLoading(false);
-        return;
-      }
-      await fetchMyTeams(uid);
-      setLoading(false);
-    })();
-  }, []);
-
-  const selectedTeam = useMemo(
-    () => (selectedTeamId ? teams.find(t => t.id === selectedTeamId) || null : null),
-    [teams, selectedTeamId]
-  );
-
-  if (loading) {
-    return (
-      <div className="flex h-screen bg-gray-50">
-        <SupervisorSidebarWidget />
-        <div className="flex-1 p-8">กำลังโหลด...</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex h-screen bg-gray-50">
-      <SupervisorSidebarWidget />
-
-      <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl md:text-3xl font-bold">Supervisor Dashboard</h1>
-          {selectedTeam && (
-            <div className="text-xs opacity-70">
-              ทีมที่เลือก: <span className="font-medium">{selectedTeam.name}</span>
-            </div>
-          )}
-        </div>
-
-        {err && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700 flex items-center justify-between">
-            <span>{err}</span>
-            {!selectedTeamId && (
-              <button
-                className="ml-3 rounded-lg border px-3 py-1"
-                onClick={async () => {
-                  setLoading(true);
-                  const uid = await resolveCurrentUserId();
-                  if (uid) {
-                    await fetchMyTeams(uid);
-                    setErr(null);
-                  }
-                  setLoading(false);
-                }}
-              >
-                ลองใหม่
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* เลือกทีม */}
-        <div className="rounded-2xl border bg-white p-4">
-          <div className="mb-3 font-semibold">ทีมของฉัน</div>
-          {teams.length ? (
-            <div className="flex gap-2 flex-wrap">
-              {teams.map(t => (
-                <button
-                  key={t.id}
-                  onClick={()=>setSelectedTeamId(t.id)}
-                  className={`rounded-xl px-3 py-2 border ${selectedTeamId===t.id? 'bg-blue-600 text-white':'bg-white'}`}
-                >
-                  {t.name}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="text-sm opacity-70">ยังไม่มีทีมที่คุณดูแล</div>
-          )}
-        </div>
-
-        {/* รายละเอียดทีม + จัดการ trainer */}
-        {selectedTeam && (
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="mb-3">
-              <div className="text-lg font-semibold">ทีม: {selectedTeam.name}</div>
-              <div className="text-sm opacity-70">ตั้ง/ถอน Trainer ให้สมาชิกในทีมนี้</div>
-            </div>
-            <TeamMembersManager
-              teamId={selectedTeam.id}
-              canManage={true}
-            />
-          </div>
-        )}
-      </div>
-    </div>
-  );
+    em.remove(m);
 }
