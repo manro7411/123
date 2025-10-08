@@ -1,102 +1,190 @@
-@GET
-@Path("/my-teams")
-public List<TeamSummary> getTeamsByUserIdQuery(@QueryParam("userId") String userId) {
-    if (userId == null || userId.isBlank()) throw new BadRequestException("userId is required");
-    List<TeamEntity> teams = em.createQuery(
-            "SELECT DISTINCT m.team FROM MemberEntity m " +
-            "LEFT JOIN FETCH m.team.memberEntities " +
-            "WHERE LOWER(m.memberId) = LOWER(:uid)", TeamEntity.class)
-        .setParameter("uid", userId)
-        .getResultList();
-    return teams.stream().map(TeamResource::toSummary).toList();
-}
+package Testing;
 
-// ตัวอย่างที่แนะนำ
-@Column(name = "member_id", nullable = false)
-private String memberId;
+import dto.team.CreateMemberRequest;
+import dto.team.CreateTeamRequestSimple;
+import dto.team.TeamMemberDTO;
+import dto.team.TeamSummary;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.MemberEntity;
+import model.TeamEntity;
 
-@Column(name = "name_members")
-private String nameMembers;
+import java.net.URI;
+import java.util.*;
+import java.util.stream.Collectors;
 
-public String getMemberId() { return memberId; }
-public void setMemberId(String memberId) { this.memberId = memberId; }
+@Path("/api/teams")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamResource {
 
-public String getNameMembers() { return nameMembers; }
-public void setNameMembers(String nameMembers) { this.nameMembers = nameMembers; }
+    @Inject
+    EntityManager em;
 
-ข----------
-@PUT
-@Transactional
-@Path("/{memberId}/role")
-@RolesAllowed({"admin","supervisor","administrator"})
-public Response setRole(
-        @PathParam("teamId") String teamId,
-        @PathParam("memberId") String memberId,
-        Map<String,String> body,
-        @Context SecurityContext securityContext) {
-
-    String role = body != null ? body.getOrDefault("role", "").toLowerCase() : "";
-    if (!role.equals("member") && !role.equals("trainer")) {
-        throw new BadRequestException("role must be 'member' or 'trainer'");
+    private static String genId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
     }
 
-    // (แนะนำ) ตรวจสิทธิ์: คนเรียกต้องเป็น supervisor ของทีมนี้ หรือ admin
-    String who = securityContext.getUserPrincipal().getName();
-    boolean isAdmin = securityContext.isUserInRole("admin") || securityContext.isUserInRole("administrator");
-    if (!isAdmin) {
-        boolean requesterIsSupervisor = em.createQuery(
-                "SELECT COUNT(m) FROM MemberEntity m WHERE m.team.id=:tid AND LOWER(m.memberId)=LOWER(:uid) AND LOWER(m.role)='supervisor'",
-                Long.class
-            ).setParameter("tid", teamId)
-             .setParameter("uid", who)
-             .getSingleResult() > 0;
-        if (!requesterIsSupervisor) {
-            throw new ForbiddenException("Only team supervisor can change roles.");
+    private static TeamSummary toSummary(TeamEntity team) {
+        String supervisorId = null;
+        List<String> memberIds = new ArrayList<>();
+        if (team.getMemberEntities() != null) {
+            for (MemberEntity m : team.getMemberEntities()) {
+                if (m == null) continue;
+                if ("supervisor".equalsIgnoreCase(m.getRole())) {
+                    supervisorId = m.getMemberId();
+                } else {
+                    memberIds.add(m.getMemberId());
+                }
+            }
         }
+        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
     }
 
-    MemberEntity m = em.createQuery(
-            "SELECT m FROM MemberEntity m WHERE m.team.id = :tid AND LOWER(m.memberId) = LOWER(:uid)",
-            MemberEntity.class)
-        .setParameter("tid", teamId)
-        .setParameter("uid", memberId)
-        .getResultStream().findFirst()
-        .orElseThrow(() -> new NotFoundException("Member not found"));
+    // ----- list all teams (summary)
+    @GET
+    public List<TeamSummary> getTeams() {
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities",
+                TeamEntity.class
+        ).getResultList();
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
 
-    // กันการลดบทบาท supervisor (คนสุดท้าย) — เผื่อปุ่ม FE ผิด
-    if ("supervisor".equalsIgnoreCase(m.getRole())) {
-        long supervisorCount = em.createQuery(
-                "SELECT COUNT(m) FROM MemberEntity m WHERE m.team.id = :tid AND LOWER(m.role) = 'supervisor'",
-                Long.class)
-            .setParameter("tid", teamId)
-            .getSingleResult();
-        if (supervisorCount <= 1) {
-            throw new BadRequestException("Cannot change role of the last supervisor in the team");
+    // ----- get one team (summary)
+    @GET
+    @Path("/{id}")
+    public TeamSummary getTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        team.getMemberEntities().size();
+        return toSummary(team);
+    }
+
+    // ----- my teams by query param (ปลอดภัยกับอีเมลที่มี @)
+    @GET
+    @Path("/my-teams")
+    public List<TeamSummary> getTeamsByUserIdQuery(@QueryParam("userId") String userId) {
+        if (userId == null || userId.isBlank()) throw new BadRequestException("userId is required");
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT m.team FROM MemberEntity m " +
+                        "LEFT JOIN FETCH m.team.memberEntities " +
+                        "WHERE LOWER(m.memberId) = LOWER(:uid)",
+                TeamEntity.class
+        ).setParameter("uid", userId).getResultList();
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
+
+    // ----- create team (simple flow)
+    @POST
+    @Transactional
+    public Response createTeam(CreateTeamRequestSimple request) {
+        if (request == null || request.name == null || request.name.trim().isEmpty()) {
+            throw new BadRequestException("Team name is required");
         }
+        if (request.supervisorId == null || request.supervisorId.isBlank()) {
+            throw new BadRequestException("supervisorId is required");
+        }
+        if (request.memberIds == null) request.memberIds = List.of();
+
+        TeamEntity team = new TeamEntity();
+        team.setId(genId());
+        team.setName(request.name.trim());
+        team.setDescription(request.description);
+        team.setCreateBy(request.createBy);
+        team.setJoinCode(String.format("%06d", new Random().nextInt(1_000_000)));
+
+        List<MemberEntity> members = new ArrayList<>();
+
+        // supervisor
+        MemberEntity sup = new MemberEntity();
+        sup.setId(genId());
+        sup.setTeam(team);
+        sup.setMemberId(request.supervisorId);
+        sup.setRole("supervisor");
+        sup.setNameMembers(request.supervisorId);
+        members.add(sup);
+
+        // members
+        for (String mid : request.memberIds.stream().filter(Objects::nonNull).collect(Collectors.toSet())) {
+            MemberEntity m = new MemberEntity();
+            m.setId(genId());
+            m.setTeam(team);
+            m.setMemberId(mid);
+            m.setRole("member");
+            m.setNameMembers(mid);
+            members.add(m);
+        }
+
+        team.setMemberEntities(members);
+        em.persist(team);
+
+        return Response.created(URI.create("/api/teams/" + team.getId()))
+                .entity(toSummary(team))
+                .build();
     }
 
-    m.setRole(role);
-    em.merge(m);
-    return Response.ok(new dto.Team.TeamMemberDTO(m.getMemberId(), m.getNameMembers(), m.getRole())).build();
-}
------------
-@DELETE
-@Path("/{memberId}")
-@Transactional
-@RolesAllowed({"admin","supervisor","administrator"})
-public void deleteMember(@PathParam("teamId") String teamId,
-                         @PathParam("memberId") String memberId,
-                         @Context SecurityContext securityContext) {
-    MemberEntity m = em.createQuery(
-            "SELECT m FROM MemberEntity m WHERE m.team.id=:tid AND LOWER(m.memberId)=LOWER(:uid)",
-            MemberEntity.class)
-        .setParameter("tid", teamId)
-        .setParameter("uid", memberId)
-        .getResultStream().findFirst()
-        .orElse(null);
-    if (m == null) throw new NotFoundException("Member not found");
-    if ("supervisor".equalsIgnoreCase(m.getRole())) {
-        throw new BadRequestException("Cannot remove a supervisor here (use admin flow)");
+    // ----- update team (name/desc)
+    @PUT
+    @Path("/{id}")
+    @Transactional
+    public Response updateTeam(@PathParam("id") String id, TeamEntity updated) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+
+        if (updated.getName() != null) team.setName(updated.getName());
+        if (updated.getDescription() != null) team.setDescription(updated.getDescription());
+
+        team.getMemberEntities().size();
+        return Response.ok(toSummary(team)).build();
     }
-    em.remove(m);
+
+    // ----- delete team
+    @DELETE
+    @Path("/{id}")
+    @Transactional
+    public Response deleteTeam(@PathParam("id") String id) {
+        TeamEntity team = em.find(TeamEntity.class, id);
+        if (team == null) throw new NotFoundException("Team not found");
+        em.remove(team);
+        return Response.noContent().build();
+    }
+
+    // ----- join by code
+    @POST
+    @Path("/joining")
+    @Transactional
+    public Response joinTeamByCode(CreateMemberRequest request) {
+        if (request == null || request.joinCode == null || request.joinCode.trim().length() != 6) {
+            throw new BadRequestException("Join code is invalid");
+        }
+        List<TeamEntity> teams = em.createQuery(
+                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities WHERE t.joinCode = :joinCode",
+                TeamEntity.class
+        ).setParameter("joinCode", request.joinCode).getResultList();
+
+        if (teams.isEmpty()) throw new BadRequestException("Join code is invalid");
+
+        TeamEntity team = teams.get(0);
+
+        boolean exists = team.getMemberEntities().stream()
+                .anyMatch(mm -> mm.getMemberId() != null &&
+                        mm.getMemberId().equalsIgnoreCase(request.userId));
+        if (exists) throw new WebApplicationException("User already in the team", 409);
+
+        MemberEntity m = new MemberEntity();
+        m.setId(genId());
+        m.setTeam(team);
+        m.setMemberId(request.userId);
+        m.setRole(Optional.ofNullable(request.role).orElse("member"));
+        m.setNameMembers(Optional.ofNullable(request.userName).orElse(request.userId));
+        team.getMemberEntities().add(m);
+
+        em.persist(m);
+        return Response.ok().entity(toSummary(team)).build();
+    }
 }
