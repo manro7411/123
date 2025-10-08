@@ -1,16 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import axios, { AxiosError } from "axios";
 
-// ถ้าคุณมีไฟล์/คอมโพเนนต์ของตัวเองอยู่แล้ว สามารถลบคอมโพเนนต์ที่เป็นตัวอย่างด้านล่างได้
-// และคงการใช้งาน <UserListWidget/> เดิมของคุณไว้ได้เหมือนเดิม
 import UserListWidget from "../Supervisor/Widgets/UserListWidget";
-import AdministratorBar from "./Widgets/AdministratorBar"; // คงชื่อไฟล์ให้สะกดตรงกัน
+import AdministratorBar from "./Widgets/AdministratorBar";
 
 // ----------------------
 // Axios instance + BaseURL/Proxy
 // ----------------------
-// แนะนำตั้งค่า VITE_API_BASE_URL เป็น URL ของแบ็กเอนด์ เช่น http://localhost:3000
-// และ/หรือตั้ง proxy ใน vite.config.ts ดูคำอธิบายท้ายไฟล์
 const axiosClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "/",
 });
@@ -25,7 +21,7 @@ axiosClient.interceptors.request.use((config) => {
 });
 
 // ----------------------
-// Types
+// Types (สอดคล้อง TeamAdminResource.TeamSummary)
 // ----------------------
 export type User = {
   id: string;
@@ -37,12 +33,12 @@ export type User = {
 export type Team = {
   id: string;
   name: string;
-  supervisorId: string;
-  memberIds: string[]; // รวมลูกทีมทั้งหมด (ไม่ต้องรวม supervisor)
+  supervisorId: string | null;
+  memberIds: string[];
 };
 
 // ----------------------
-// Team Builder (แบบฟอร์มสร้างทีม)
+// Team Builder (สร้างทีมผ่าน /api/admin/teams)
 // ----------------------
 function TeamBuilderWidget({
   users,
@@ -52,7 +48,9 @@ function TeamBuilderWidget({
   onCreated: (team: Team) => void;
 }) {
   const [teamName, setTeamName] = useState("");
+  const [teamDesc, setTeamDesc] = useState("");
   const [supervisorId, setSupervisorId] = useState("");
+  const [supervisorName, setSupervisorName] = useState("");
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +61,7 @@ function TeamBuilderWidget({
   );
 
   const selectableMembers = useMemo(() => {
-    // สมาชิกที่เลือกเข้าทีมได้ อาจ exclude ADMIN ก็ได้ ตาม policy ของคุณ
+    // ใครๆ (ยกเว้น ADMIN) ก็สามารถถูกเพิ่มเป็นสมาชิกทีมได้
     return users.filter((u) => u.role?.toUpperCase() !== "ADMIN");
   }, [users]);
 
@@ -81,30 +79,42 @@ function TeamBuilderWidget({
     setError(null);
 
     try {
-      // NOTE: ปรับ endpoint ให้ตรงกับ backend ของคุณ
-      // ตัวอย่าง endpoint: POST /api/teams  body: { name, supervisorId, memberIds }
-      const memberNames = users
-      .filter((u) => memberIds.includes(u.id))
-      .map((u) => u.name);
+      // payload ให้ตรง CreateTeamRequestAdmin
+      const membersPayload = memberIds.map((id) => {
+        const u = users.find((x) => x.id === id);
+        return {
+          userId: id,
+          userName: u?.name || id,
+          role: "member", // เริ่มต้น member; ถ้าอยากตั้ง trainer ก็แก้ตรงนี้ได้รายคน
+        };
+      });
 
       const { data } = await axiosClient.post<Team>(
-        "/api/teams",
+        "/api/admin/teams",
         {
           name: teamName.trim(),
+          description: teamDesc || undefined,
           supervisorId,
-          memberIds,    // <-- user IDs
-          memberNames,  // <-- user names
+          supervisorName: supervisorName || undefined,
+          // createBy จะใส่หรือไม่ก็ได้ ถ้าอยากให้ฝั่ง BE บันทึกเพิ่ม
+          // createBy: currentAdminIdOrEmail,
+          members: membersPayload,
         }
       );
-      console.log("Team created:", data);
 
       onCreated(data);
       setTeamName("");
+      setTeamDesc("");
       setSupervisorId("");
+      setSupervisorName("");
       setMemberIds([]);
     } catch (e: any) {
       console.error(e);
-      setError(e?.response?.data?.message || "สร้างทีมไม่สำเร็จ");
+      setError(
+        e?.response?.data?.message ||
+          e?.response?.data ||
+          "สร้างทีมไม่สำเร็จ"
+      );
     } finally {
       setSubmitting(false);
     }
@@ -141,12 +151,24 @@ function TeamBuilderWidget({
               </option>
             ))}
           </select>
+          <input
+            className="w-full rounded-xl border px-3 py-2 mt-2"
+            placeholder="ชื่อหัวหน้าทีม (ไม่บังคับ)"
+            value={supervisorName}
+            onChange={(e) => setSupervisorName(e.target.value)}
+          />
         </div>
 
         <div className="space-y-2 md:col-span-1">
-          <label className="text-sm font-medium">จำนวนสมาชิกที่เลือก</label>
-          <div className="rounded-xl border px-3 py-2 text-sm">
-            {memberIds.length} คน
+          <label className="text-sm font-medium">รายละเอียดทีม</label>
+          <input
+            className="w-full rounded-xl border px-3 py-2"
+            placeholder="คำอธิบายสั้น ๆ (ไม่บังคับ)"
+            value={teamDesc}
+            onChange={(e) => setTeamDesc(e.target.value)}
+          />
+          <div className="rounded-xl border px-3 py-2 text-sm mt-2">
+            สมาชิกที่เลือก: {memberIds.length} คน
           </div>
         </div>
       </div>
@@ -166,16 +188,16 @@ function TeamBuilderWidget({
               />
               <div className="flex-1">
                 <div className="font-medium">{u.name}</div>
-                <div className="text-xs opacity-70">{u.email} • {u.role}</div>
+                <div className="text-xs opacity-70">
+                  {u.email} • {u.role}
+                </div>
               </div>
             </label>
           ))}
         </div>
       </div>
 
-      {error && (
-        <div className="text-sm text-red-600">{error}</div>
-      )}
+      {error && <div className="text-sm text-red-600">{error}</div>}
 
       <div className="flex gap-2">
         <button
@@ -188,7 +210,9 @@ function TeamBuilderWidget({
         <button
           onClick={() => {
             setTeamName("");
+            setTeamDesc("");
             setSupervisorId("");
+            setSupervisorName("");
             setMemberIds([]);
             setError(null);
           }}
@@ -202,7 +226,7 @@ function TeamBuilderWidget({
 }
 
 // ----------------------
-// รายการทีม (ตัวอย่างวิธีแสดงโดย group ตาม Supervisor)
+// รายการทีม (ดึงจาก /api/admin/teams)
 // ----------------------
 function TeamsBySupervisor({ users, teams }: { users: User[]; teams: Team[] }) {
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
@@ -259,12 +283,12 @@ export default function AdministratorUserManagement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // ดึงผู้ใช้ทั้งหมด: ลองหลาย endpoint เพื่อกัน 404 ขึ้น dev
+  // ดึงผู้ใช้ทั้งหมด (ปรับตามระบบจริงของคุณ)
   const fetchUsers = async () => {
     const candidates = [
-      "/api/users", // ที่แนะนำให้ backend รองรับ
-      "/api/profile/users", // สำรอง
-      "/api/profile/users/for-supervisor", // ของเดิมที่คุณมีอยู่
+      "/api/users",
+      "/api/profile/users",
+      "/api/profile/users/for-supervisor",
     ];
 
     let lastError: unknown = null;
@@ -278,24 +302,31 @@ export default function AdministratorUserManagement() {
         }
       } catch (e) {
         lastError = e;
-        // ลองตัวถัดไป
       }
     }
 
     console.error(lastError);
-    const msg = (lastError as AxiosError)?.response?.status === 404
-      ? "ไม่พบ endpoint สำหรับดึงผู้ใช้ (404) — ตรวจสอบเส้นทาง API หรือ proxy/baseURL"
-      : "ดึงรายชื่อผู้ใช้ไม่สำเร็จ";
+    const msg =
+      (lastError as AxiosError)?.response?.status === 404
+        ? "ไม่พบ endpoint สำหรับดึงผู้ใช้ (404) — ตรวจสอบเส้นทาง API หรือ proxy/baseURL"
+        : "ดึงรายชื่อผู้ใช้ไม่สำเร็จ";
     setError(msg);
   };
 
+  // ดึงทีมจาก TeamAdminResource
   const fetchTeams = async () => {
     try {
-      const { data } = await axiosClient.get<Team[]>("/api/teams");
+      const { data } = await axiosClient.get<Team[]>("/api/admin/teams");
       if (Array.isArray(data)) setTeams(data);
     } catch (err) {
-      // ไม่มีทีมครั้งแรกก็ไม่เป็นไร
-      console.warn("ทีมอาจยังไม่มี");
+      console.warn("ยังไม่มีทีม หรือไม่พบ /api/admin/teams");
+      // สำรอง (ถ้าคุณยังมี /api/teams ที่คืน TeamSummary เช่นกัน)
+      try {
+        const { data } = await axiosClient.get<Team[]>("/api/teams");
+        if (Array.isArray(data)) setTeams(data);
+      } catch {
+        // เงียบไว้ก่อน
+      }
     }
   };
 
@@ -308,9 +339,7 @@ export default function AdministratorUserManagement() {
   }, []);
 
   const assignRole = async (userId: string, role: string) => {
-    const confirmAssign = window.confirm(
-      `ยืนยันอัปเดตรายบทบาทเป็น \"${role}\" ?`
-    );
+    const confirmAssign = window.confirm(`ยืนยันอัปเดตรายบทบาทเป็น \"${role}\" ?`);
     if (!confirmAssign) return;
 
     try {
@@ -357,7 +386,7 @@ export default function AdministratorUserManagement() {
           <UserListWidget users={users} assignRole={assignRole} error={error} />
         </div>
 
-        {/* แบบฟอร์มสร้างทีมใหม่ (ต้องระบุ supervisor เป็นหัวหน้า) */}
+        {/* สร้างทีมใหม่ผ่าน TeamAdminResource */}
         <TeamBuilderWidget users={users} onCreated={handleTeamCreated} />
 
         {/* แสดงทีม grouped by Supervisor */}
