@@ -1,79 +1,55 @@
 import { useEffect, useMemo, useState } from "react";
 import axios, { AxiosError } from "axios";
-import AdministratorBar from "./Widgets/AdministratorBar";
-import UserListWidget from "../Supervisor/Widgets/UserListWidget";
-import { ChevronRight, Crown, Plus, Trash2, Users, Shield, X, RefreshCcw } from "lucide-react";
 
-// ============ Axios client ============
+// ถ้าคุณมีไฟล์/คอมโพเนนต์ของตัวเองอยู่แล้ว สามารถลบคอมโพเนนต์ที่เป็นตัวอย่างด้านล่างได้
+// และคงการใช้งาน <UserListWidget/> เดิมของคุณไว้ได้เหมือนเดิม
+import UserListWidget from "../Supervisor/Widgets/UserListWidget";
+import AdministratorBar from "./Widgets/AdministratorBar"; // คงชื่อไฟล์ให้สะกดตรงกัน
+
+// ----------------------
+// Axios instance + BaseURL/Proxy
+// ----------------------
+// แนะนำตั้งค่า VITE_API_BASE_URL เป็น URL ของแบ็กเอนด์ เช่น http://localhost:3000
+// และ/หรือตั้ง proxy ใน vite.config.ts ดูคำอธิบายท้ายไฟล์
 const axiosClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "/",
 });
+
 axiosClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+  const token =
+    localStorage.getItem("token") || sessionStorage.getItem("token") || "";
   if (token) {
     config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
   }
   return config;
 });
 
-// ============ Types ============
+// ----------------------
+// Types
+// ----------------------
 export type User = {
   id: string;
   name: string;
   email: string;
-  role: string; // global role: ADMIN | SUPERVISOR | TRAINER | LEARNER ...
+  role: string; // 'ADMIN' | 'SUPERVISOR' | 'TRAINER' | 'LEARNER' ...
 };
 
-export type TeamSummary = {
+export type Team = {
   id: string;
   name: string;
-  supervisorId?: string | null;
-  memberIds: string[]; // ไม่รวม supervisor ก็ได้ (ไม่เคร่ง) — ใช้สำหรับนับจำนวน
+  supervisorId: string;
+  memberIds: string[]; // รวมลูกทีมทั้งหมด (ไม่ต้องรวม supervisor)
 };
 
-export type TeamMember = {
-  userId: string;
-  name?: string;
-  role: "member" | "trainer" | "supervisor";
-};
-
-// ============ Small UI helpers ============
-function SectionCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border bg-white/60 p-4 md:p-6">
-      <div className="mb-3">
-        <div className="text-lg font-semibold">{title}</div>
-        {subtitle && <div className="text-sm opacity-70">{subtitle}</div>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function EmptyState({ title, subtitle, onRetry }: { title: string; subtitle?: string; onRetry?: () => void }) {
-  return (
-    <div className="rounded-2xl border bg-white p-8 text-center">
-      <div className="text-lg font-semibold">{title}</div>
-      {subtitle && <div className="text-sm opacity-70 mt-1">{subtitle}</div>}
-      {onRetry && (
-        <button
-          onClick={onRetry}
-          className="mt-4 inline-flex items-center gap-2 rounded-xl border px-4 py-2 bg-white hover:bg-gray-50"
-        >
-          <RefreshCcw className="w-4 h-4" /> ลองอีกครั้ง
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ============ TeamBuilderWidget (Admin สร้างทีมใหม่) ============
+// ----------------------
+// Team Builder (แบบฟอร์มสร้างทีม)
+// ----------------------
 function TeamBuilderWidget({
   users,
   onCreated,
 }: {
   users: User[];
-  onCreated: (team: TeamSummary) => void;
+  onCreated: (team: Team) => void;
 }) {
   const [teamName, setTeamName] = useState("");
   const [supervisorId, setSupervisorId] = useState("");
@@ -81,26 +57,47 @@ function TeamBuilderWidget({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const supervisors = useMemo(() => users.filter((u) => u.role?.toUpperCase() === "SUPERVISOR"), [users]);
-  const selectableMembers = useMemo(() => users.filter((u) => u.role?.toUpperCase() !== "ADMIN"), [users]);
-  const toggleMember = (id: string) =>
-    setMemberIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  const canSubmit = Boolean(teamName.trim() && supervisorId && memberIds.length > 0);
+  const supervisors = useMemo(
+    () => users.filter((u) => u.role?.toUpperCase() === "SUPERVISOR"),
+    [users]
+  );
+
+  const selectableMembers = useMemo(() => {
+    // สมาชิกที่เลือกเข้าทีมได้ อาจ exclude ADMIN ก็ได้ ตาม policy ของคุณ
+    return users.filter((u) => u.role?.toUpperCase() !== "ADMIN");
+  }, [users]);
+
+  const toggleMember = (id: string) => {
+    setMemberIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const canSubmit = teamName.trim() && supervisorId && memberIds.length > 0;
 
   const createTeam = async () => {
     if (!canSubmit || submitting) return;
     setSubmitting(true);
     setError(null);
+
     try {
-      // TeamAdminResource: POST /api/admin/teams
-      // body: { name, supervisorId, memberIds, memberNames? }
-      const memberNames = users.filter((u) => memberIds.includes(u.id)).map((u) => u.name);
-      const { data } = await axiosClient.post<TeamSummary>("/api/admin/teams", {
-        name: teamName.trim(),
-        supervisorId,
-        memberIds,
-        memberNames,
-      });
+      // NOTE: ปรับ endpoint ให้ตรงกับ backend ของคุณ
+      // ตัวอย่าง endpoint: POST /api/teams  body: { name, supervisorId, memberIds }
+      const memberNames = users
+      .filter((u) => memberIds.includes(u.id))
+      .map((u) => u.name);
+
+      const { data } = await axiosClient.post<Team>(
+        "/api/teams",
+        {
+          name: teamName.trim(),
+          supervisorId,
+          memberIds,    // <-- user IDs
+          memberNames,  // <-- user names
+        }
+      );
+      console.log("Team created:", data);
+
       onCreated(data);
       setTeamName("");
       setSupervisorId("");
@@ -114,12 +111,16 @@ function TeamBuilderWidget({
   };
 
   return (
-    <SectionCard title="สร้างทีมใหม่" subtitle="ระบุหัวหน้าทีม (Supervisor) และเลือกสมาชิก">
+    <div className="rounded-2xl border p-4 md:p-6 space-y-4 bg-white/60">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold">สร้างทีมใหม่</h2>
+      </div>
+
       <div className="grid gap-4 md:grid-cols-3">
         <div className="space-y-2">
           <label className="text-sm font-medium">ชื่อทีม</label>
           <input
-            className="w-full rounded-xl border px-3 py-2 bg-white"
+            className="w-full rounded-xl border px-3 py-2"
             placeholder="เช่น Team A"
             value={teamName}
             onChange={(e) => setTeamName(e.target.value)}
@@ -129,7 +130,7 @@ function TeamBuilderWidget({
         <div className="space-y-2">
           <label className="text-sm font-medium">หัวหน้าทีม (Supervisor)</label>
           <select
-            className="w-full rounded-xl border px-3 py-2 bg-white"
+            className="w-full rounded-xl border px-3 py-2"
             value={supervisorId}
             onChange={(e) => setSupervisorId(e.target.value)}
           >
@@ -144,30 +145,39 @@ function TeamBuilderWidget({
 
         <div className="space-y-2 md:col-span-1">
           <label className="text-sm font-medium">จำนวนสมาชิกที่เลือก</label>
-          <div className="rounded-xl border px-3 py-2 text-sm bg-white">{memberIds.length} คน</div>
+          <div className="rounded-xl border px-3 py-2 text-sm">
+            {memberIds.length} คน
+          </div>
         </div>
       </div>
 
-      <div className="space-y-2 mt-4">
+      <div className="space-y-2">
         <label className="text-sm font-medium">เลือกสมาชิกเข้าทีม</label>
-        <div className="max-h-64 overflow-auto rounded-xl border divide-y bg-white">
+        <div className="max-h-64 overflow-auto rounded-xl border divide-y">
           {selectableMembers.map((u) => (
-            <label key={u.id} className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer">
-              <input type="checkbox" checked={memberIds.includes(u.id)} onChange={() => toggleMember(u.id)} />
+            <label
+              key={u.id}
+              className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={memberIds.includes(u.id)}
+                onChange={() => toggleMember(u.id)}
+              />
               <div className="flex-1">
                 <div className="font-medium">{u.name}</div>
-                <div className="text-xs opacity-70">
-                  {u.email} • {u.role}
-                </div>
+                <div className="text-xs opacity-70">{u.email} • {u.role}</div>
               </div>
             </label>
           ))}
         </div>
       </div>
 
-      {error && <div className="text-sm text-red-600 mt-2">{error}</div>}
+      {error && (
+        <div className="text-sm text-red-600">{error}</div>
+      )}
 
-      <div className="flex gap-2 mt-4">
+      <div className="flex gap-2">
         <button
           disabled={!canSubmit || submitting}
           onClick={createTeam}
@@ -182,265 +192,23 @@ function TeamBuilderWidget({
             setMemberIds([]);
             setError(null);
           }}
-          className="rounded-xl px-4 py-2 border bg-white"
+          className="rounded-xl px-4 py-2 border"
         >
           ล้างค่า
         </button>
-      </div>
-    </SectionCard>
-  );
-}
-
-// ============ TeamManagerPanel (Admin จัดการทีมที่เลือก) ============
-function TeamManagerPanel({
-  team,
-  onClose,
-  onChanged,
-}: {
-  team: TeamSummary;
-  onClose: () => void;
-  onChanged: () => void; // callback ให้หน้า parent refresh รายการทีม
-}) {
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [newUserId, setNewUserId] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newRole, setNewRole] = useState<"member" | "trainer">("member");
-
-  const loadMembers = async () => {
-    try {
-      setLoading(true);
-      setErr(null);
-      // TeamAdminResource: GET /api/admin/teams/{teamId}/members
-      const { data } = await axiosClient.get<TeamMember[]>(`/api/admin/teams/${team.id}/members`, {
-        params: { order: "roleThenJoined" },
-      });
-      setMembers(data || []);
-    } catch (e: any) {
-      console.error(e);
-      setErr(e?.response?.data?.message || e?.message || "โหลดสมาชิกทีมไม่สำเร็จ");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadMembers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [team.id]);
-
-  const setSupervisor = async (userId: string) => {
-    if (!confirm("ยืนยันตั้งผู้ใช้นี้เป็น Supervisor ของทีม?")) return;
-    try {
-      // PUT /api/admin/teams/{teamId}/supervisor {supervisorId}
-      await axiosClient.put(`/api/admin/teams/${team.id}/supervisor`, { supervisorId: userId });
-      await loadMembers();
-      onChanged();
-      alert("อัปเดต Supervisor สำเร็จ");
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.response?.data?.message || "ตั้ง Supervisor ไม่สำเร็จ");
-    }
-  };
-
-  const setTeamRole = async (userId: string, role: "trainer" | "member") => {
-    try {
-      // PUT /api/admin/teams/{teamId}/members/{userId}/role {role}
-      await axiosClient.put(`/api/admin/teams/${team.id}/members/${encodeURIComponent(userId)}/role`, { role });
-      await loadMembers();
-      alert("อัปเดตบทบาทในทีมสำเร็จ");
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.response?.data?.message || "อัปเดตบทบาทในทีมไม่สำเร็จ");
-    }
-  };
-
-  const addMember = async () => {
-    const uid = newUserId.trim();
-    if (!uid) return alert("กรุณากรอก userId/email");
-    try {
-      // POST /api/admin/teams/{teamId}/members  { userId, name, role? }
-      await axiosClient.post(`/api/admin/teams/${team.id}/members`, {
-        userId: uid,
-        name: newName.trim() || undefined,
-        role: newRole,
-      });
-      setNewUserId("");
-      setNewName("");
-      await loadMembers();
-      onChanged();
-      alert("เพิ่มสมาชิกเข้าทีมสำเร็จ");
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.response?.data?.message || "เพิ่มสมาชิกไม่สำเร็จ");
-    }
-  };
-
-  const removeMember = async (userId: string) => {
-    if (!confirm("ลบสมาชิกออกจากทีม?")) return;
-    try {
-      // DELETE /api/admin/teams/{teamId}/members/{userId}
-      await axiosClient.delete(`/api/admin/teams/${team.id}/members/${encodeURIComponent(userId)}`);
-      await loadMembers();
-      onChanged();
-      alert("ลบสมาชิกสำเร็จ");
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.response?.data?.message || "ลบสมาชิกไม่สำเร็จ");
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-40 bg-black/30 flex">
-      <div className="ml-auto h-full w-full max-w-3xl bg-white shadow-xl flex flex-col">
-        {/* Header */}
-        <div className="p-4 border-b flex items-center justify-between">
-          <div>
-            <div className="text-lg font-semibold">จัดการทีม: {team.name}</div>
-            <div className="text-xs opacity-70">
-              Supervisor ปัจจุบัน: {team.supervisorId || "-"}
-            </div>
-          </div>
-          <button onClick={onClose} className="rounded-lg border p-2 hover:bg-gray-50">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-auto p-4 space-y-6">
-          {/* Add member */}
-          <SectionCard title="เพิ่มสมาชิกเข้าทีม" subtitle="Admin เท่านั้นที่สามารถเพิ่มสมาชิกได้">
-            <div className="grid md:grid-cols-3 gap-3">
-              <input
-                className="rounded-xl border px-3 py-2 bg-white"
-                placeholder="userId/email"
-                value={newUserId}
-                onChange={(e) => setNewUserId(e.target.value)}
-              />
-              <input
-                className="rounded-xl border px-3 py-2 bg-white"
-                placeholder="ชื่อ (ไม่บังคับ)"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-              />
-              <select
-                className="rounded-xl border px-3 py-2 bg-white"
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value as "member" | "trainer")}
-              >
-                <option value="member">member</option>
-                <option value="trainer">trainer</option>
-              </select>
-            </div>
-            <button
-              onClick={addMember}
-              className="mt-3 inline-flex items-center gap-2 rounded-xl border px-3 py-2 bg-white hover:bg-gray-50"
-            >
-              <Plus className="w-4 h-4" /> เพิ่มเข้าทีม
-            </button>
-          </SectionCard>
-
-          {/* Members list */}
-          <SectionCard title="สมาชิกทีม" subtitle="ตั้ง Supervisor / เปลี่ยนบทบาทเป็น trainer/member / ลบสมาชิก">
-            {loading ? (
-              <div className="text-sm opacity-70">กำลังโหลดสมาชิกทีม…</div>
-            ) : err ? (
-              <EmptyState title="โหลดสมาชิกไม่สำเร็จ" subtitle={err} onRetry={loadMembers} />
-            ) : !members.length ? (
-              <EmptyState title="ยังไม่มีสมาชิกในทีม" />
-            ) : (
-              <div className="divide-y rounded-xl border bg-white">
-                {members.map((m) => (
-                  <div key={m.userId} className="p-3 flex items-center justify-between">
-                    <div className="min-w-0">
-                      <div className="font-medium truncate flex items-center gap-2">
-                        {m.name || m.userId}
-                        {m.role === "supervisor" && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-yellow-50 text-yellow-800 border border-yellow-200 px-2 py-0.5 text-[10px]">
-                            <Crown className="w-3 h-3" /> SUPERVISOR
-                          </span>
-                        )}
-                        {m.role === "trainer" && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 text-[10px]">
-                            <Shield className="w-3 h-3" /> TRAINER
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs opacity-70">บทบาทในทีม: {m.role}</div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {/* set supervisor */}
-                      {m.role !== "supervisor" && (
-                        <button
-                          className="rounded-xl border px-3 py-1 bg-white hover:bg-gray-50 text-xs"
-                          onClick={() => setSupervisor(m.userId)}
-                          title="ตั้งเป็น Supervisor"
-                        >
-                          ตั้งเป็น Supervisor
-                        </button>
-                      )}
-
-                      {/* toggle trainer/member */}
-                      {m.role !== "supervisor" && (
-                        <>
-                          {m.role !== "trainer" ? (
-                            <button
-                              className="rounded-xl border px-3 py-1 bg-white hover:bg-gray-50 text-xs"
-                              onClick={() => setTeamRole(m.userId, "trainer")}
-                              title="ตั้งเป็น Trainer"
-                            >
-                              ตั้ง Trainer
-                            </button>
-                          ) : (
-                            <button
-                              className="rounded-xl border px-3 py-1 bg-white hover:bg-gray-50 text-xs"
-                              onClick={() => setTeamRole(m.userId, "member")}
-                              title="ถอน Trainer"
-                            >
-                              ถอน Trainer
-                            </button>
-                          )}
-                        </>
-                      )}
-
-                      {/* remove member (block if supervisor) */}
-                      {m.role !== "supervisor" && (
-                        <button
-                          className="rounded-xl border px-2 py-1 bg-white hover:bg-red-50 text-red-600"
-                          onClick={() => removeMember(m.userId)}
-                          title="ลบออกจากทีม"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </SectionCard>
-        </div>
       </div>
     </div>
   );
 }
 
-// ============ TeamsBySupervisor (แสดงภาพรวมทีมแบบ Group) ============
-function TeamsBySupervisor({
-  users,
-  teams,
-  onOpenTeam,
-}: {
-  users: User[];
-  teams: TeamSummary[];
-  onOpenTeam: (t: TeamSummary) => void;
-}) {
+// ----------------------
+// รายการทีม (ตัวอย่างวิธีแสดงโดย group ตาม Supervisor)
+// ----------------------
+function TeamsBySupervisor({ users, teams }: { users: User[]; teams: Team[] }) {
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
   const grouped = useMemo(() => {
-    const bySup: Record<string, TeamSummary[]> = {};
+    const bySup: Record<string, Team[]> = {};
     for (const t of teams || []) {
       const key = t?.supervisorId || "__UNKNOWN__";
       if (!bySup[key]) bySup[key] = [];
@@ -460,28 +228,19 @@ function TeamsBySupervisor({
         return (
           <div key={sid} className="rounded-2xl border p-4 md:p-6 bg-white/60">
             <div className="mb-3">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
+              <h3 className="text-lg font-semibold">
                 Supervisor: {sup?.name || sid} {sup?.email ? `(${sup.email})` : ""}
               </h3>
               <p className="text-sm opacity-70">ทีมทั้งหมดของหัวหน้าคนนี้</p>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {teamsForSup.map((t) => (
-                <button
-                  key={t.id}
-                  className="rounded-xl border p-3 text-left hover:bg-gray-50 flex items-center justify-between bg-white"
-                  onClick={() => onOpenTeam(t)}
-                  title="กดเพื่อจัดการทีม"
-                >
-                  <div>
-                    <div className="font-medium">{t.name}</div>
-                    <div className="text-xs opacity-70 flex items-center gap-1">
-                      <Users className="w-3.5 h-3.5" />
-                      สมาชิก {t.memberIds?.length ?? 0} คน
-                    </div>
+                <div key={t.id} className="rounded-xl border p-3">
+                  <div className="font-medium">{t.name}</div>
+                  <div className="text-xs opacity-70">
+                    สมาชิก {t?.memberIds?.length ?? 0} คน
                   </div>
-                  <ChevronRight className="w-4 h-4 opacity-60" />
-                </button>
+                </div>
               ))}
             </div>
           </div>
@@ -491,49 +250,52 @@ function TeamsBySupervisor({
   );
 }
 
-// ============ Main Page ============
+// ----------------------
+// หน้าหลัก: Administrator User Management
+// ----------------------
 export default function AdministratorUserManagement() {
   const [users, setUsers] = useState<User[]>([]);
-  const [teams, setTeams] = useState<TeamSummary[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
-  const [errorUsers, setErrorUsers] = useState<string | null>(null);
-  const [errorTeams, setErrorTeams] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const [openTeam, setOpenTeam] = useState<TeamSummary | null>(null);
-
-  // ดึงผู้ใช้ทั้งหมด (ลองหลาย endpoint กัน dev 404)
+  // ดึงผู้ใช้ทั้งหมด: ลองหลาย endpoint เพื่อกัน 404 ขึ้น dev
   const fetchUsers = async () => {
-    const candidates = ["/api/users", "/api/profile/users", "/api/profile/users/for-supervisor"];
+    const candidates = [
+      "/api/users", // ที่แนะนำให้ backend รองรับ
+      "/api/profile/users", // สำรอง
+      "/api/profile/users/for-supervisor", // ของเดิมที่คุณมีอยู่
+    ];
+
     let lastError: unknown = null;
     for (const path of candidates) {
       try {
         const { data } = await axiosClient.get<User[]>(path);
         if (Array.isArray(data)) {
           setUsers(data);
-          setErrorUsers(null);
+          setError(null);
           return;
         }
       } catch (e) {
         lastError = e;
+        // ลองตัวถัดไป
       }
     }
+
     console.error(lastError);
-    const msg =
-      (lastError as AxiosError)?.response?.status === 404
-        ? "ไม่พบ endpoint สำหรับดึงผู้ใช้ (404) — ตรวจสอบเส้นทาง API หรือ proxy/baseURL"
-        : "ดึงรายชื่อผู้ใช้ไม่สำเร็จ";
-    setErrorUsers(msg);
+    const msg = (lastError as AxiosError)?.response?.status === 404
+      ? "ไม่พบ endpoint สำหรับดึงผู้ใช้ (404) — ตรวจสอบเส้นทาง API หรือ proxy/baseURL"
+      : "ดึงรายชื่อผู้ใช้ไม่สำเร็จ";
+    setError(msg);
   };
 
-  // ดึงทีมทั้งหมดจาก TeamAdminResource
   const fetchTeams = async () => {
     try {
-      const { data } = await axiosClient.get<TeamSummary[]>("/api/admin/teams");
-      setTeams(data || []);
-      setErrorTeams(null);
-    } catch (e: any) {
-      console.error(e);
-      setErrorTeams(e?.response?.data?.message || "ดึงรายการทีมไม่สำเร็จ");
+      const { data } = await axiosClient.get<Team[]>("/api/teams");
+      if (Array.isArray(data)) setTeams(data);
+    } catch (err) {
+      // ไม่มีทีมครั้งแรกก็ไม่เป็นไร
+      console.warn("ทีมอาจยังไม่มี");
     }
   };
 
@@ -545,19 +307,23 @@ export default function AdministratorUserManagement() {
     })();
   }, []);
 
-  const assignRoleGlobal = async (userId: string, role: string) => {
-    if (!confirm(`ยืนยันอัปเดตรายบทบาทเป็น "${role}" ?`)) return;
+  const assignRole = async (userId: string, role: string) => {
+    const confirmAssign = window.confirm(
+      `ยืนยันอัปเดตรายบทบาทเป็น \"${role}\" ?`
+    );
+    if (!confirmAssign) return;
+
     try {
       await axiosClient.put(`/api/profile/users/${userId}/role`, { role });
       await fetchUsers();
       alert(`อัปเดตบทบาทเป็น ${role} แล้ว`);
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.response?.data?.message || "อัปเดตบทบาทไม่สำเร็จ");
+    } catch (err: any) {
+      console.error(err);
+      alert(err?.response?.data?.message || "อัปเดตบทบาทไม่สำเร็จ");
     }
   };
 
-  const handleTeamCreated = (team: TeamSummary) => {
+  const handleTeamCreated = (team: Team) => {
     setTeams((prev) => [team, ...prev]);
   };
 
@@ -571,58 +337,57 @@ export default function AdministratorUserManagement() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen">
       <AdministratorBar />
+
       <div className="flex-1 p-8 overflow-y-auto space-y-8">
         <div className="flex justify-between items-center">
           <h1 className="text-3xl font-bold">Administrator User Management</h1>
         </div>
 
-        {/* จัดการ Global Role */}
-        <SectionCard title="จัดการบทบาทผู้ใช้ (Global Role)" subtitle="ตั้งบทบาทระดับระบบ เช่น ADMIN / SUPERVISOR / TRAINER / LEARNER">
-          {errorUsers && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700 mb-3">{errorUsers}</div>
-          )}
-          <UserListWidget users={users} assignRole={assignRoleGlobal} error={errorUsers} />
-        </SectionCard>
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
+            {error}
+          </div>
+        )}
 
-        {/* สร้างทีมใหม่ */}
+        {/* จัดการบทบาทผู้ใช้เดิม */}
+        <div className="space-y-3">
+          <p className="opacity-80">จัดการบทบาทผู้ใช้ และระบุ Supervisor/Trainer</p>
+          <UserListWidget users={users} assignRole={assignRole} error={error} />
+        </div>
+
+        {/* แบบฟอร์มสร้างทีมใหม่ (ต้องระบุ supervisor เป็นหัวหน้า) */}
         <TeamBuilderWidget users={users} onCreated={handleTeamCreated} />
 
-        {/* รายการทีม grouped by Supervisor */}
-        <SectionCard title="ทีมทั้งหมด" subtitle="กดที่ทีมเพื่อเปิดแผงจัดการสมาชิก/บทบาท/หัวหน้า">
-          {errorTeams ? (
-            <EmptyState title="โหลดทีมไม่สำเร็จ" subtitle={errorTeams} onRetry={fetchTeams} />
-          ) : teams.length ? (
-            <TeamsBySupervisor
-              users={users}
-              teams={teams}
-              onOpenTeam={(t) => setOpenTeam(t)}
-            />
-          ) : (
-            <EmptyState title="ยังไม่มีทีมในระบบ" />
-          )}
-        </SectionCard>
+        {/* แสดงทีม grouped by Supervisor */}
+        <TeamsBySupervisor users={users} teams={teams} />
       </div>
-
-      {/* Drawer: Team Manager */}
-      {openTeam && (
-        <TeamManagerPanel
-          team={openTeam}
-          onClose={() => setOpenTeam(null)}
-          onChanged={fetchTeams}
-        />
-      )}
     </div>
   );
 }
 
-/* ----------------------
-Proxy แนะนำ (vite.config.ts) ถ้า backend ไม่ได้รันพอร์ตเดียวกับ front
--------------------------
-server: {
-  proxy: {
-    '/api': { target: 'http://localhost:8080', changeOrigin: true },
-  },
-}
-*/
+// ----------------------
+// หมายเหตุการตั้งค่า Proxy (ป้องกัน 404 ไปที่ :5173)
+// ----------------------
+// ถ้า front (Vite) รันที่ :5173 แต่ backend รันอีกพอร์ต เช่น :3000
+// ให้ตั้ง proxy ใน vite.config.ts แบบนี้
+//
+// import { defineConfig } from 'vite'
+// import react from '@vitejs/plugin-react'
+//
+// export default defineConfig({
+//   plugins: [react()],
+//   server: {
+//     proxy: {
+//       '/api': {
+//         target: 'http://localhost:3000',
+//         changeOrigin: true,
+//       },
+//     },
+//   },
+// })
+//
+// จากนั้นบนฝั่งโค้ด เรียกแค่ '/api/...' ได้เลย โดยไม่โดน 404 จาก :5173
+// หรือกำหนด VITE_API_BASE_URL ให้ axios ใช้ส่งไป backend โดยตรง
+ช่วยปรับแก้ให้สามารถดึง api จาก teamadminResource มาใช้ในการขัดการทีมหน่อย 
