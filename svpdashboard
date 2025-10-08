@@ -1,335 +1,328 @@
-package Testing;
+import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
+import SupervisorSidebarWidget from "./Widgets/SupervisorSideBar";
+import { ChevronRight, Shield, Users, X, Search } from "lucide-react";
 
-import dto.CreateTeamRequestSimple;
-import dto.Team.CreateMemberRequest;
-import dto.Team.TeamSummary;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import model.MemberEntity;
-import model.TeamEntity;
+// ----------------------
+// Axios instance
+// ----------------------
+const axiosClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "/",
+});
+axiosClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+  if (token) {
+    config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+  }
+  return config;
+});
 
-import java.net.URI;
-import java.util.*;
-import java.util.stream.Collectors;
+// ----------------------
+// Types (สอดคล้อง backend ปัจจุบัน)
+// ----------------------
+export type Team = { id: string; name: string; supervisorId?: string | null; memberIds?: string[] };
+export type TeamMember = { userId: string; name?: string; role: "member" | "trainer" | "supervisor" };
 
-@Path("/teams") // << ให้ตรงกับ frontend
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
-public class TeamResource {
-
-    @Inject
-    EntityManager em;
-
-    private static String genId() {
-        return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-    }
-
-    private static TeamSummary toSummary(TeamEntity team) {
-        // supervisor = สมาชิกที่ role = "supervisor"
-        String supervisorId = null;
-        List<String> memberIds = new ArrayList<>();
-        if (team.getMemberEntities() != null) {
-            for (MemberEntity m : team.getMemberEntities()) {
-                if (m == null) continue;
-                if ("supervisor".equalsIgnoreCase(m.getRole())) {
-                    supervisorId = m.getMemberId(); // เก็บเป็น userId/email ตามที่คุณใช้
-                } else {
-                    memberIds.add(m.getMemberId());
-                }
-            }
-        }
-        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
-    }
-
-    // ---------- APIs ----------
-
-    @GET
-    public List<TeamSummary> getTeams() {
-        List<TeamEntity> teams = em.createQuery(
-                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities",TeamEntity.class
-        ).getResultList();
-        return teams.stream().map(TeamResource::toSummary).toList();
-    }
-
-    @GET
-    @Path("/{id}")
-    public TeamSummary getTeam(@PathParam("id") String id) {
-        TeamEntity team = em.find(TeamEntity.class, id);
-        if (team == null) throw new NotFoundException("Team not found");
-        // ensure members loaded
-        team.getMemberEntities().size();
-        return toSummary(team);
-    }
-
-    @GET
-    @Path("/my-teams/{userId}")
-    public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {
-        // เดิมใช้ m.userID แต่ใน create/set ใช้ userEmail -> ให้ใช้ userEmail ให้ตรงกัน
-        List<TeamEntity> teams = em.createQuery(
-                        "SELECT DISTINCT m.team FROM MemberEntity m " +
-                                "LEFT JOIN FETCH m.team.memberEntities " +
-                                "WHERE LOWER(m.userEmail) = LOWER(:userId)",
-                        TeamEntity.class
-                ).setParameter("userId", userId)
-                .getResultList();
-
-        return teams.stream().map(TeamResource::toSummary).toList();
-    }
-
-    @POST
-    @Transactional
-    public Response createTeam(CreateTeamRequestSimple request) {
-        if (request == null || request.name == null || request.name.trim().isEmpty()) {
-            throw new BadRequestException("Team name is required");
-        }
-        if (request.supervisorId == null || request.supervisorId.isBlank()) {
-            throw new BadRequestException("supervisorId is required");
-        }
-        if (request.memberIds == null) {
-            request.memberIds = List.of();
-        }
-
-        TeamEntity team = new TeamEntity();
-        team.setId(genId());
-        team.setName(request.name.trim());
-        team.setDescription(request.description); // optional
-        team.setCreateBy(request.createBy);       // optional
-        team.setJoinCode(String.format("%06d", new Random().nextInt(1_000_000)));
-
-        // เตรียมสมาชิก: ใส่ supervisor เป็นสมาชิกด้วย role = "supervisor"
-        List<MemberEntity> members = new ArrayList<>();
-
-        MemberEntity sup = new MemberEntity();
-        sup.setId(genId());
-        sup.setTeam(team);
-        sup.setMemberId(request.supervisorId); // ใช้เป็น userId/email ให้สอดคล้องกับ frontend
-        sup.setRole("supervisor");
-        sup.setNameMembers(request.supervisorId); // ถ้ายังไม่มีชื่อจริง ใช้รหัสแทนไปก่อน
-        members.add(sup);
-
-        // ใส่สมาชิกทีมทั่วไป
-        for (String mid : request.memberIds.stream().filter(Objects::nonNull).collect(Collectors.toSet())) {
-            MemberEntity m = new MemberEntity();
-            m.setId(genId());
-            m.setTeam(team);
-            m.setMemberId(mid);
-            m.setRole("member");
-            m.setNameMembers(mid); // ถ้ามีชื่อจริง ค่อยอัปเดตภายหลัง
-            members.add(m);
-        }
-
-        team.setMemberEntities(members);
-        em.persist(team);
-
-        return Response.created(URI.create("/api/teams/" + team.getId()))
-                .entity(toSummary(team))
-                .build();
-    }
-
-    @PUT
-    @Path("/{id}")
-    @Transactional
-    public Response updateTeam(@PathParam("id") String id, TeamEntity updatedTeam) {
-        TeamEntity team = em.find(TeamEntity.class, id);
-        if (team == null) throw new NotFoundException("Team not found");
-
-        if (updatedTeam.getName() != null) {
-            team.setName(updatedTeam.getName());
-        }
-        if (updatedTeam.getDescription() != null) {
-            team.setDescription(updatedTeam.getDescription());
-        }
-
-        // ส่งกลับเป็น TeamSummary เพื่อให้ frontend ใช้รูปแบบเดียวกัน
-        team.getMemberEntities().size();
-        return Response.ok(toSummary(team)).build();
-    }
-
-    @DELETE
-    @Path("/{id}")
-    @Transactional
-    public Response deleteTeam(@PathParam("id") String id) {
-        TeamEntity team = em.find(TeamEntity.class, id);
-        if (team == null) throw new NotFoundException("Team not found");
-        em.remove(team);
-        return Response.noContent().build();
-    }
-
-    // -------- keep your existing join by code but align field names --------
-    @POST
-    @Path("/joining")
-    @Transactional
-    public Response joinTeamByCode(CreateMemberRequest request) {
-        if (request == null || request.joinCode == null || request.joinCode.trim().length() != 6) {
-            throw new BadRequestException("Join code is invalid");
-        }
-
-        List<TeamEntity> teams = em.createQuery(
-                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities WHERE t.joinCode = :joinCode",
-                TeamEntity.class
-        ).setParameter("joinCode", request.joinCode).getResultList();
-
-        if (teams.isEmpty()) {
-            throw new BadRequestException("Join code is invalid");
-        }
-
-        TeamEntity team = teams.get(0);
-
-        boolean alreadyExists = team.getMemberEntities()
-                .stream()
-                .anyMatch(member -> member.getMemberId() != null &&
-                        member.getMemberId().equalsIgnoreCase(request.userId));
-
-        if (alreadyExists) {
-            throw new WebApplicationException("User already in the team", 409);
-        }
-
-        MemberEntity member = new MemberEntity();
-        member.setId(genId());
-        member.setTeam(team);
-        member.setMemberId(request.userId);
-        member.setRole(Optional.ofNullable(request.getRole()).orElse("member"));
-        member.setNameMembers(Optional.ofNullable(request.userName).orElse(request.userId));
-        team.getMemberEntities().add(member);
-
-        em.persist(member);
-        return Response.ok().entity(toSummary(team)).build();
-    }
+// ----------------------
+// Small helpers
+// ----------------------
+function Chip({ children, onRemove }:{children: React.ReactNode; onRemove?:()=>void}){
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs bg-white">
+      {children}
+      {onRemove && (
+        <button className="opacity-60 hover:opacity-100" onClick={onRemove}>
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </span>
+  );
 }
 
-package Testing;
+// ----------------------
+// TeamMembersManager — ดูสมาชิก + ตั้งบทบาท (API)
+// ----------------------
+function TeamMembersManager({
+  teamId,
+  canManage,
+}: {
+  teamId: string;
+  canManage: boolean;
+}) {
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [selected, setSelected] = useState<TeamMember | null>(null);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
-import dto.Team.CreateMemberRequest;
-import dto.Team.TeamMemberDTO;
-import jakarta.annotation.security.RolesAllowed;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.Context;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.SecurityContext;
-import model.MemberEntity;
-import model.TeamEntity;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.List;
-import java.util.UUID;
-import java.util.stream.Collectors;
-
-@Path("/teams/{teamId}/members")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
-public class TeamMemberResource {
-    public static final Logger log = LoggerFactory.getLogger(TeamMemberResource.class);
-
-    @Inject
-    EntityManager em;
-
-
-    @GET
-    @RolesAllowed({"admin","supervisor","administrator"})
-    public List<TeamMemberDTO> listMembers(@PathParam("teamId") String teamId , @QueryParam("order") @DefaultValue("default") String order) {
-        log.info("Start: Listing members for team ID: {} with order: {}", teamId, order);
-        TeamEntity team = em.find(TeamEntity.class, teamId);
-        if (team == null) {
-            log.warn("Team with ID {} not found", teamId);
-            throw new WebApplicationException("Team not found", 404);
-        }
-        String jpql = "SELECT m FROM MemberEntity m WHERE m.team.id = :tid";
-        if ("roleThenJoined".equalsIgnoreCase(order)) {
-            // supervisor -> member -> others, then joinedAt ASC
-            jpql += " ORDER BY " +
-                    "CASE WHEN LOWER(m.role)='supervisor' THEN 1 " +
-                    "     WHEN LOWER(m.role)='member' THEN 2 " +
-                    "     ELSE 3 END, m.joinedAt ASC";
-        } else {
-            jpql += " ORDER BY m.joinedAt ASC";
-        }
-        List<MemberEntity> members = em.createQuery(jpql, MemberEntity.class)
-                .setParameter("tid", teamId).getResultList();
-
-        return members.stream()
-                .map(m -> new TeamMemberDTO(m.getMemberId(), m.getNameMembers(), m.getRole()))
-                .collect(Collectors.toList());
+  const fetchMembers = async () => {
+    setLoading(true);
+    try {
+      const { data } = await axiosClient.get<TeamMember[]>(`/api/teams/${teamId}/members`);
+      setMembers(data || []);
+      setSelected((prev) => prev ? data.find(d => d.userId === prev.userId) ?? data[0] ?? null : data[0] ?? null);
+      setErr(null);
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.response?.data?.message || "โหลดสมาชิกทีมไม่สำเร็จ");
+    } finally {
+      setLoading(false);
     }
+  };
 
-    @POST
-    @Transactional
-    @RolesAllowed({"admin","supervisor","administrator"})
+  useEffect(() => { fetchMembers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [teamId]);
 
-    public Response addMember(@PathParam("teamId") String teamId, CreateMemberRequest request, @Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        log.info("User {} is adding a member to team {}", currentUser, teamId);
-        TeamEntity team = em.find(TeamEntity.class, teamId);
-        if (team == null) {
-            log.warn("Team with ID : {} not found", teamId);
-            throw new WebApplicationException("Team not found", 404);
-        }
-        MemberEntity member = new MemberEntity();
-        member.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 21));
-        member.setTeam(team);
-        member.setMemberId(request.userId);
-        member.setRole(request.role != null ? request.role : "member");
-        em.persist(member);
-        log.info("Member {} added to team {} by user {}", member.getMemberId(), teamId, currentUser);
-        return Response.ok(member).build();
+  const setTrainer = async (userId: string, nextRole: "trainer" | "member") => {
+    if (!canManage) return;
+    try {
+      await axiosClient.put(`/api/teams/${teamId}/members/${encodeURIComponent(userId)}/role`, { role: nextRole });
+      await fetchMembers();
+    } catch (e: any) {
+      alert(e?.response?.data?.message || "อัปเดตบทบาทในทีมไม่สำเร็จ");
     }
+  };
 
-    @DELETE
-    @Path("/{memberId}")
-    @Transactional
-    public void deleteMember(@PathParam("teamId") String teamId, @PathParam("memberId") String memberId,@Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        log.info("User {} is deleting member {} from team {}", currentUser, memberId, teamId);
-        MemberEntity member = em.find(MemberEntity.class, memberId);
-        if (member != null && member.getTeam().getId().equals(teamId)) {
-            log.info("Member {} found in team {}, proceeding to delete", memberId, teamId);
-            em.remove(member);
-        } else {
-            log.error("Member {} not found in team {}", memberId, teamId);
-            throw new WebApplicationException("Member not found", 404);
-        }
+  const list = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter(m => (m.name||"").toLowerCase().includes(q) || m.userId.toLowerCase().includes(q));
+  }, [members, search]);
+
+  if (loading) return <div className="text-sm opacity-70">กำลังโหลดสมาชิกทีม...</div>;
+  if (err) return <div className="text-sm text-red-600">{err}</div>;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* รายชื่อสมาชิก */}
+      <div className="md:col-span-1 rounded-2xl border bg-white/60 overflow-hidden">
+        <div className="px-4 py-3 border-b font-semibold flex items-center justify-between">
+          <span>สมาชิกทีม</span>
+          <span className="text-xs opacity-70">{members.length} คน</span>
+        </div>
+        <div className="p-3 border-b bg-white">
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-60" />
+            <input
+              className="w-full rounded-xl border pl-9 pr-3 py-2 bg-white"
+              placeholder="ค้นหาชื่อหรืออีเมล"
+              value={search}
+              onChange={(e)=>setSearch(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="max-h-96 overflow-auto divide-y">
+          {list.map(m => (
+            <button
+              key={`${teamId}-${m.userId}`}
+              onClick={()=>setSelected(m)}
+              className={`w-full text-left p-3 hover:bg-gray-50 flex items-center justify-between ${selected?.userId===m.userId?'bg-gray-50':''}`}
+            >
+              <div className="min-w-0">
+                <div className="font-medium truncate">{m.name || m.userId}</div>
+                <div className="text-xs opacity-70">บทบาทในทีม: {m.role}</div>
+              </div>
+              <ChevronRight className="w-4 h-4 opacity-60"/>
+            </button>
+          ))}
+        </div>
+
+        {/* NOTE: ตามสเปคใหม่ ให้ Admin เป็นคนเพิ่มสมาชิก จึงซ่อนฟอร์มเพิ่มสมาชิกในหน้าซุป */}
+      </div>
+
+      {/* รายละเอียด/ตั้งบทบาท */}
+      <div className="md:col-span-2 rounded-2xl border bg-white/60 p-4">
+        {selected ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-lg font-semibold">{selected.name || selected.userId}</div>
+                <div className="text-sm opacity-70">บทบาทในทีมปัจจุบัน: {selected.role}</div>
+              </div>
+              <div className="flex gap-2">
+                <Chip>
+                  <Users className="w-3.5 h-3.5"/> {selected.userId}
+                </Chip>
+                {selected.role==='trainer' && (
+                  <Chip><Shield className="w-3.5 h-3.5"/> trainer</Chip>
+                )}
+              </div>
+            </div>
+
+            {/* Promote/demote trainer */}
+            {canManage && selected.role !== 'supervisor' && (
+              <div className="flex gap-2">
+                {selected.role !== 'trainer' ? (
+                  <button
+                    className="rounded-xl px-4 py-2 border bg-white hover:bg-gray-50"
+                    onClick={()=>setTrainer(selected.userId,'trainer')}
+                  >
+                    ตั้งเป็น Trainer (สร้างคอร์สได้)
+                  </button>
+                ) : (
+                  <button
+                    className="rounded-xl px-4 py-2 border bg-white hover:bg-gray-50"
+                    onClick={()=>setTrainer(selected.userId,'member')}
+                  >
+                    ถอนบทบาท Trainer
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="text-sm opacity-70">*บทบาท "trainer" ในทีมนี้ จะทำให้ผู้ใช้งานสามารถสร้าง/จัดการคอร์สของทีมได้</div>
+          </div>
+        ) : (
+          <div className="text-sm opacity-70">เลือกสมาชิกทางซ้ายเพื่อดูรายละเอียด</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ----------------------
+// Main — เลือกทีม + เชื่อม API จริง
+// ----------------------
+export default function SupervisorDashboard(){
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  // ดึง userId ปัจจุบัน (email) จาก token หรือ /api/profile/me
+  const parseJwt = (token: string | null): any | null => {
+    if (!token) return null;
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+      return payload;
+    } catch { return null; }
+  };
+  const resolveCurrentUserId = async (): Promise<string | null> => {
+    const stored = localStorage.getItem("userId") || sessionStorage.getItem("userId");
+    if (stored) return stored;
+    const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+    const payload = parseJwt(token);
+    const jwtId = payload?.sub || payload?.userId || payload?.email || null;
+    if (jwtId) return String(jwtId);
+    try {
+      const { data } = await axiosClient.get<any>("/api/profile/me");
+      return data?.id || data?.userId || data?.email || null;
+    } catch {
+      return null;
     }
+  };
 
-    @PUT
-    @Transactional
-    @Path("/{memberId}/role")
-    public Response setRole(@PathParam("teamId") String teamId, @PathParam("memberId") String memberId,
-                            java.util.Map<String,String> body,@Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        String role = body != null ? body.getOrDefault("role", "").toLowerCase() : "";
-        if (!role.equals("user") && !role.equals("member") && !role.equals("admin") && !role.equals("supervisor")) {
-            log.warn("Invalid role value: {} -> role must be member or trainer " , role);
-            throw new BadRequestException("role must be 'member' or 'trainer'");
-        }
-        MemberEntity m = em.createQuery(
-                        "SELECT m FROM MemberEntity m WHERE m.team.id = :tid AND LOWER(m.memberId) = LOWER(:uid)",
-                        MemberEntity.class
-                ).setParameter("tid", teamId).setParameter("uid", memberId).getResultStream().findFirst()
-                .orElseThrow(() -> new NotFoundException("Member not found"));
-        if ("supervisor".equalsIgnoreCase(m.getRole()) && !"supervisor".equalsIgnoreCase(role)) {
-            long supervisorCount = em.createQuery(
-                            "SELECT COUNT(m) FROM MemberEntity m WHERE m.team.id = :tid AND LOWER(m.role) = 'supervisor'",
-                            Long.class)
-                    .setParameter("tid", teamId)
-                    .getSingleResult();
-            if (supervisorCount <= 1) {
-                log.warn("Cannot change role of the last supervisor in team {}", teamId);
-                throw new BadRequestException("Cannot change role of the last supervisor in the team");
-            }
-        }
-        m.setRole(role);
-        em.merge(m);
-        log.info("User {} changed role of member {} in team {} to {}", currentUser, memberId, teamId, role);
-        return Response.ok(new TeamMemberDTO(m.getMemberId(), m.getNameMembers(), m.getRole())).build();
+  const fetchMyTeams = async (uid: string) => {
+    try {
+      const { data } = await axiosClient.get<Team[]>("/api/teams/my-teams", { params: { userId: uid } });
+      setTeams(data || []);
+      if (data?.length) setSelectedTeamId((prev) => prev ?? data[0].id);
+      setErr(null);
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.response?.data?.message || "โหลดทีมของฉันไม่สำเร็จ");
     }
+  };
 
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const uid = await resolveCurrentUserId();
+      if (!uid) {
+        setErr("ไม่พบ userId ของผู้ใช้ปัจจุบัน — ตรวจสอบการเข้าสู่ระบบ/โทเคน");
+        setLoading(false);
+        return;
+      }
+      await fetchMyTeams(uid);
+      setLoading(false);
+    })();
+  }, []);
 
+  const selectedTeam = useMemo(
+    () => (selectedTeamId ? teams.find(t => t.id === selectedTeamId) || null : null),
+    [teams, selectedTeamId]
+  );
+
+  if (loading) {
+    return (
+      <div className="flex h-screen bg-gray-50">
+        <SupervisorSidebarWidget />
+        <div className="flex-1 p-8">กำลังโหลด...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen bg-gray-50">
+      <SupervisorSidebarWidget />
+
+      <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl md:text-3xl font-bold">Supervisor Dashboard</h1>
+          {selectedTeam && (
+            <div className="text-xs opacity-70">
+              ทีมที่เลือก: <span className="font-medium">{selectedTeam.name}</span>
+            </div>
+          )}
+        </div>
+
+        {err && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700 flex items-center justify-between">
+            <span>{err}</span>
+            {!selectedTeamId && (
+              <button
+                className="ml-3 rounded-lg border px-3 py-1"
+                onClick={async () => {
+                  setLoading(true);
+                  const uid = await resolveCurrentUserId();
+                  if (uid) {
+                    await fetchMyTeams(uid);
+                    setErr(null);
+                  }
+                  setLoading(false);
+                }}
+              >
+                ลองใหม่
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* เลือกทีม */}
+        <div className="rounded-2xl border bg-white p-4">
+          <div className="mb-3 font-semibold">ทีมของฉัน</div>
+          {teams.length ? (
+            <div className="flex gap-2 flex-wrap">
+              {teams.map(t => (
+                <button
+                  key={t.id}
+                  onClick={()=>setSelectedTeamId(t.id)}
+                  className={`rounded-xl px-3 py-2 border ${selectedTeamId===t.id? 'bg-blue-600 text-white':'bg-white'}`}
+                >
+                  {t.name}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm opacity-70">ยังไม่มีทีมที่คุณดูแล</div>
+          )}
+        </div>
+
+        {/* รายละเอียดทีม + จัดการ trainer */}
+        {selectedTeam && (
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="mb-3">
+              <div className="text-lg font-semibold">ทีม: {selectedTeam.name}</div>
+              <div className="text-sm opacity-70">ตั้ง/ถอน Trainer ให้สมาชิกในทีมนี้</div>
+            </div>
+            <TeamMembersManager
+              teamId={selectedTeam.id}
+              canManage={true}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
