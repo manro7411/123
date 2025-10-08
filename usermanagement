@@ -1,231 +1,368 @@
-package Testing;
-import dto.Team.*;
-import jakarta.annotation.security.RolesAllowed;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.Context;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.SecurityContext;
-import model.MemberEntity;
-import model.TeamEntity;
-import org.slf4j.*;
+import { useEffect, useMemo, useState } from "react";
+import axios, { AxiosError } from "axios";
 
-import java.net.URI;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
-import java.util.stream.Collectors;
+// ถ้าคุณมีไฟล์/คอมโพเนนต์ของตัวเองอยู่แล้ว สามารถลบคอมโพเนนต์ที่เป็นตัวอย่างด้านล่างได้
+// และคงการใช้งาน <UserListWidget/> เดิมของคุณไว้ได้เหมือนเดิม
+import UserListWidget from "../Supervisor/Widgets/UserListWidget";
+import AdministratorBar from "./Widgets/AdministratorBar"; // คงชื่อไฟล์ให้สะกดตรงกัน
 
-@Path("/api/admin/teams")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
-public class TeamAdminResource {
+// ----------------------
+// Axios instance + BaseURL/Proxy
+// ----------------------
+// แนะนำตั้งค่า VITE_API_BASE_URL เป็น URL ของแบ็กเอนด์ เช่น http://localhost:3000
+// และ/หรือตั้ง proxy ใน vite.config.ts ดูคำอธิบายท้ายไฟล์
+const axiosClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "/",
+});
 
-    public static final String ROLE_USER = "user",
-            ROLE_ADMIN = "admin",
-            ROLE_EMPLOYEE = "employee",
-            ROLE_SUPERVISOR = "supervisor",
-            ROLE_ADMINISTRATOR = "administrator";
+axiosClient.interceptors.request.use((config) => {
+  const token =
+    localStorage.getItem("token") || sessionStorage.getItem("token") || "";
+  if (token) {
+    config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+  }
+  return config;
+});
 
-    private String setRole(){
-        return ROLE_ADMINISTRATOR+","+ROLE_ADMIN+","+ROLE_SUPERVISOR+","+ROLE_EMPLOYEE;
+// ----------------------
+// Types
+// ----------------------
+export type User = {
+  id: string;
+  name: string;
+  email: string;
+  role: string; // 'ADMIN' | 'SUPERVISOR' | 'TRAINER' | 'LEARNER' ...
+};
+
+export type Team = {
+  id: string;
+  name: string;
+  supervisorId: string;
+  memberIds: string[]; // รวมลูกทีมทั้งหมด (ไม่ต้องรวม supervisor)
+};
+
+// ----------------------
+// Team Builder (แบบฟอร์มสร้างทีม)
+// ----------------------
+function TeamBuilderWidget({
+  users,
+  onCreated,
+}: {
+  users: User[];
+  onCreated: (team: Team) => void;
+}) {
+  const [teamName, setTeamName] = useState("");
+  const [supervisorId, setSupervisorId] = useState("");
+  const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const supervisors = useMemo(
+    () => users.filter((u) => u.role?.toUpperCase() === "SUPERVISOR"),
+    [users]
+  );
+
+  const selectableMembers = useMemo(() => {
+    // สมาชิกที่เลือกเข้าทีมได้ อาจ exclude ADMIN ก็ได้ ตาม policy ของคุณ
+    return users.filter((u) => u.role?.toUpperCase() !== "ADMIN");
+  }, [users]);
+
+  const toggleMember = (id: string) => {
+    setMemberIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const canSubmit = teamName.trim() && supervisorId && memberIds.length > 0;
+
+  const createTeam = async () => {
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      // NOTE: ปรับ endpoint ให้ตรงกับ backend ของคุณ
+      // ตัวอย่าง endpoint: POST /api/teams  body: { name, supervisorId, memberIds }
+      const memberNames = users
+      .filter((u) => memberIds.includes(u.id))
+      .map((u) => u.name);
+
+      const { data } = await axiosClient.post<Team>(
+        "/api/teams",
+        {
+          name: teamName.trim(),
+          supervisorId,
+          memberIds,    // <-- user IDs
+          memberNames,  // <-- user names
+        }
+      );
+      console.log("Team created:", data);
+
+      onCreated(data);
+      setTeamName("");
+      setSupervisorId("");
+      setMemberIds([]);
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.response?.data?.message || "สร้างทีมไม่สำเร็จ");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border p-4 md:p-6 space-y-4 bg-white/60">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold">สร้างทีมใหม่</h2>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="space-y-2">
+          <label className="text-sm font-medium">ชื่อทีม</label>
+          <input
+            className="w-full rounded-xl border px-3 py-2"
+            placeholder="เช่น Team A"
+            value={teamName}
+            onChange={(e) => setTeamName(e.target.value)}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium">หัวหน้าทีม (Supervisor)</label>
+          <select
+            className="w-full rounded-xl border px-3 py-2"
+            value={supervisorId}
+            onChange={(e) => setSupervisorId(e.target.value)}
+          >
+            <option value="">— เลือก Supervisor —</option>
+            {supervisors.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} ({s.email})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-2 md:col-span-1">
+          <label className="text-sm font-medium">จำนวนสมาชิกที่เลือก</label>
+          <div className="rounded-xl border px-3 py-2 text-sm">
+            {memberIds.length} คน
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium">เลือกสมาชิกเข้าทีม</label>
+        <div className="max-h-64 overflow-auto rounded-xl border divide-y">
+          {selectableMembers.map((u) => (
+            <label
+              key={u.id}
+              className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={memberIds.includes(u.id)}
+                onChange={() => toggleMember(u.id)}
+              />
+              <div className="flex-1">
+                <div className="font-medium">{u.name}</div>
+                <div className="text-xs opacity-70">{u.email} • {u.role}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {error && (
+        <div className="text-sm text-red-600">{error}</div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          disabled={!canSubmit || submitting}
+          onClick={createTeam}
+          className="rounded-xl px-4 py-2 border bg-black text-white disabled:opacity-50"
+        >
+          {submitting ? "กำลังบันทึก..." : "สร้างทีม"}
+        </button>
+        <button
+          onClick={() => {
+            setTeamName("");
+            setSupervisorId("");
+            setMemberIds([]);
+            setError(null);
+          }}
+          className="rounded-xl px-4 py-2 border"
+        >
+          ล้างค่า
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------
+// รายการทีม (ตัวอย่างวิธีแสดงโดย group ตาม Supervisor)
+// ----------------------
+function TeamsBySupervisor({ users, teams }: { users: User[]; teams: Team[] }) {
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+
+  const grouped = useMemo(() => {
+    const bySup: Record<string, Team[]> = {};
+    for (const t of teams || []) {
+      const key = t?.supervisorId || "__UNKNOWN__";
+      if (!bySup[key]) bySup[key] = [];
+      bySup[key].push(t);
+    }
+    return bySup;
+  }, [teams]);
+
+  const supIds = Object.keys(grouped);
+  if (!supIds.length) return null;
+
+  return (
+    <div className="space-y-6">
+      {supIds.map((sid) => {
+        const sup = userById.get(sid);
+        const teamsForSup = grouped[sid] ?? [];
+        return (
+          <div key={sid} className="rounded-2xl border p-4 md:p-6 bg-white/60">
+            <div className="mb-3">
+              <h3 className="text-lg font-semibold">
+                Supervisor: {sup?.name || sid} {sup?.email ? `(${sup.email})` : ""}
+              </h3>
+              <p className="text-sm opacity-70">ทีมทั้งหมดของหัวหน้าคนนี้</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {teamsForSup.map((t) => (
+                <div key={t.id} className="rounded-xl border p-3">
+                  <div className="font-medium">{t.name}</div>
+                  <div className="text-xs opacity-70">
+                    สมาชิก {t?.memberIds?.length ?? 0} คน
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ----------------------
+// หน้าหลัก: Administrator User Management
+// ----------------------
+export default function AdministratorUserManagement() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // ดึงผู้ใช้ทั้งหมด: ลองหลาย endpoint เพื่อกัน 404 ขึ้น dev
+  const fetchUsers = async () => {
+    const candidates = [
+      "/api/users", // ที่แนะนำให้ backend รองรับ
+      "/api/profile/users", // สำรอง
+      "/api/profile/users/for-supervisor", // ของเดิมที่คุณมีอยู่
+    ];
+
+    let lastError: unknown = null;
+    for (const path of candidates) {
+      try {
+        const { data } = await axiosClient.get<User[]>(path);
+        if (Array.isArray(data)) {
+          setUsers(data);
+          setError(null);
+          return;
+        }
+      } catch (e) {
+        lastError = e;
+        // ลองตัวถัดไป
+      }
     }
 
-    @Inject
-    EntityManager em;
-    private static String genId() {
-        return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+    console.error(lastError);
+    const msg = (lastError as AxiosError)?.response?.status === 404
+      ? "ไม่พบ endpoint สำหรับดึงผู้ใช้ (404) — ตรวจสอบเส้นทาง API หรือ proxy/baseURL"
+      : "ดึงรายชื่อผู้ใช้ไม่สำเร็จ";
+    setError(msg);
+  };
+
+  const fetchTeams = async () => {
+    try {
+      const { data } = await axiosClient.get<Team[]>("/api/teams");
+      if (Array.isArray(data)) setTeams(data);
+    } catch (err) {
+      // ไม่มีทีมครั้งแรกก็ไม่เป็นไร
+      console.warn("ทีมอาจยังไม่มี");
     }
+  };
 
-    private static final Logger log = LoggerFactory.getLogger(TeamAdminResource.class);
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      await Promise.all([fetchUsers(), fetchTeams()]);
+      setLoading(false);
+    })();
+  }, []);
 
-    private static TeamSummary toSummary(TeamEntity team) {
-        String supervisorId = null;
-        List<String> memberIds = new ArrayList<>();
-        if (team.getMemberEntities() != null) {
-            for (MemberEntity m : team.getMemberEntities()) {
-                if (m == null) continue;
-                if ("supervisor".equalsIgnoreCase(m.getRole())) {supervisorId = m.getMemberId(); // เก็บเป็น userId/email ตามที่คุณใช้
-                } else {memberIds.add(m.getMemberId());}
-            }
-        }
-        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
+  const assignRole = async (userId: string, role: string) => {
+    const confirmAssign = window.confirm(
+      `ยืนยันอัปเดตรายบทบาทเป็น \"${role}\" ?`
+    );
+    if (!confirmAssign) return;
+
+    try {
+      await axiosClient.put(`/api/profile/users/${userId}/role`, { role });
+      await fetchUsers();
+      alert(`อัปเดตบทบาทเป็น ${role} แล้ว`);
+    } catch (err: any) {
+      console.error(err);
+      alert(err?.response?.data?.message || "อัปเดตบทบาทไม่สำเร็จ");
     }
-    // ---------- CREATE TEAM (Admin สร้างทีม + ใส่ Supervisor + สมาชิกเพิ่มเติม)
-    @POST
-    @Transactional
-    @RolesAllowed(ROLE_ADMINISTRATOR)
-    public Response createTeam(CreateTeamRequestAdmin req ,@Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        log.info("Admin {} is creating a new team", currentUser);
-        if (req == null || req.name == null || req.name.isBlank()){
-            log.info("TeamAdminResource.java -> CreateTeam Endpoint -> Team name is required {} with admin {}", req,currentUser);
-            throw new BadRequestException("Team name is required");
-        }
-        if (req.supervisorId == null || req.supervisorId.isBlank()){
-            log.info("TeamAdminResource.java -> CreateTeam Endpoint -> Supervisor ID is missing in the request");
-            throw new BadRequestException("supervisorId is required");
-        }
+  };
 
-        TeamEntity existingTeam = em.createQuery(
-                "SELECT t FROM TeamEntity t WHERE LOWER(t.name) = :name", TeamEntity.class)
-                .setParameter("name", req.name.trim().toLowerCase())
-                .getResultStream().findFirst().orElse(null);
-        if (existingTeam != null) {
-            log.info("TeamAdminResource.java -> CreateTeam Endpoint -> Team name already exists: {}", req.name);
-            return Response.status(Response.Status.CONFLICT)
-                    .entity("Team name already exists")
-                    .build();
-        }
+  const handleTeamCreated = (team: Team) => {
+    setTeams((prev) => [team, ...prev]);
+  };
 
-        TeamEntity team = new TeamEntity();
-        team.setId(genId());
-        team.setName(req.name.trim());
-        team.setDescription(req.description);
-        team.setCreateBy(req.createBy);
-        List<MemberEntity> members = new ArrayList<>();
+  if (loading) {
+    return (
+      <div className="flex h-screen">
+        <AdministratorBar />
+        <div className="flex-1 p-8">กำลังโหลด...</div>
+      </div>
+    );
+  }
 
-        MemberEntity sup = new MemberEntity();
-        sup.setId(genId());
-        sup.setTeam(team);
-        sup.setMemberId(req.supervisorId);
-        sup.setNameMembers(req.supervisorName != null ? req.supervisorName : req.supervisorId);
-        sup.setRole("supervisor");
-        members.add(sup);
-        log.debug("TeamAdminResource.java -> CreateTeam Endpoint -> Added supervisor: {} with role: {}", req.supervisorId, sup.getRole());
-        if (req.members != null) {
-            log.info("Adding {} members to the team", req.members.size());
-            for (CreateMemberRequest mreq : req.members) {
-                if (mreq == null || mreq.userId == null || mreq.userId.isBlank()){
-                    log.info("TeamAdminResource.java -> CreateTeam Endpoint -> Skipping invalid member entry: {}", mreq);
-                    continue;
-                }
-                if (req.supervisorId.equalsIgnoreCase(mreq.userId)){
-                    log.info("TeamAdminResource.java -> CreateTeam Endpoint -> Skipping adding supervisor {} as a regular member", mreq.userId);
-                    continue;
-                }
-                MemberEntity m = new MemberEntity();
-                m.setId(genId());
-                m.setTeam(team);
-                m.setMemberId(mreq.userId);
-                m.setNameMembers(mreq.userName != null ? mreq.userName : mreq.userId);
-                m.setRole(mreq.role != null ? mreq.role : "member");
-                members.add(m);
-                log.debug("TeamAdminResource.java -> CreateTeam Endpoint -> Added member: {} with role: {}", mreq.userId, m.getRole());
-            }
-        }
-        team.setMemberEntities(members);
-        em.persist(team);
-        log.info("TeamAdminResource.java -> CreateTeam Endpoint -> Team created with ID: {}", team.getId());
-        return Response.created(URI.create("/api/teams/" + team.getId()))
-                .entity(toSummary(team))
-                .build();
-    }// ---------- ADD MEMBERS (Admin เพิ่มทีละชุด)
-    @POST
-    @Path("/{teamId}/members")
-    @RolesAllowed(ROLE_ADMINISTRATOR)
-    @Transactional
-    public Response addMembers(
-            @PathParam("teamId") String teamId,
-            AddMemberRequest req
-    ) {
-        TeamEntity team = em.find(TeamEntity.class, teamId);
-        if (team == null) throw new NotFoundException("Team not found");
-        team.getMemberEntities().size();
+  return (
+    <div className="flex h-screen">
+      <AdministratorBar />
 
-        if (req == null || req.members == null || req.members.isEmpty())
-            throw new BadRequestException("members are required");
+      <div className="flex-1 p-8 overflow-y-auto space-y-8">
+        <div className="flex justify-between items-center">
+          <h1 className="text-3xl font-bold">Administrator User Management</h1>
+        </div>
 
-        // กันซ้ำจากฐานข้อมูล
-        Set<String> existing = team.getMemberEntities().stream()
-                .map(m -> m.getMemberId().toLowerCase()).collect(Collectors.toSet());
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
+            {error}
+          </div>
+        )}
 
-        List<MemberEntity> newOnes = new ArrayList<>();
-        for (CreateMemberRequest mreq : req.members) {
-            if (mreq == null || mreq.userId == null || mreq.userId.isBlank()) continue;
-            String uid = mreq.userId.toLowerCase();
-            if (existing.contains(uid)) continue;
+        {/* จัดการบทบาทผู้ใช้เดิม */}
+        <div className="space-y-3">
+          <p className="opacity-80">จัดการบทบาทผู้ใช้ และระบุ Supervisor/Trainer</p>
+          <UserListWidget users={users} assignRole={assignRole} error={error} />
+        </div>
 
-            MemberEntity m = new MemberEntity();
-            m.setId(genId());
-            m.setTeam(team);
-            m.setMemberId(mreq.userId);
-            m.setNameMembers(mreq.userName != null ? mreq.userName : mreq.userId);
-            // Admin สามารถกำหนด role เริ่มต้นได้ (ยกเว้น supervisor ต้องผ่าน endpoint supervisor)
-            String role = (mreq.role != null && !"supervisor".equalsIgnoreCase(mreq.role)) ? mreq.role : "member";
-            m.setRole(role);
-            newOnes.add(m);
-            existing.add(uid);
-        }
+        {/* แบบฟอร์มสร้างทีมใหม่ (ต้องระบุ supervisor เป็นหัวหน้า) */}
+        <TeamBuilderWidget users={users} onCreated={handleTeamCreated} />
 
-        for (MemberEntity m : newOnes) em.persist(m);
-        List<TeamMemberDTO> dto = em.createQuery(
-                        "SELECT m FROM MemberEntity m WHERE m.team.id = :tid ORDER BY m.joinedAt ASC",
-                        MemberEntity.class
-                ).setParameter("tid", teamId).getResultList()
-                .stream().map(m -> new TeamMemberDTO(m.getMemberId(), m.getNameMembers(), m.getRole()))
-                .toList();
-        return Response.ok(dto).build();
-    }
-    // ---------- SET/CHANGE SUPERVISOR (Admin เท่านั้น)
-    @PUT
-    @Path("/{teamId}/supervisor")
-    @RolesAllowed(ROLE_ADMINISTRATOR)
-    public Response setSupervisor(@PathParam("teamId") String teamId, SetSupervisorRequest req, @Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        log.info("Admin {} is setting/changing supervisor for team {}", currentUser, teamId);
-        if (req == null || req.supervisorId == null || req.supervisorId.isBlank()){
-            log.info("TeamAdminResource.java -> SetSupervisor Endpoint -> supervisorId is required in the request");
-            throw new BadRequestException("supervisorId is required");
-        }
-
-        TeamEntity team = em.find(TeamEntity.class, teamId);
-        if (team == null){
-            log.info("TeamAdminResource.java -> SetSupervisor Endpoint -> Team not found with ID: {}", teamId);
-            throw new NotFoundException("Team not found");
-        }
-        team.getMemberEntities().size();
-        MemberEntity currentSup = team.getMemberEntities().stream()
-                .filter(m -> "supervisor".equalsIgnoreCase(m.getRole()))
-                .findFirst().orElse(null);
-        if (currentSup != null && currentSup.getMemberId().equalsIgnoreCase(req.supervisorId)) {
-            log.info("TeamAdminResource.java -> SetSupervisor Endpoint -> The specified user is already the supervisor: {}", req.supervisorId);
-            return Response.ok("This user is already the supervisor").build();
-        }
-        MemberEntity newSup = team.getMemberEntities().stream()
-                .filter(m -> m.getMemberId().equalsIgnoreCase(req.supervisorId))
-                .findFirst().orElse(null);
-        if (newSup != null) {
-            newSup.setRole("supervisor");
-            if (req.supervisorName != null && !req.supervisorName.isBlank()) {
-                log.info("TeamAdminResource.java -> SetSupervisor Endpoint -> Updating supervisor name to: {}", req.supervisorName);
-                newSup.setNameMembers(req.supervisorName);
-            }
-            em.merge(newSup);
-        } else {
-            newSup = new MemberEntity();
-            newSup.setId(genId());
-            newSup.setTeam(team);
-            newSup.setMemberId(req.supervisorId);
-            newSup.setNameMembers(req.supervisorName != null ? req.supervisorName : req.supervisorId);
-            newSup.setRole("supervisor");
-            em.persist(newSup);
-        }
-        if (currentSup != null) {
-            currentSup.setRole("member");
-            em.merge(currentSup);
-        }
-
-        List<TeamMemberDTO> dto = em.createQuery(
-                        "SELECT m FROM MemberEntity m WHERE m.team.id = :tid ORDER BY m.joinedAt ASC",
-                        MemberEntity.class
-                ).setParameter("tid", teamId).getResultList()
-                .stream().map(m -> new TeamMemberDTO(m.getMemberId(), m.getNameMembers(), m.getRole()))
-                .toList();
-        return Response.ok(dto).build();
-    }
+        {/* แสดงทีม grouped by Supervisor */}
+        <TeamsBySupervisor users={users} teams={teams} />
+      </div>
+    </div>
+  );
 }
