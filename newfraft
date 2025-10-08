@@ -1,0 +1,547 @@
+package model;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = "team_members")
+public class MemberEntity {
+
+    @Id
+    @Column(length = 21)
+    private String id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "team_id", nullable = false)
+    private TeamEntity team;
+
+    // คอลัมน์ใน DB สะกด name_menbers
+    @Column(name = "name_menbers")
+    private String nameMembers;
+
+    // คอลัมน์ใน DB: member_ID
+    @Column(name = "member_ID", nullable = false)
+    private String memberId;
+
+    @Column(name = "role", nullable = false)
+    private String role; // member | trainer | supervisor
+
+    @Column(name = "joined_at", nullable = false, updatable = false)
+    private LocalDateTime joinedAt;
+
+    @PrePersist
+    public void prePersist() {
+        if (id == null || id.isEmpty()) {
+            this.id = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+        }
+        if (joinedAt == null) {
+            this.joinedAt = LocalDateTime.now();
+        }
+        if (role == null || role.isBlank()) {
+            this.role = "member";
+        }
+    }
+
+    // getters / setters
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+
+    public TeamEntity getTeam() { return team; }
+    public void setTeam(TeamEntity team) { this.team = team; }
+
+    public String getNameMembers() { return nameMembers; }
+    public void setNameMembers(String nameMembers) { this.nameMembers = nameMembers; }
+
+    public String getMemberId() { return memberId; }
+    public void setMemberId(String memberId) { this.memberId = memberId; }
+
+    public String getRole() { return role; }
+    public void setRole(String role) { this.role = role; }
+
+    public LocalDateTime getJoinedAt() { return joinedAt; }
+    public void setJoinedAt(LocalDateTime joinedAt) { this.joinedAt = joinedAt; }
+
+    // backward compatibility (ถ้ามีโค้ดเก่าเรียกชื่อเดิม)
+    @Deprecated public String getUserEmail() { return memberId; }
+    @Deprecated public void setUserEmail(String userEmail) { this.memberId = userEmail; }
+}
+-----------------------------------
+package model;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
+
+@Entity
+@Table(name = "teams")
+@JsonIgnoreProperties("memberEntities")
+public class TeamEntity {
+
+    @Id
+    @Column(length = 21)
+    private String id;
+
+    private String name;
+
+    @Column(columnDefinition = "TEXT")
+    private String description;
+
+    @Column(name = "create_by" , length = 255)
+    private String createBy;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createTime;
+
+    @Column(name = "join_code", unique = true, length = 6)
+    private String joinCode;
+
+    @OneToMany(mappedBy = "team", fetch = FetchType.EAGER, cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<MemberEntity> memberEntities;
+
+    @PrePersist
+    public void prePersist() {
+        if (id == null || id.isEmpty()) {
+            this.id = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+        }
+        if (createTime == null) {
+            this.createTime = LocalDateTime.now();
+        }
+        if (joinCode == null || joinCode.isEmpty()) {
+            this.joinCode = generateRandomCode(6);
+        }
+    }
+
+    private String generateRandomCode(int length) {
+        int min = (int) Math.pow(10, length - 1);
+        int max = (int) Math.pow(10, length) - 1;
+        return String.valueOf(ThreadLocalRandom.current().nextInt(min, max + 1));
+    }
+
+    // getters / setters
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+
+    public String getCreateBy() { return createBy; }
+    public void setCreateBy(String createBy) { this.createBy = createBy; }
+
+    public LocalDateTime getCreateTime() { return createTime; }
+    public void setCreateTime(LocalDateTime createTime) { this.createTime = createTime; }
+
+    public String getJoinCode() { return joinCode; }
+    public void setJoinCode(String joinCode) { this.joinCode = joinCode; }
+
+    public List<MemberEntity> getMemberEntities() { return memberEntities; }
+    public void setMemberEntities(List<MemberEntity> memberEntities) { this.memberEntities = memberEntities; }
+
+    // Helper: รายชื่อ memberId ทั้งทีม
+    public List<String> getMembers() {
+        return memberEntities == null ? List.of()
+            : memberEntities.stream().map(MemberEntity::getMemberId).collect(Collectors.toList());
+    }
+}
+---------------------------------------
+// dto/TeamMemberDTO.java
+package dto;
+public class TeamMemberDTO {
+    public String userId; // = memberId
+    public String name;   // = nameMembers
+    public String role;   // member | trainer | supervisor
+    public TeamMemberDTO() {}
+    public TeamMemberDTO(String userId, String name, String role) {
+        this.userId = userId; this.name = name; this.role = role;
+    }
+}
+
+// dto/TeamSummary.java
+package dto;
+import java.util.List;
+public class TeamSummary {
+    public String id;
+    public String name;
+    public String supervisorId;   // memberId ของ supervisor
+    public List<String> memberIds;
+    public TeamSummary() {}
+    public TeamSummary(String id, String name, String supervisorId, List<String> memberIds) {
+        this.id = id; this.name = name; this.supervisorId = supervisorId; this.memberIds = memberIds;
+    }
+}
+
+// dto/CreateMemberRequest.java
+package dto;
+public class CreateMemberRequest {
+    public String userId;    // memberId
+    public String userName;  // nameMembers
+    public String role;      // optional
+    public String joinCode;  // ใช้เฉพาะ /teams/joining (ถ้าใช้)
+}
+
+// dto/CreateTeamRequestAdmin.java
+package dto;
+import java.util.List;
+public class CreateTeamRequestAdmin {
+    public String name;
+    public String description;
+    public String createBy;
+    public String supervisorId;     // บังคับ
+    public String supervisorName;   // แนะนำส่งมา
+    public List<CreateMemberRequest> members; // optional: สมาชิกอื่นๆ ตอนสร้างทีม
+}
+
+// dto/AddMembersRequest.java (เพิ่มหลายคนในครั้งเดียว)
+package dto;
+import java.util.List;
+public class AddMembersRequest {
+    public List<CreateMemberRequest> members;
+}
+
+// dto/SetSupervisorRequest.java
+package dto;
+public class SetSupervisorRequest {
+    public String userId;   // memberId ของคนที่จะเป็น supervisor
+    public String userName; // ถ้ายังไม่เคยอยู่ในทีม ให้ใช้ชื่อนี้ตอนสร้าง
+}
+-------------------------------------------
+package Testing;
+
+import dto.TeamSummary;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import model.MemberEntity;
+import model.TeamEntity;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Path("/api/teams")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamResource {
+
+    @Inject EntityManager em;
+
+    private static TeamSummary toSummary(TeamEntity team) {
+        String supervisorId = null;
+        List<String> memberIds = new ArrayList<>();
+        if (team.getMemberEntities() != null) {
+            for (MemberEntity m : team.getMemberEntities()) {
+                if (m == null) continue;
+                if ("supervisor".equalsIgnoreCase(m.getRole())) supervisorId = m.getMemberId();
+                else memberIds.add(m.getMemberId());
+            }
+        }
+        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
+    }
+
+    // รายชื่อทีมแบบสรุป (สำหรับหน้ารวม/แอดมิน)
+    @GET
+    public List<TeamSummary> getTeams() {
+        List<TeamEntity> teams = em.createQuery(
+            "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities", TeamEntity.class
+        ).getResultList();
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
+
+    // ทีมของฉัน (SupervisorDashboard ใช้แบบ query param)
+    @GET @Path("/my-teams")
+    public List<TeamSummary> myTeams(@QueryParam("userId") String userId) {
+        if (userId == null || userId.isBlank()) throw new BadRequestException("userId is required");
+        List<TeamEntity> teams = em.createQuery(
+            "SELECT DISTINCT t FROM TeamEntity t " +
+            "JOIN t.memberEntities m " +
+            "LEFT JOIN FETCH t.memberEntities " +
+            "WHERE LOWER(m.memberId) = LOWER(:uid)",
+            TeamEntity.class
+        ).setParameter("uid", userId).getResultList();
+
+        return teams.stream().map(TeamResource::toSummary).toList();
+    }
+}
+------------------------------------
+package Testing;
+
+import dto.TeamMemberDTO;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.MemberEntity;
+import model.TeamEntity;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Path("/api/teams/{teamId}/members")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamMemberResource {
+
+    @Inject EntityManager em;
+
+    // List members (รองรับ order แบบตัวอย่าง SQL ในคำถาม)
+    @GET
+    public List<TeamMemberDTO> listMembers(
+            @PathParam("teamId") String teamId,
+            @QueryParam("order") @DefaultValue("default") String order
+    ) {
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found");
+
+        String jpql = "SELECT m FROM MemberEntity m WHERE m.team.id = :tid";
+        if ("roleThenJoined".equalsIgnoreCase(order)) {
+            // supervisor -> member -> others, then joinedAt ASC
+            jpql += " ORDER BY " +
+                    "CASE WHEN LOWER(m.role)='supervisor' THEN 1 " +
+                    "     WHEN LOWER(m.role)='member' THEN 2 " +
+                    "     ELSE 3 END, m.joinedAt ASC";
+        } else {
+            jpql += " ORDER BY m.joinedAt ASC";
+        }
+
+        List<MemberEntity> members = em.createQuery(jpql, MemberEntity.class)
+            .setParameter("tid", teamId).getResultList();
+
+        return members.stream()
+            .map(m -> new TeamMemberDTO(m.getMemberId(), m.getNameMembers(), m.getRole()))
+            .collect(Collectors.toList());
+    }
+
+    // ตั้ง/ถอน trainer (ห้ามเปลี่ยน supervisor ผ่าน endpoint นี้)
+    @PUT @Path("/{userId}/role")
+    @Transactional
+    public Response setRole(
+            @PathParam("teamId") String teamId,
+            @PathParam("userId") String userId,
+            java.util.Map<String, String> body
+    ) {
+        String role = body != null ? body.getOrDefault("role", "").toLowerCase() : "";
+        if (!role.equals("member") && !role.equals("trainer")) {
+            throw new BadRequestException("role must be 'member' or 'trainer'");
+        }
+
+        MemberEntity m = em.createQuery(
+            "SELECT m FROM MemberEntity m WHERE m.team.id = :tid AND LOWER(m.memberId) = LOWER(:uid)",
+            MemberEntity.class
+        ).setParameter("tid", teamId).setParameter("uid", userId).getResultStream().findFirst()
+         .orElseThrow(() -> new NotFoundException("Member not found"));
+
+        if ("supervisor".equalsIgnoreCase(m.getRole())) {
+            throw new WebApplicationException("Cannot change supervisor role here", 409);
+        }
+
+        m.setRole(role);
+        em.merge(m);
+
+        return Response.ok(new TeamMemberDTO(m.getMemberId(), m.getNameMembers(), m.getRole())).build();
+    }
+}
+-------------------
+package Testing;
+
+import dto.AddMembersRequest;
+import dto.CreateMemberRequest;
+import dto.CreateTeamRequestAdmin;
+import dto.TeamMemberDTO;
+import dto.TeamSummary;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.MemberEntity;
+import model.TeamEntity;
+
+import java.net.URI;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Path("/api/admin/teams")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamAdminResource {
+
+    @Inject EntityManager em;
+
+    private static String genId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+    }
+
+    private static TeamSummary toSummary(TeamEntity team) {
+        String supervisorId = null;
+        List<String> memberIds = new ArrayList<>();
+        if (team.getMemberEntities() != null) {
+            for (MemberEntity m : team.getMemberEntities()) {
+                if (m == null) continue;
+                if ("supervisor".equalsIgnoreCase(m.getRole())) supervisorId = m.getMemberId();
+                else memberIds.add(m.getMemberId());
+            }
+        }
+        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
+    }
+
+    // ---------- CREATE TEAM (Admin สร้างทีม + ใส่ Supervisor + สมาชิกเพิ่มเติม)
+    @POST
+    @Transactional
+    public Response createTeam(CreateTeamRequestAdmin req) {
+        if (req == null || req.name == null || req.name.isBlank())
+            throw new BadRequestException("Team name is required");
+        if (req.supervisorId == null || req.supervisorId.isBlank())
+            throw new BadRequestException("supervisorId is required");
+
+        TeamEntity team = new TeamEntity();
+        team.setId(genId());
+        team.setName(req.name.trim());
+        team.setDescription(req.description);
+        team.setCreateBy(req.createBy);
+
+        List<MemberEntity> members = new ArrayList<>();
+
+        // 1) Supervisor (บังคับ)
+        MemberEntity sup = new MemberEntity();
+        sup.setId(genId());
+        sup.setTeam(team);
+        sup.setMemberId(req.supervisorId);
+        sup.setNameMembers(req.supervisorName != null ? req.supervisorName : req.supervisorId);
+        sup.setRole("supervisor");
+        members.add(sup);
+
+        // 2) สมาชิกอื่น ๆ (optional)
+        if (req.members != null) {
+            for (CreateMemberRequest mreq : req.members) {
+                if (mreq == null || mreq.userId == null || mreq.userId.isBlank()) continue;
+                // กันซ้ำกับ Supervisor
+                if (req.supervisorId.equalsIgnoreCase(mreq.userId)) continue;
+
+                MemberEntity m = new MemberEntity();
+                m.setId(genId());
+                m.setTeam(team);
+                m.setMemberId(mreq.userId);
+                m.setNameMembers(mreq.userName != null ? mreq.userName : mreq.userId);
+                m.setRole(mreq.role != null ? mreq.role : "member");
+                members.add(m);
+            }
+        }
+
+        team.setMemberEntities(members);
+        em.persist(team);
+
+        return Response.created(URI.create("/api/teams/" + team.getId()))
+                .entity(toSummary(team))
+                .build();
+    }
+
+    // ---------- ADD MEMBERS (Admin เพิ่มทีละชุด)
+    @POST
+    @Path("/{teamId}/members")
+    @Transactional
+    public Response addMembers(
+            @PathParam("teamId") String teamId,
+            AddMembersRequest req
+    ) {
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found");
+        team.getMemberEntities().size();
+
+        if (req == null || req.members == null || req.members.isEmpty())
+            throw new BadRequestException("members are required");
+
+        // กันซ้ำจากฐานข้อมูล
+        Set<String> existing = team.getMemberEntities().stream()
+                .map(m -> m.getMemberId().toLowerCase()).collect(Collectors.toSet());
+
+        List<MemberEntity> newOnes = new ArrayList<>();
+        for (CreateMemberRequest mreq : req.members) {
+            if (mreq == null || mreq.userId == null || mreq.userId.isBlank()) continue;
+            String uid = mreq.userId.toLowerCase();
+            if (existing.contains(uid)) continue;
+
+            MemberEntity m = new MemberEntity();
+            m.setId(genId());
+            m.setTeam(team);
+            m.setMemberId(mreq.userId);
+            m.setNameMembers(mreq.userName != null ? mreq.userName : mreq.userId);
+            // Admin สามารถกำหนด role เริ่มต้นได้ (ยกเว้น supervisor ต้องผ่าน endpoint supervisor)
+            String role = (mreq.role != null && !"supervisor".equalsIgnoreCase(mreq.role)) ? mreq.role : "member";
+            m.setRole(role);
+            newOnes.add(m);
+            existing.add(uid);
+        }
+
+        for (MemberEntity m : newOnes) em.persist(m);
+
+        // ส่งคืน snapshot ล่าสุด (DTO)
+        List<TeamMemberDTO> dto = em.createQuery(
+                "SELECT m FROM MemberEntity m WHERE m.team.id = :tid ORDER BY m.joinedAt ASC",
+                MemberEntity.class
+        ).setParameter("tid", teamId).getResultList()
+         .stream().map(m -> new TeamMemberDTO(m.getMemberId(), m.getNameMembers(), m.getRole()))
+         .toList();
+
+        return Response.ok(dto).build();
+    }
+
+    // ---------- SET/CHANGE SUPERVISOR (Admin เท่านั้น)
+    @PUT
+    @Path("/{teamId}/supervisor")
+    @Transactional
+    public Response setSupervisor(
+            @PathParam("teamId") String teamId,
+            dto.SetSupervisorRequest req
+    ) {
+        if (req == null || req.userId == null || req.userId.isBlank())
+            throw new BadRequestException("userId is required");
+
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found");
+        team.getMemberEntities().size();
+
+        // 1) หา supervisor เดิม แล้วลดบทบาทเป็น member
+        MemberEntity oldSup = team.getMemberEntities().stream()
+                .filter(m -> "supervisor".equalsIgnoreCase(m.getRole()))
+                .findFirst().orElse(null);
+        if (oldSup != null && !oldSup.getMemberId().equalsIgnoreCase(req.userId)) {
+            oldSup.setRole("member");
+            em.merge(oldSup);
+        }
+
+        // 2) ตั้ง supervisor ใหม่
+        MemberEntity target = team.getMemberEntities().stream()
+                .filter(m -> m.getMemberId() != null && m.getMemberId().equalsIgnoreCase(req.userId))
+                .findFirst().orElse(null);
+
+        if (target == null) {
+            // ถ้ายังไม่มีในทีม -> เพิ่มเข้าไปและตั้ง role=supervisor
+            MemberEntity sup = new MemberEntity();
+            sup.setId(genId());
+            sup.setTeam(team);
+            sup.setMemberId(req.userId);
+            sup.setNameMembers(req.userName != null ? req.userName : req.userId);
+            sup.setRole("supervisor");
+            em.persist(sup);
+        } else {
+            target.setRole("supervisor");
+            if (req.userName != null && !req.userName.isBlank()) {
+                target.setNameMembers(req.userName);
+            }
+            em.merge(target);
+        }
+
+        // ส่งคืนสรุปทีม
+        return Response.ok(toSummary(team)).build();
+    }
+}
