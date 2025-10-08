@@ -1,19 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import axios, { AxiosError } from "axios";
-
-import UserListWidget from "../Supervisor/Widgets/UserListWidget";
 import AdministratorBar from "./Widgets/AdministratorBar";
+import UserListWidget from "../Supervisor/Widgets/UserListWidget";
+import { Plus, Users, Shield, Loader2, Search, AlertCircle } from "lucide-react";
 
 // ----------------------
-// Axios instance + BaseURL/Proxy
+// Axios
 // ----------------------
 const axiosClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "/",
 });
-
 axiosClient.interceptors.request.use((config) => {
-  const token =
-    localStorage.getItem("token") || sessionStorage.getItem("token") || "";
+  const token = localStorage.getItem("token") || sessionStorage.getItem("token") || "";
   if (token) {
     config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
   }
@@ -21,55 +19,86 @@ axiosClient.interceptors.request.use((config) => {
 });
 
 // ----------------------
-// Types (สอดคล้อง TeamAdminResource.TeamSummary)
+// Types
 // ----------------------
-export type User = {
-  id: string;
-  name: string;
-  email: string;
-  role: string; // 'ADMIN' | 'SUPERVISOR' | 'TRAINER' | 'LEARNER' ...
-};
-
-export type Team = {
-  id: string;
-  name: string;
-  supervisorId: string | null;
-  memberIds: string[];
-};
+export type User = { id: string; name: string; email: string; role: string };
+export type Team = { id: string; name: string; supervisorId: string | null; memberIds: string[] };
 
 // ----------------------
-// Utils: sanitize responses ให้ปลอดภัยก่อนส่งเข้า UI
+// UI Helpers
+// ----------------------
+function SectionCard({ title, subtitle, right, children }: { title: string; subtitle?: string; right?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-gray-200/70 bg-white/80 backdrop-blur-sm shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between px-5 pt-5">
+        <div>
+          <h2 className="text-lg font-semibold">{title}</h2>
+          {subtitle && <p className="text-sm text-gray-500">{subtitle}</p>}
+        </div>
+        {right}
+      </div>
+      <div className="p-5">{children}</div>
+    </div>
+  );
+}
+function Pill({ children }: { children: React.ReactNode }) {
+  return <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700">{children}</span>;
+}
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <label className="text-sm font-medium text-gray-700">{children}</label>;
+}
+function Input({ className = "", ...props }: React.InputHTMLAttributes<HTMLInputElement> & { className?: string }) {
+  return (
+    <input
+      {...props}
+      className={
+        "w-full rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none ring-0 focus:border-gray-300 focus:ring-4 focus:ring-gray-100 transition " +
+        className
+      }
+    />
+  );
+}
+function Select({ className = "", ...props }: React.SelectHTMLAttributes<HTMLSelectElement> & { className?: string }) {
+  return (
+    <select
+      {...props}
+      className={
+        "w-full rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none ring-0 focus:border-gray-300 focus:ring-4 focus:ring-gray-100 transition " +
+        className
+      }
+    />
+  );
+}
+function Checkbox(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-black focus:ring-2 focus:ring-gray-200" {...props} />;
+}
+function SkeletonLine() {
+  return <div className="h-4 w-full animate-pulse rounded bg-gray-200/70" />;
+}
+
+// ----------------------
+// Normalizers
 // ----------------------
 function normalizeUser(raw: any): User | null {
   if (!raw) return null;
   const id = String(raw.id || raw.userId || raw.email || "").trim();
   if (!id) return null;
-
-  // ป้องกัน toLowerCase crash ใน widget: บังคับ string เสมอ
   const name = String(raw.name || raw.fullName || raw.username || id).trim();
   const email = String(raw.email || "").trim();
   const role = String(raw.role || raw.globalRole || raw.systemRole || "USER").toUpperCase();
-
   return { id, name, email, role };
 }
-
 function normalizeTeam(raw: any): Team | null {
   if (!raw) return null;
   const id = String(raw.id || raw.teamId || "").trim();
   if (!id) return null;
-
   const name = String(raw.name || "Unnamed Team").trim();
-
-  // รองรับทั้ง TeamSummary และ TeamEntity
   const supervisorId =
     (raw.supervisorId && String(raw.supervisorId)) ||
-    // บางกรณี BE อาจส่ง memberEntities (array) ให้เอง
     (Array.isArray(raw.memberEntities)
       ? (raw.memberEntities.find((m: any) => String(m.role || "").toLowerCase() === "supervisor")?.memberId ?? null)
       : null) ||
     null;
-
-  // กรณี TeamSummary: memberIds มีมาเลย / กรณี TeamEntity: แปลงจาก memberEntities
   const memberIds: string[] =
     (Array.isArray(raw.memberIds) && raw.memberIds.map(String)) ||
     (Array.isArray(raw.memberEntities)
@@ -79,42 +108,37 @@ function normalizeTeam(raw: any): Team | null {
           .filter(Boolean)
       : []) ||
     [];
-
   return { id, name, supervisorId, memberIds };
 }
 
 // ----------------------
-// Team Builder (สร้างทีมผ่าน /api/admin/teams)
+// Team Builder
 // ----------------------
-function TeamBuilderWidget({
-  users,
-  onCreated,
-}: {
-  users: User[];
-  onCreated: (team: Team) => void;
-}) {
+function TeamBuilderWidget({ users, onCreated }: { users: User[]; onCreated: (team: Team) => void }) {
   const [teamName, setTeamName] = useState("");
   const [teamDesc, setTeamDesc] = useState("");
   const [supervisorId, setSupervisorId] = useState("");
   const [supervisorName, setSupervisorName] = useState("");
   const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const supervisors = useMemo(
-    () => users.filter((u) => u.role?.toUpperCase() === "SUPERVISOR"),
-    [users]
-  );
-
+  const supervisors = useMemo(() => users.filter((u) => u.role?.toUpperCase() === "SUPERVISOR"), [users]);
   const selectableMembers = useMemo(
     () => users.filter((u) => u.role?.toUpperCase() !== "ADMIN"),
     [users]
   );
+  const filteredMembers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return selectableMembers;
+    return selectableMembers.filter(
+      (u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.id.toLowerCase().includes(q)
+    );
+  }, [selectableMembers, search]);
 
   const toggleMember = (id: string) => {
-    setMemberIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+    setMemberIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const canSubmit = teamName.trim() && supervisorId && memberIds.length > 0;
@@ -123,18 +147,11 @@ function TeamBuilderWidget({
     if (!canSubmit || submitting) return;
     setSubmitting(true);
     setError(null);
-
     try {
       const membersPayload = memberIds.map((id) => {
         const u = users.find((x) => x.id === id);
-        return {
-          userId: id,
-          userName: u?.name || id,
-          role: "member",
-        };
+        return { userId: id, userName: u?.name || id, role: "member" };
       });
-
-      // ใช้ TeamAdminResource
       const { data } = await axiosClient.post<Team>("/api/admin/teams", {
         name: teamName.trim(),
         description: teamDesc || undefined,
@@ -142,17 +159,14 @@ function TeamBuilderWidget({
         supervisorName: supervisorName || undefined,
         members: membersPayload,
       });
-
       const normalized = normalizeTeam(data);
       if (normalized) onCreated(normalized);
-
       setTeamName("");
       setTeamDesc("");
       setSupervisorId("");
       setSupervisorName("");
       setMemberIds([]);
     } catch (e: any) {
-      console.error(e);
       setError(e?.response?.data?.message || e?.response?.data || "สร้างทีมไม่สำเร็จ");
     } finally {
       setSubmitting(false);
@@ -160,116 +174,95 @@ function TeamBuilderWidget({
   };
 
   return (
-    <div className="rounded-2xl border p-4 md:p-6 space-y-4 bg-white/60">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold">สร้างทีมใหม่</h2>
-      </div>
-
+    <SectionCard
+      title="สร้างทีมใหม่"
+      subtitle="ระบุ Supervisor และเลือกสมาชิกที่ต้องการเพิ่มเข้าในทีม"
+      right={<Pill><Users className="mr-1 h-3.5 w-3.5" /> {memberIds.length} สมาชิก</Pill>}
+    >
       <div className="grid gap-4 md:grid-cols-3">
         <div className="space-y-2">
-          <label className="text-sm font-medium">ชื่อทีม</label>
-          <input
-            className="w-full rounded-xl border px-3 py-2"
-            placeholder="เช่น Team A"
-            value={teamName}
-            onChange={(e) => setTeamName(e.target.value)}
-          />
+          <FieldLabel>ชื่อทีม</FieldLabel>
+          <Input placeholder="เช่น Team A" value={teamName} onChange={(e) => setTeamName(e.target.value)} />
         </div>
-
         <div className="space-y-2">
-          <label className="text-sm font-medium">หัวหน้าทีม (Supervisor)</label>
-          <select
-            className="w-full rounded-xl border px-3 py-2"
-            value={supervisorId}
-            onChange={(e) => setSupervisorId(e.target.value)}
-          >
+          <FieldLabel>หัวหน้าทีม (Supervisor)</FieldLabel>
+          <Select value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)}>
             <option value="">— เลือก Supervisor —</option>
             {supervisors.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name} ({s.email})
               </option>
             ))}
-          </select>
-          <input
-            className="w-full rounded-xl border px-3 py-2 mt-2"
-            placeholder="ชื่อหัวหน้าทีม (ไม่บังคับ)"
-            value={supervisorName}
-            onChange={(e) => setSupervisorName(e.target.value)}
-          />
+          </Select>
+          <Input placeholder="ชื่อหัวหน้าทีม (ไม่บังคับ)" value={supervisorName} onChange={(e) => setSupervisorName(e.target.value)} />
         </div>
-
-        <div className="space-y-2 md:col-span-1">
-          <label className="text-sm font-medium">รายละเอียดทีม</label>
-          <input
-            className="w-full rounded-xl border px-3 py-2"
-            placeholder="คำอธิบายสั้น ๆ (ไม่บังคับ)"
-            value={teamDesc}
-            onChange={(e) => setTeamDesc(e.target.value)}
-          />
-          <div className="rounded-xl border px-3 py-2 text-sm mt-2">
-            สมาชิกที่เลือก: {memberIds.length} คน
+        <div className="space-y-2">
+          <FieldLabel>รายละเอียดทีม</FieldLabel>
+          <Input placeholder="คำอธิบายสั้น ๆ (ไม่บังคับ)" value={teamDesc} onChange={(e) => setTeamDesc(e.target.value)} />
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <Shield className="h-3.5 w-3.5" /> Supervisor จะถูกเพิ่มเป็นสมาชิกอัตโนมัติ
           </div>
         </div>
       </div>
 
-      <div className="space-y-2">
-        <label className="text-sm font-medium">เลือกสมาชิกเข้าทีม</label>
-        <div className="max-h-64 overflow-auto rounded-xl border divide-y">
-          {selectableMembers.map((u) => (
-            <label
-              key={u.id}
-              className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                checked={memberIds.includes(u.id)}
-                onChange={() => toggleMember(u.id)}
-              />
-              <div className="flex-1">
-                <div className="font-medium">{u.name}</div>
-                <div className="text-xs opacity-70">
-                  {u.email} • {u.role}
-                </div>
+      <div className="mt-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <FieldLabel>เลือกสมาชิกเข้าทีม</FieldLabel>
+          <div className="relative w-64">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Input className="pl-9" placeholder="ค้นหาชื่อ อีเมล หรือไอดี" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="max-h-64 overflow-auto rounded-xl border border-gray-200 divide-y">
+          {filteredMembers.map((u) => (
+            <label key={u.id} className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer">
+              <Checkbox checked={memberIds.includes(u.id)} onChange={() => toggleMember(u.id)} />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium truncate">{u.name}</div>
+                <div className="text-xs text-gray-500 truncate">{u.email} • {u.role}</div>
               </div>
             </label>
           ))}
+          {!filteredMembers.length && (
+            <div className="p-6 text-center text-sm text-gray-500">ไม่พบผู้ใช้ที่ตรงกับคำค้นหา</div>
+          )}
         </div>
       </div>
 
-      {error && <div className="text-sm text-red-600">{error}</div>}
+      {error && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <AlertCircle className="mt-0.5 h-4 w-4" /> {error}
+        </div>
+      )}
 
-      <div className="flex gap-2">
+      <div className="mt-5 flex gap-2">
         <button
           disabled={!canSubmit || submitting}
           onClick={createTeam}
-          className="rounded-xl px-4 py-2 border bg-black text-white disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl bg-black px-4 py-2 text-white shadow hover:opacity-90 disabled:opacity-50"
         >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           {submitting ? "กำลังบันทึก..." : "สร้างทีม"}
         </button>
         <button
           onClick={() => {
-            setTeamName("");
-            setTeamDesc("");
-            setSupervisorId("");
-            setSupervisorName("");
-            setMemberIds([]);
-            setError(null);
+            setTeamName(""); setTeamDesc(""); setSupervisorId(""); setSupervisorName(""); setMemberIds([]); setError(null);
           }}
-          className="rounded-xl px-4 py-2 border"
+          className="rounded-xl border px-4 py-2 hover:bg-gray-50"
         >
           ล้างค่า
         </button>
       </div>
-    </div>
+    </SectionCard>
   );
 }
 
 // ----------------------
-// รายการทีม (ดึงจาก /api/admin/teams ถ้า 405/404 จะ fallback ไป /api/teams)
+// Teams Grouped by Supervisor
 // ----------------------
 function TeamsBySupervisor({ users, teams }: { users: User[]; teams: Team[] }) {
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
-
   const grouped = useMemo(() => {
     const bySup: Record<string, Team[]> = {};
     for (const t of teams || []) {
@@ -281,32 +274,42 @@ function TeamsBySupervisor({ users, teams }: { users: User[]; teams: Team[] }) {
   }, [teams]);
 
   const supIds = Object.keys(grouped);
-  if (!supIds.length) return null;
+  if (!supIds.length) {
+    return (
+      <SectionCard title="ทีมทั้งหมด" subtitle="ยังไม่มีทีมในระบบ">
+        <div className="rounded-xl border border-dashed p-6 text-center text-sm text-gray-500">
+          ยังไม่มีทีม — สร้างทีมใหม่ด้านบนได้เลย
+        </div>
+      </SectionCard>
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <div className="grid gap-6">
       {supIds.map((sid) => {
         const sup = userById.get(sid);
         const teamsForSup = grouped[sid] ?? [];
+        const avatarText = (sup?.name || sid || "?").substring(0, 2).toUpperCase();
         return (
-          <div key={sid} className="rounded-2xl border p-4 md:p-6 bg-white/60">
-            <div className="mb-3">
-              <h3 className="text-lg font-semibold">
-                Supervisor: {sup?.name || sid} {sup?.email ? `(${sup.email})` : ""}
-              </h3>
-              <p className="text-sm opacity-70">ทีมทั้งหมดของหัวหน้าคนนี้</p>
+          <SectionCard
+            key={sid}
+            title={`Supervisor: ${sup?.name || sid}`}
+            subtitle={sup?.email ? `(${sup.email})` : undefined}
+            right={<div className="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700">{teamsForSup.length} ทีม</div>}
+          >
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-900 text-white shadow-sm">{avatarText}</div>
+              <div className="text-xs text-gray-500">ดูแลทีมทั้งหมด {teamsForSup.length} ทีม</div>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               {teamsForSup.map((t) => (
-                <div key={t.id} className="rounded-xl border p-3">
+                <div key={t.id} className="rounded-xl border bg-white p-3 hover:shadow-sm transition">
                   <div className="font-medium">{t.name}</div>
-                  <div className="text-xs opacity-70">
-                    สมาชิก {t?.memberIds?.length ?? 0} คน
-                  </div>
+                  <div className="mt-1 text-xs text-gray-500">สมาชิก {t?.memberIds?.length ?? 0} คน</div>
                 </div>
               ))}
             </div>
-          </div>
+          </SectionCard>
         );
       })}
     </div>
@@ -314,7 +317,7 @@ function TeamsBySupervisor({ users, teams }: { users: User[]; teams: Team[] }) {
 }
 
 // ----------------------
-// หน้าหลัก: Administrator User Management
+// Page
 // ----------------------
 export default function AdministratorUserManagement() {
   const [users, setUsers] = useState<User[]>([]);
@@ -322,22 +325,14 @@ export default function AdministratorUserManagement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // ดึงผู้ใช้ทั้งหมด (ลองหลาย endpoint + sanitize ให้ปลอดภัย)
   const fetchUsers = async () => {
-    const candidates = [
-      "/api/users", // ถ้ามี
-      "/api/profile/users", // ถ้ามี
-      "/api/profile/users/for-supervisor", // อันนี้คุณมีอยู่แล้ว
-    ];
-
+    const candidates = ["/api/users", "/api/profile/users", "/api/profile/users/for-supervisor"];
     let lastError: unknown = null;
     for (const path of candidates) {
       try {
         const { data } = await axiosClient.get<any[]>(path);
         if (Array.isArray(data)) {
-          const normalized = data
-            .map(normalizeUser)
-            .filter((x): x is User => !!x);
+          const normalized = data.map(normalizeUser).filter((x): x is User => !!x);
           setUsers(normalized);
           setError(null);
           return;
@@ -346,50 +341,35 @@ export default function AdministratorUserManagement() {
         lastError = e;
       }
     }
-
-    console.error(lastError);
     const msg =
       (lastError as AxiosError)?.response?.status === 404
-        ? "ไม่พบ endpoint สำหรับดึงผู้ใช้ (404) — ตรวจสอบเส้นทาง API หรือ proxy/baseURL"
+        ? "ไม่พบ endpoint สำหรับดึงผู้ใช้ — ตรวจสอบเส้นทาง API หรือ proxy/baseURL"
         : "ดึงรายชื่อผู้ใช้ไม่สำเร็จ";
     setError(msg);
-    setUsers([]); // ป้องกัน widget crash
+    setUsers([]);
   };
 
-  // ดึงทีมจาก TeamAdminResource; ถ้า 405/404 fallback ไป /api/teams
   const fetchTeams = async () => {
-    // 1) ลอง /api/admin/teams (อาจยังไม่ได้ทำ GET ใน BE => 405)
     try {
       const { data } = await axiosClient.get<any[]>("/api/admin/teams");
       if (Array.isArray(data)) {
-        const normalized = data
-          .map(normalizeTeam)
-          .filter((x): x is Team => !!x);
+        const normalized = data.map(normalizeTeam).filter((x): x is Team => !!x);
         setTeams(normalized);
         return;
       }
     } catch (err) {
       const status = (err as AxiosError)?.response?.status;
-      if (status !== 404 && status !== 405) {
-        console.warn("ดึง /api/admin/teams ไม่สำเร็จ:", err);
-      } else {
-        console.warn("ยังไม่มีทีม หรือไม่พบ/ไม่รองรับ GET /api/admin/teams");
-      }
+      if (status !== 404 && status !== 405) console.warn("ดึง /api/admin/teams ไม่สำเร็จ:", err);
     }
-
-    // 2) fallback /api/teams (ควรส่ง TeamSummary)
     try {
       const { data } = await axiosClient.get<any[]>("/api/teams");
       if (Array.isArray(data)) {
-        const normalized = data
-          .map(normalizeTeam)
-          .filter((x): x is Team => !!x);
+        const normalized = data.map(normalizeTeam).filter((x): x is Team => !!x);
         setTeams(normalized);
       } else {
         setTeams([]);
       }
-    } catch (err) {
-      console.warn("ยังไม่มีทีม หรือไม่พบ /api/teams");
+    } catch {
       setTeams([]);
     }
   };
@@ -403,15 +383,13 @@ export default function AdministratorUserManagement() {
   }, []);
 
   const assignRole = async (userId: string, role: string) => {
-    const confirmAssign = window.confirm(`ยืนยันอัปเดตรายบทบาทเป็น \"${role}\" ?`);
+    const confirmAssign = window.confirm(`ยืนยันอัปเดตบทบาทเป็น "${role}" ?`);
     if (!confirmAssign) return;
-
     try {
       await axiosClient.put(`/api/profile/users/${userId}/role`, { role });
       await fetchUsers();
       alert(`อัปเดตบทบาทเป็น ${role} แล้ว`);
     } catch (err: any) {
-      console.error(err);
       alert(err?.response?.data?.message || "อัปเดตบทบาทไม่สำเร็จ");
     }
   };
@@ -421,49 +399,74 @@ export default function AdministratorUserManagement() {
     if (normalized) setTeams((prev) => [normalized, ...prev]);
   };
 
-  if (loading) {
-    return (
-      <div className="flex h-screen">
-        <AdministratorBar />
-        <div className="flex-1 p-8">กำลังโหลด...</div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen bg-gradient-to-b from-gray-50 to-white">
       <AdministratorBar />
-
-      <div className="flex-1 p-8 overflow-y-auto space-y-8">
-        <div className="flex justify-between items-center">
-          <h1 className="text-3xl font-bold">Administrator User Management</h1>
+      <div className="flex-1 overflow-y-auto">
+        {/* Header */}
+        <div className="sticky top-0 z-10 bg-white/70 backdrop-blur border-b">
+          <div className="mx-auto max-w-6xl px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-2xl md:text-3xl font-bold">Administrator — User & Team Management</h1>
+                <p className="text-sm text-gray-500">กำหนดสิทธิ์ผู้ใช้ สร้างทีม และจัดกลุ่มทีมตาม Supervisor</p>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
-            {error}
-          </div>
-        )}
-
-        {/* จัดการบทบาทผู้ใช้เดิม */}
-        <div className="space-y-3">
-          <p className="opacity-80">จัดการบทบาทผู้ใช้ และระบุ Supervisor/Trainer</p>
-
-          {/* ป้องกัน crash ถ้าผู้ใช้ว่างเปล่า */}
-          {users.length > 0 ? (
-            <UserListWidget users={users} assignRole={assignRole} error={error} />
+        {/* Body */}
+        <div className="mx-auto max-w-6xl px-6 py-6 space-y-8">
+          {loading ? (
+            <>
+              <SectionCard title="กำลังโหลดผู้ใช้">
+                <div className="space-y-3">
+                  <SkeletonLine />
+                  <SkeletonLine />
+                  <SkeletonLine />
+                </div>
+              </SectionCard>
+              <SectionCard title="กำลังโหลดทีม">
+                <div className="space-y-3">
+                  <SkeletonLine />
+                  <SkeletonLine />
+                </div>
+              </SectionCard>
+            </>
           ) : (
-            <div className="rounded-xl border p-4 bg-white/60 text-sm">
-              ยังไม่พบผู้ใช้ให้แสดงผล
-            </div>
+            <>
+              {error && (
+                <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-800">
+                  <AlertCircle className="mt-0.5 h-5 w-5" />
+                  <div>
+                    <div className="font-medium">มีบางอย่างผิดพลาด</div>
+                    <div className="text-sm">{error}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* User roles */}
+              <SectionCard
+                title="บทบาทผู้ใช้"
+                subtitle="จัดการบทบาทผู้ใช้ และระบุ Supervisor/Trainer"
+              >
+                {users.length > 0 ? (
+                  <UserListWidget users={users} assignRole={assignRole} error={null} />
+                ) : (
+                  <div className="rounded-xl border border-dashed p-6 text-center text-sm text-gray-500">
+                    ยังไม่พบผู้ใช้ให้แสดงผล
+                  </div>
+                )}
+              </SectionCard>
+
+              {/* Create team */}
+              <TeamBuilderWidget users={users} onCreated={handleTeamCreated} />
+
+              {/* Team list */}
+              <TeamsBySupervisor users={users} teams={teams} />
+            </>
           )}
         </div>
-
-        {/* สร้างทีมใหม่ผ่าน TeamAdminResource */}
-        <TeamBuilderWidget users={users} onCreated={handleTeamCreated} />
-
-        {/* แสดงทีม grouped by Supervisor */}
-        <TeamsBySupervisor users={users} teams={teams} />
       </div>
     </div>
   );
