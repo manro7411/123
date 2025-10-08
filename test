@@ -1,203 +1,298 @@
-package Testing;
+import { useMemo, useState } from "react";
+import SupervisorSidebarWidget from "./Widgets/SupervisorSideBar";
+import { ChevronRight, Shield, UserPlus, Users, X, Search } from "lucide-react";
 
-import dto.CreateTeamRequestSimple;
-import dto.TeamSummary;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.transaction.Transactional;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import model.MemberEntity;
-import model.TeamEntity;
+/**
+ * SupervisorDashboard (Mock Version)
+ * - ไม่เรียก API เลย ใช้ข้อมูลจำลองในหน้านี้
+ * - Admin/Supervisor สามารถเลือกทีม, เพิ่มสมาชิก, และตั้ง/ถอนบทบาท "trainer" (บทบาทในทีม) ได้
+ * - พร้อมสลับไปใช้ API จริงภายหลังได้ง่าย: แค่แทนที่ส่วน state management ด้วยผลลัพธ์จาก backend
+ */
 
-import java.net.URI;
-import java.util.*;
-import java.util.stream.Collectors;
+// ----------------------
+// Types
+// ----------------------
+export type Team = { id: string; name: string; supervisorId?: string };
+export type TeamMember = { userId: string; name?: string; role: 'member'|'trainer'|'supervisor' };
 
-@Path("/api/teams") // << ให้ตรงกับ frontend
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
-public class TeamResource {
+// ----------------------
+// Mock Data (แก้ได้ตามต้องการ)
+// ----------------------
+const MOCK_TEAMS: Team[] = [
+  { id: "T-001", name: "Onboarding Squad", supervisorId: "svp@gmail.com" },
+  { id: "T-002", name: "Sales Enablement", supervisorId: "svp@gmail.com" },
+  { id: "T-003", name: "Tech Academy", supervisorId: "svp@gmail.com" },
+];
 
-    @Inject
-    EntityManager em;
+const MOCK_TEAM_MEMBERS: Record<string, TeamMember[]> = {
+  'T-001': [
+    { userId: 'alice@example.com', name: 'Alice', role: 'member' },
+    { userId: 'bob@example.com', name: 'Bob', role: 'trainer' },
+    { userId: 'charlie@example.com', name: 'Charlie', role: 'member' },
+    { userId: 'daisy@example.com', name: 'Daisy', role: 'supervisor' },
+  ],
+  'T-002': [
+    { userId: 'fiona@example.com', name: 'Fiona', role: 'member' },
+    { userId: 'george@example.com', name: 'George', role: 'member' },
+    { userId: 'hana@example.com', name: 'Hana', role: 'trainer' },
+    { userId: 'ivan@example.com', name: 'Ivan', role: 'supervisor' },
+  ],
+  'T-003': [
+    { userId: 'ken@example.com', name: 'Ken', role: 'member' },
+    { userId: 'mina@example.com', name: 'Mina', role: 'member' },
+    { userId: 'nate@example.com', name: 'Nate', role: 'trainer' },
+    { userId: 'olivia@example.com', name: 'Olivia', role: 'supervisor' },
+  ],
+};
 
-    // ---------- Helpers ----------
-    private static String genId() {
-        return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-    }
-
-    private static TeamSummary toSummary(TeamEntity team) {
-        // supervisor = สมาชิกที่ role = "supervisor"
-        String supervisorId = null;
-        List<String> memberIds = new ArrayList<>();
-        if (team.getMemberEntities() != null) {
-            for (MemberEntity m : team.getMemberEntities()) {
-                if (m == null) continue;
-                if ("supervisor".equalsIgnoreCase(m.getRole())) {
-                    supervisorId = m.getUserEmail(); // เก็บเป็น userId/email ตามที่คุณใช้
-                } else {
-                    memberIds.add(m.getUserEmail());
-                }
-            }
-        }
-        return new TeamSummary(team.getId(), team.getName(), supervisorId, memberIds);
-    }
-
-    // ---------- APIs ----------
-
-    @GET
-    public List<TeamSummary> getTeams() {
-        List<TeamEntity> teams = em.createQuery(
-                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities",
-                TeamEntity.class
-        ).getResultList();
-        return teams.stream().map(TeamResource::toSummary).toList();
-    }
-
-    @GET
-    @Path("/{id}")
-    public TeamSummary getTeam(@PathParam("id") String id) {
-        TeamEntity team = em.find(TeamEntity.class, id);
-        if (team == null) throw new NotFoundException("Team not found");
-        // ensure members loaded
-        team.getMemberEntities().size();
-        return toSummary(team);
-    }
-
-    @GET
-    @Path("/my-teams/{userId}")
-    public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {
-        // เดิมใช้ m.userID แต่ใน create/set ใช้ userEmail -> ให้ใช้ userEmail ให้ตรงกัน
-        List<TeamEntity> teams = em.createQuery(
-                "SELECT DISTINCT m.team FROM MemberEntity m " +
-                        "LEFT JOIN FETCH m.team.memberEntities " +
-                        "WHERE LOWER(m.userEmail) = LOWER(:userId)",
-                TeamEntity.class
-        ).setParameter("userId", userId)
-         .getResultList();
-
-        return teams.stream().map(TeamResource::toSummary).toList();
-    }
-
-    @POST
-    @Transactional
-    public Response createTeam(CreateTeamRequestSimple request) {
-        if (request == null || request.name == null || request.name.trim().isEmpty()) {
-            throw new BadRequestException("Team name is required");
-        }
-        if (request.supervisorId == null || request.supervisorId.isBlank()) {
-            throw new BadRequestException("supervisorId is required");
-        }
-        if (request.memberIds == null) {
-            request.memberIds = List.of();
-        }
-
-        TeamEntity team = new TeamEntity();
-        team.setId(genId());
-        team.setName(request.name.trim());
-        team.setDescription(request.description); // optional
-        team.setCreateBy(request.createBy);       // optional
-        team.setJoinCode(String.format("%06d", new Random().nextInt(1_000_000)));
-
-        // เตรียมสมาชิก: ใส่ supervisor เป็นสมาชิกด้วย role = "supervisor"
-        List<MemberEntity> members = new ArrayList<>();
-
-        MemberEntity sup = new MemberEntity();
-        sup.setId(genId());
-        sup.setTeam(team);
-        sup.setUserEmail(request.supervisorId); // ใช้เป็น userId/email ให้สอดคล้องกับ frontend
-        sup.setRole("supervisor");
-        sup.setNameMembers(request.supervisorId); // ถ้ายังไม่มีชื่อจริง ใช้รหัสแทนไปก่อน
-        members.add(sup);
-
-        // ใส่สมาชิกทีมทั่วไป
-        for (String mid : request.memberIds.stream().filter(Objects::nonNull).collect(Collectors.toSet())) {
-            MemberEntity m = new MemberEntity();
-            m.setId(genId());
-            m.setTeam(team);
-            m.setUserEmail(mid);
-            m.setRole("member");
-            m.setNameMembers(mid); // ถ้ามีชื่อจริง ค่อยอัปเดตภายหลัง
-            members.add(m);
-        }
-
-        team.setMemberEntities(members);
-        em.persist(team);
-
-        return Response.created(URI.create("/api/teams/" + team.getId()))
-                .entity(toSummary(team))
-                .build();
-    }
-
-    @PUT
-    @Path("/{id}")
-    @Transactional
-    public Response updateTeam(@PathParam("id") String id, TeamEntity updatedTeam) {
-        TeamEntity team = em.find(TeamEntity.class, id);
-        if (team == null) throw new NotFoundException("Team not found");
-
-        if (updatedTeam.getName() != null) {
-            team.setName(updatedTeam.getName());
-        }
-        if (updatedTeam.getDescription() != null) {
-            team.setDescription(updatedTeam.getDescription());
-        }
-
-        // ส่งกลับเป็น TeamSummary เพื่อให้ frontend ใช้รูปแบบเดียวกัน
-        team.getMemberEntities().size();
-        return Response.ok(toSummary(team)).build();
-    }
-
-    @DELETE
-    @Path("/{id}")
-    @Transactional
-    public Response deleteTeam(@PathParam("id") String id) {
-        TeamEntity team = em.find(TeamEntity.class, id);
-        if (team == null) throw new NotFoundException("Team not found");
-        em.remove(team);
-        return Response.noContent().build();
-    }
-
-    // -------- keep your existing join by code but align field names --------
-    @POST
-    @Path("/joining")
-    @Transactional
-    public Response joinTeamByCode(dto.CreateMemberRequest request) {
-        if (request == null || request.joinCode == null || request.joinCode.trim().length() != 6) {
-            throw new BadRequestException("Join code is invalid");
-        }
-
-        List<TeamEntity> teams = em.createQuery(
-                "SELECT DISTINCT t FROM TeamEntity t LEFT JOIN FETCH t.memberEntities WHERE t.joinCode = :joinCode",
-                TeamEntity.class
-        ).setParameter("joinCode", request.joinCode).getResultList();
-
-        if (teams.isEmpty()) {
-            throw new BadRequestException("Join code is invalid");
-        }
-
-        TeamEntity team = teams.get(0);
-
-        boolean alreadyExists = team.getMemberEntities()
-                .stream()
-                .anyMatch(member -> member.getUserEmail() != null &&
-                        member.getUserEmail().equalsIgnoreCase(request.userId));
-
-        if (alreadyExists) {
-            throw new WebApplicationException("User already in the team", 409);
-        }
-
-        MemberEntity member = new MemberEntity();
-        member.setId(genId());
-        member.setTeam(team);
-        member.setUserEmail(request.userId);
-        member.setRole(Optional.ofNullable(request.getRole()).orElse("member"));
-        member.setNameMembers(Optional.ofNullable(request.userName).orElse(request.userId));
-        team.getMemberEntities().add(member);
-
-        em.persist(member);
-        return Response.ok().entity(toSummary(team)).build();
-    }
+// ----------------------
+// Small helpers
+// ----------------------
+function Chip({ children, onRemove }:{children: React.ReactNode; onRemove?:()=>void}){
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs bg-white">
+      {children}
+      {onRemove && (
+        <button className="opacity-60 hover:opacity-100" onClick={onRemove}>
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </span>
+  );
 }
+
+// ----------------------
+// TeamMembersManager — ดู/เพิ่มสมาชิก + ตั้งบทบาทในทีม (mock state)
+// ----------------------
+function TeamMembersManager({
+  teamId,
+  members,
+  setMembers,
+  canManage,
+}: {
+  teamId: string;
+  members: TeamMember[];
+  setMembers: (next: TeamMember[]) => void;
+  canManage: boolean;
+}) {
+  const [selected, setSelected] = useState<TeamMember | null>(members[0] || null);
+
+  // add member form
+  const [newUserId, setNewUserId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [search, setSearch] = useState("");
+
+  const list = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter(m => (m.name||'').toLowerCase().includes(q) || m.userId.toLowerCase().includes(q));
+  }, [members, search]);
+
+  const setTrainer = (userId: string, nextRole: 'trainer'|'member') => {
+    if (!canManage) return;
+    setMembers(
+      members.map(m => m.userId === userId ? { ...m, role: nextRole } : m)
+    );
+    const found = members.find(m => m.userId === userId);
+    if (found) setSelected({ ...found, role: nextRole });
+  };
+
+  const addMember = () => {
+    if (!canManage) return;
+    const uid = newUserId.trim();
+    const nm = newName.trim();
+    if (!uid) { alert("กรุณากรอกอีเมล/รหัสผู้ใช้"); return; }
+    if (members.some(m => m.userId.toLowerCase() === uid.toLowerCase())) {
+      alert("มีสมาชิกคนนี้อยู่แล้ว");
+      return;
+    }
+    const newMem: TeamMember = { userId: uid, name: nm || uid.split('@')[0], role: 'member' };
+    const next = [...members, newMem];
+    setMembers(next);
+    setSelected(newMem);
+    setNewUserId(""); setNewName("");
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* รายชื่อสมาชิก */}
+      <div className="md:col-span-1 rounded-2xl border bg-white/60 overflow-hidden">
+        <div className="px-4 py-3 border-b font-semibold flex items-center justify-between">
+          <span>สมาชิกทีม</span>
+          <span className="text-xs opacity-70">{members.length} คน</span>
+        </div>
+        <div className="p-3 border-b bg-white">
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-60" />
+            <input
+              className="w-full rounded-xl border pl-9 pr-3 py-2 bg-white"
+              placeholder="ค้นหาชื่อหรืออีเมล"
+              value={search}
+              onChange={(e)=>setSearch(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="max-h-96 overflow-auto divide-y">
+          {list.map(m => (
+            <button
+              key={`${teamId}-${m.userId}`}
+              onClick={()=>setSelected(m)}
+              className={`w-full text-left p-3 hover:bg-gray-50 flex items-center justify-between ${selected?.userId===m.userId?'bg-gray-50':''}`}
+            >
+              <div className="min-w-0">
+                <div className="font-medium truncate">{m.name || m.userId}</div>
+                <div className="text-xs opacity-70">บทบาทในทีม: {m.role}</div>
+              </div>
+              <ChevronRight className="w-4 h-4 opacity-60"/>
+            </button>
+          ))}
+        </div>
+
+        {/* Add member form */}
+        {canManage && (
+          <div className="p-3 border-t space-y-2 bg-white">
+            <div className="text-xs uppercase opacity-60">เพิ่มสมาชิก</div>
+            <input
+              className="w-full rounded-xl border px-3 py-2"
+              placeholder="อีเมลหรือรหัสผู้ใช้"
+              value={newUserId}
+              onChange={(e)=>setNewUserId(e.target.value)}
+            />
+            <input
+              className="w-full rounded-xl border px-3 py-2"
+              placeholder="ชื่อ (ไม่บังคับ)"
+              value={newName}
+              onChange={(e)=>setNewName(e.target.value)}
+            />
+            <button
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 bg-white hover:bg-gray-50"
+              onClick={addMember}
+            >
+              <UserPlus className="w-4 h-4"/> เพิ่มเข้าทีม
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* รายละเอียด/ตั้งบทบาท */}
+      <div className="md:col-span-2 rounded-2xl border bg-white/60 p-4">
+        {selected ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-lg font-semibold">{selected.name || selected.userId}</div>
+                <div className="text-sm opacity-70">บทบาทในทีมปัจจุบัน: {selected.role}</div>
+              </div>
+              <div className="flex gap-2">
+                <Chip>
+                  <Users className="w-3.5 h-3.5"/> {selected.userId}
+                </Chip>
+                {selected.role==='trainer' && (
+                  <Chip><Shield className="w-3.5 h-3.5"/> trainer</Chip>
+                )}
+              </div>
+            </div>
+
+            {/* Promote/demote trainer */}
+            {canManage && selected.role !== 'supervisor' && (
+              <div className="flex gap-2">
+                {selected.role !== 'trainer' ? (
+                  <button className="rounded-xl px-4 py-2 border bg-white hover:bg-gray-50" onClick={()=>setTrainer(selected.userId,'trainer')}>
+                    ตั้งเป็น Trainer (สร้างคอร์สได้)
+                  </button>
+                ) : (
+                  <button className="rounded-xl px-4 py-2 border bg-white hover:bg-gray-50" onClick={()=>setTrainer(selected.userId,'member')}>
+                    ถอนบทบาท Trainer
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="text-sm opacity-70">*บทบาท "trainer" ในทีมนี้ จะทำให้ผู้ใช้งานสามารถสร้าง/จัดการคอร์สของทีมได้</div>
+          </div>
+        ) : (
+          <div className="text-sm opacity-70">เลือกสมาชิกทางซ้ายเพื่อดูรายละเอียด</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ----------------------
+// Main — เลือกทีม + รวมคอมโพเนนต์
+// ----------------------
+export default function SupervisorDashboard(){
+  const [teams] = useState<Team[]>(MOCK_TEAMS);
+  const [teamMembersMap, setTeamMembersMap] = useState<Record<string, TeamMember[]>>({...MOCK_TEAM_MEMBERS});
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(MOCK_TEAMS[0].id);
+
+  const selectedTeam = useMemo(()=> teams.find(t => t.id === selectedTeamId)!, [teams, selectedTeamId]);
+  const members = teamMembersMap[selectedTeamId] || [];
+
+  const setMembers = (next: TeamMember[]) => {
+    setTeamMembersMap(prev => ({ ...prev, [selectedTeamId]: next }));
+  };
+
+  return (
+    <div className="flex h-screen bg-gray-50">
+      <SupervisorSidebarWidget />
+
+      <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl md:text-3xl font-bold">Supervisor Dashboard</h1>
+          <div className="text-xs opacity-70">ทีมที่เลือก: <span className="font-medium">{selectedTeam.name}</span></div>
+        </div>
+
+        {/* เลือกทีม */}
+        <div className="rounded-2xl border bg-white p-4">
+          <div className="mb-3 font-semibold">ทีมของฉัน</div>
+          <div className="flex gap-2 flex-wrap">
+            {teams.map(t => (
+              <button
+                key={t.id}
+                onClick={()=>setSelectedTeamId(t.id)}
+                className={`rounded-xl px-3 py-2 border ${selectedTeamId===t.id? 'bg-blue-600 text-white':'bg-white'}`}
+              >
+                {t.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* รายละเอียดทีม + จัดการสมาชิกและ trainer (mock) */}
+        <div className="rounded-2xl border bg-white p-4">
+          <div className="mb-3">
+            <div className="text-lg font-semibold">ทีม: {selectedTeam.name}</div>
+            <div className="text-sm opacity-70">เพิ่มสมาชิก + ตั้งบทบาท Trainer เพื่อให้สร้างคอร์สได้</div>
+          </div>
+          <TeamMembersManager
+            teamId={selectedTeam.id}
+            members={members}
+            setMembers={setMembers}
+            canManage={true}
+          />
+        </div>
+
+        {/* หมายเหตุ: เวอร์ชัน mock — ไม่มีการเรียก API จริง */}
+      </div>
+    </div>
+  );
+}
+
+
+SELECT
+    tm.member_id,
+    tm.role,
+    t.name,
+    tm.joined_at,
+    t.name AS team_name
+FROM team_members tm
+JOIN teams t ON tm.team_id = t.id
+WHERE tm.team_id = '7f8c8b1a79184311a366b'
+ORDER BY
+    CASE
+        WHEN tm.role = 'supervisor' THEN 1
+        WHEN tm.role = 'member' THEN 2
+        ELSE 3
+    END,
+    tm.joined_at ASC;
