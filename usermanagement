@@ -395,3 +395,77 @@ export default function AdministratorUserManagement() {
     </div>
   );
 }
+xhr.js:195 
+ 
+ GET http://localhost:5173/api/admin/teams 405 (Method Not Allowed)
+administratorusermanagement.tsx:322 
+ ยังไม่มีทีม หรือไม่พบ /api/admin/teams
+xhr.js:195 
+ 
+ GET http://localhost:5173/api/admin/teams 405 (Method Not Allowed)
+administratorusermanagement.tsx:322 
+ ยังไม่มีทีม หรือไม่พบ /api/admin/teams
+xhr.js:195 
+ 
+ GET http://localhost:5173/api/users 404 (Not Found)
+xhr.js:195 
+ 
+ GET http://localhost:5173/api/users 404 (Not Found)
+UserListWidget.tsx:25 
+ Uncaught TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+    at UserListWidget.tsx:25:35
+    at Array.map (<anonymous>)
+    at UserListWidget (UserListWidget.tsx:24:14)
+    at renderWithHooks (react-dom.development.js:15486:18)
+    at mountIndeterminateComponent (react-dom.development.js:20103:13)
+    at beginWork (react-dom.development.js:21626:16)
+    at HTMLUnknownElement.callCallback2 (react-dom.development.js:4164:14)
+    at Object.invokeGuardedCallbackDev (react-dom.development.js:4213:16)
+    at invokeGuardedCallback (react-dom.development.js:4277:31)
+    at beginWork$1 (react-dom.development.js:27490:7)
+UserListWidget.tsx:25 
+ Uncaught TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+    at UserListWidget.tsx:25:35
+    at Array.map (<anonymous>)
+    at UserListWidget (UserListWidget.tsx:24:14)
+    at renderWithHooks (react-dom.development.js:15486:18)
+    at mountIndeterminateComponent (react-dom.development.js:20103:13)
+    at beginWork (react-dom.development.js:21626:16)
+    at HTMLUnknownElement.callCallback2 (react-dom.development.js:4164:14)
+    at Object.invokeGuardedCallbackDev (react-dom.development.js:4213:16)
+    at invokeGuardedCallback (react-dom.development.js:4277:31)
+    at beginWork$1 (react-dom.development.js:27490:7)
+react-dom.development.js:18704 
+ The above error occurred in the <UserListWidget> component:
+
+    at UserListWidget (http://localhost:5173/src/pages/Supervisor/Widgets/UserListWidget.tsx:19:42)
+    at div
+    at div
+    at div
+    at AdministratorUserManagement (http://localhost:5173/src/pages/Administrator/administratorusermanagement.tsx?t=1759908154306:450:29)
+    at RenderedRoute (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:5653:26)
+    at Routes (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:6389:3)
+    at AdministratorRoutes
+    at RenderedRoute (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:5653:26)
+    at Routes (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:6389:3)
+    at Suspense
+    at Router (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:6332:13)
+    at BrowserRouter (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b84471ba:9416:3)
+    at AuthProvider (http://localhost:5173/src/Authentication/AuthContext.tsx:29:32)
+    at App
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://reactjs.org/link/error-boundaries to learn more about error boundaries.
+react-dom.development.js:26962 
+ Uncaught TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+    at UserListWidget.tsx:25:35
+    at Array.map (<anonymous>)
+    at UserListWidget (UserListWidget.tsx:24:14)
+    at renderWithHooks (react-dom.development.js:15486:18)
+    at mountIndeterminateComponent (react-dom.development.js:20103:13)
+    at beginWork (react-dom.development.js:21626:16)
+    at beginWork$1 (react-dom.development.js:27465:14)
+    at performUnitOfWork (react-dom.development.js:26596:12)
+    at workLoopSync (react-dom.development.js:26505:5)
+    at renderRootSync (react-dom.development.js:26473:7)
+﻿
