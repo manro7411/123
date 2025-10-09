@@ -948,3 +948,92 @@ export default function SupervisorDashboard(){
   );
 }
 
+--------------------
+package model;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(
+    name = "team_members",
+    uniqueConstraints = {
+        // กัน “สมาชิกเดียวกัน” ถูกเพิ่มซ้ำในทีมเดียวกัน
+        @UniqueConstraint(name = "uk_team_member_unique", columnNames = {"team_id", "member_ID"})
+    },
+    indexes = {
+        @Index(name = "idx_team_members_team", columnList = "team_id"),
+        @Index(name = "idx_team_members_member", columnList = "member_ID"),
+        @Index(name = "idx_team_members_role", columnList = "role")
+    }
+)
+public class MemberEntity {
+
+    @Id
+    @Column(length = 21)
+    private String id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "team_id", nullable = false)
+    private TeamEntity team;
+
+    /** ชื่อแสดงผลของสมาชิกในทีม (optional) */
+    @Column(name = "name_members")
+    private String nameMembers;
+
+    /** ตัวระบุสมาชิกในระบบ (เราใช้ email/username) — FE/BE อ้างถึงฟิลด์นี้ */
+    @Column(name = "member_ID", nullable = false)
+    private String memberId;
+
+    /**
+     * บทบาทใน “ทีม”
+     * ค่าที่ใช้จริงบน FE: "member" | "trainer" | "supervisor"
+     */
+    @Column(name = "role", nullable = false, length = 32)
+    private String role;  // ค่าเริ่มต้นให้เป็น "member" ใน @PrePersist
+
+    /** วันที่เข้าทีม (สำหรับจัดลำดับ) */
+    @Column(name = "joined_at", nullable = false, updatable = false)
+    private LocalDateTime joinedAt;
+
+    // ---------- Lifecycle ----------
+    @PrePersist
+    public void prePersist() {
+        if (this.id == null || this.id.isEmpty()) {
+            this.id = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+        }
+        if (this.joinedAt == null) {
+            this.joinedAt = LocalDateTime.now();
+        }
+        if (this.role == null || this.role.isBlank()) {
+            this.role = "member"; // กัน role ว่าง
+        }
+    }
+
+    // ---------- Getters/Setters ----------
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+
+    public TeamEntity getTeam() { return team; }
+    public void setTeam(TeamEntity team) { this.team = team; }
+
+    public String getMemberId() { return memberId; }
+    public void setMemberId(String memberId) { this.memberId = memberId; }
+
+    public String getRole() { return role; }
+    public void setRole(String role) { this.role = role; }
+
+    public LocalDateTime getJoinedAt() { return joinedAt; }
+    public void setJoinedAt(LocalDateTime joinedAt) { this.joinedAt = joinedAt; }
+
+    public String getNameMembers() { return nameMembers; }
+    public void setNameMembers(String nameMembers) { this.nameMembers = nameMembers; }
+
+    // ---------- Helper (ใช้งานสะดวก) ----------
+    @Transient
+    public boolean isSupervisor() { return "supervisor".equalsIgnoreCase(role); }
+
+    @Transient
+    public boolean isTrainer() { return "trainer".equalsIgnoreCase(role); }
+}
