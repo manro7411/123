@@ -1069,3 +1069,24 @@ public List<TeamSummary> getTeamsByQueryUserId(@QueryParam("userId") String user
 
     return teams.stream().map(TeamResource::toSummary).toList();
 }
+
+// TeamResource.java
+@GET
+@Path("/my")
+@Produces(MediaType.APPLICATION_JSON)
+public List<TeamSummary> getMyTeams(@Context SecurityContext sc,
+                                    @Inject org.eclipse.microprofile.jwt.JsonWebToken jwt) {
+    String email = jwt.getClaim("email");              // e.g. alice@example.com
+    if (email == null || email.isBlank())
+        throw new BadRequestException("JWT has no email claim");
+
+    List<TeamEntity> teams = em.createQuery(
+        "SELECT DISTINCT m.team FROM MemberEntity m " +
+        "LEFT JOIN FETCH m.team.memberEntities " +
+        "WHERE LOWER(m.memberId) = LOWER(:email)", TeamEntity.class)
+        .setParameter("email", email)
+        .getResultList();
+
+    return teams.stream().map(TeamResource::toSummary).toList();
+}
+
