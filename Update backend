@@ -1037,3 +1037,35 @@ public class MemberEntity {
     @Transient
     public boolean isTrainer() { return "trainer".equalsIgnoreCase(role); }
 }
+
+
+// TeamResource.java
+
+@GET
+@Path("/my-teams/{userId}")
+public List<TeamSummary> getTeamsByUserId(@PathParam("userId") String userId) {
+    List<TeamEntity> teams = em.createQuery(
+        "SELECT DISTINCT m.team FROM MemberEntity m " +
+        "LEFT JOIN FETCH m.team.memberEntities " +
+        "WHERE LOWER(m.memberId) = LOWER(:userId)",   // <— HERE
+        TeamEntity.class
+    ).setParameter("userId", userId).getResultList();
+
+    return teams.stream().map(TeamResource::toSummary).toList();
+}
+
+@GET
+@Path("/my-teams")
+public List<TeamSummary> getTeamsByQueryUserId(@QueryParam("userId") String userId, @Context SecurityContext sc) {
+    if (userId == null || userId.isBlank()) {
+        throw new BadRequestException("userId query parameter is required");
+    }
+    List<TeamEntity> teams = em.createQuery(
+        "SELECT DISTINCT m.team FROM MemberEntity m " +
+        "LEFT JOIN FETCH m.team.memberEntities " +
+        "WHERE LOWER(m.memberId) = LOWER(:userId)",   // <— AND HERE
+        TeamEntity.class
+    ).setParameter("userId", userId).getResultList();
+
+    return teams.stream().map(TeamResource::toSummary).toList();
+}
