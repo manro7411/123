@@ -1,143 +1,373 @@
-import React, { useEffect, useMemo, useState } from "react";
+package PointSystem.Resources;
+
+import PointSystem.DTOs.CreatedCouponDTO;
+import PointSystem.Entity.CouponEntity;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import jakarta.ws.rs.core.SecurityContext;
+import java.util.*;
+import java.time.LocalDateTime;
+@Path("/CouponPipelineService")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class CreateCouponForUserResources {
+
+    public static final Logger log = LoggerFactory.getLogger(CreateCouponForUserResources.class);
+    public static final String ROLE_ADMINISTRATOR = "administrator";
+
+    @Inject
+    EntityManager entityManager;
+
+    @GET
+    @Path("Administrator-Coupon-List")
+    @RolesAllowed(ROLE_ADMINISTRATOR)
+    public Response getAllCreatedCoupons(@Context SecurityContext securityContext) {
+        String adminEmail = securityContext.getUserPrincipal().getName();
+        log.info("Admin {} is retrieving all created coupons", adminEmail);
+        var query = entityManager.createQuery("SELECT c FROM CouponEntity c ORDER BY c.createdAt DESC", CouponEntity.class);
+        var coupons = query.getResultList();
+        var responseList = coupons.stream().map(c -> {
+            var dto = new CreatedCouponDTO();
+            dto.setId(c.getId());
+            dto.setAuthorEmail(c.getAuthorEmail());
+            dto.setAuthorName(c.getAuthorName());
+            dto.setAvatarUrl(c.getAuthorAvatar());
+            dto.setCouponCode(c.getCouponCode());
+            dto.setCouponTitle(c.getCouponTitle());
+            dto.setCouponDescription(c.getCouponDescription());
+            dto.setActive(c.getActive());
+            dto.setStartDate(c.getStartDate());
+            dto.setEndDate(c.getEndDate());
+            dto.setCreatedAt(c.getCreatedAt());
+            dto.setPointsRequired(c.getPointRequirement());
+            return dto;
+        }).toList();
+        return Response.ok(responseList).build();
+    }
+
+    @GET
+    @Path("Administrator-Coupon-Detail/{couponId}")
+    @RolesAllowed(ROLE_ADMINISTRATOR)
+    public Response getCouponDetail(@PathParam("couponId") UUID couponId,
+                                    @Context SecurityContext securityContext) {
+        String adminEmail = securityContext.getUserPrincipal().getName();
+        log.info("Admin {} is retrieving details for coupon ID: {}", adminEmail, couponId);
+        CouponEntity coupon = entityManager.find(CouponEntity.class, couponId);
+        if (coupon == null) {
+            log.warn("Coupon with ID {} not found", couponId);
+            return Response.status(Response.Status.NOT_FOUND)
+                    .entity("Coupon not found").build();
+        }
+        var dto = new CreatedCouponDTO();
+        dto.setId(coupon.getId());
+        dto.setAuthorEmail(coupon.getAuthorEmail());
+        dto.setAuthorName(coupon.getAuthorName());
+        dto.setAvatarUrl(coupon.getAuthorAvatar());
+        dto.setCouponCode(coupon.getCouponCode());
+        dto.setCouponTitle(coupon.getCouponTitle());
+        dto.setCouponDescription(coupon.getCouponDescription());
+        dto.setActive(coupon.getActive());
+        dto.setStartDate(coupon.getStartDate());
+        dto.setEndDate(coupon.getEndDate());
+        dto.setCreatedAt(coupon.getCreatedAt());
+        dto.setPointsRequired(coupon.getPointRequirement());
+        return Response.ok(dto).build();
+    }
+
+    @PUT
+    @Path("Update-Coupon-For-User/{couponId}")
+    @Transactional
+    @RolesAllowed(ROLE_ADMINISTRATOR)
+    public Response updateCouponForUser(@PathParam("couponId") UUID couponId,
+                                        CreatedCouponDTO request,
+                                        @Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        log.info("Administrator of the system is calling {} to update coupon ID: {}", currentUser, couponId);
+        CouponEntity coupon = entityManager.find(CouponEntity.class, couponId);
+        if (coupon == null) {
+            log.warn("Coupon with ID {} not found", couponId);
+            return Response.status(Response.Status.NOT_FOUND)
+                    .entity("Coupon not found").build();
+        }
+        if (request == null) {
+            log.warn("Request body is null");
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity("Request body cannot be null").build();
+        }
+        coupon.setAuthorEmail(request.getAuthorEmail());
+        coupon.setAuthorName(request.getAuthorName());
+        coupon.setAuthorAvatar(request.getAvatarUrl());
+        coupon.setCouponCode(request.getCouponCode());
+        coupon.setCouponTitle(request.getCouponTitle());
+        coupon.setCouponDescription(request.getCouponDescription());
+        coupon.setActive(request.getActive() != null ? request.getActive() : coupon.getActive());
+        coupon.setStartDate(request.getStartDate());
+        coupon.setEndDate(request.getEndDate());
+        coupon.setPointRequirement(request.getPointsRequired() != null ? request.getPointsRequired() : coupon.getPointRequirement());
+        entityManager.merge(coupon);
+        log.info("Updated CouponEntity with ID: {}", coupon.getId());
+        return Response.ok(Map.of("message", "Coupon updated successfully", "couponId", coupon.getId()))
+                .build();
+    }
+
+    @POST
+    @Transactional
+    @RolesAllowed(ROLE_ADMINISTRATOR)
+    @Path("Create-Coupon-For-User")
+    public Response createCouponForUser(CreatedCouponDTO request,
+                                        @Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        log.info("Administrator of the system is calling {} to create a coupon for user: {}", currentUser, request.getAuthorEmail());
+        CouponEntity coupon = new CouponEntity();
+
+        if (request == null) {
+            log.warn("Request body is null");
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity("Request body cannot be null").build();
+        }
+        coupon.setId(request.getId());
+        coupon.setAuthorEmail(request.getAuthorEmail());
+        coupon.setAuthorName(request.getAuthorName());
+        coupon.setAuthorAvatar(request.getAvatarUrl());
+        coupon.setCouponCode(request.getCouponCode());
+        coupon.setCouponTitle(request.getCouponTitle());
+        coupon.setCouponDescription(request.getCouponDescription());
+        coupon.setActive(request.getActive() != null ? request.getActive() : true);
+        coupon.setStartDate(request.getStartDate());
+        coupon.setEndDate(request.getEndDate());
+        coupon.setCreatedAt(LocalDateTime.now());
+        coupon.setPointRequirement(request.getPointsRequired());
+
+        entityManager.persist(coupon);
+        log.info("Persisted CouponEntity with ID: {}", coupon.getId());
+
+        return Response.status(Response.Status.CREATED)
+                .entity(Map.of("message", "Coupon created successfully", "couponId", coupon.getId()))
+                .build();
+    }
+    @DELETE
+    @Path("Delete-Coupon-For-User/{couponId}")
+    @Transactional
+    @RolesAllowed(ROLE_ADMINISTRATOR)
+    public Response deleteCouponForUser(@PathParam("couponId") UUID couponId,
+                                        @Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        log.info("Administrator of the system is calling {} to delete coupon ID: {}", currentUser, couponId);
+        CouponEntity coupon = entityManager.find(CouponEntity.class, couponId);
+        if (coupon == null) {
+            log.warn("Coupon with ID -> {} not found", couponId);
+            return Response.status(Response.Status.NOT_FOUND)
+                    .entity("Coupon not found").build();
+        }
+        entityManager.remove(coupon);
+        log.info("Deleted CouponEntity with ID: {}", couponId);
+        return Response.ok(Map.of("message", "Coupon deleted successfully", "couponId", couponId)).build();
+    }
+}
+
+import { useContext, useState } from "react";
+import AdminsistratorBar from "../Widgets/AdministratorBar";
+import CouponCreateModal from "../Widgets/CouponCreateModal";
+import { useUserProfile } from "../../Lesson/hooks/useUserProfile";
+import { AuthContext } from "../../../Authentication/AuthContext";
+
+const AdministratorCreaCoupon = () => {
+    const [open, setOpen] = useState(false);
+    const { token: ctxToken } = useContext(AuthContext);
+    const token = ctxToken || localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken");  
+    const { email, fullName, avatarUrl } = useUserProfile(token);
+
+    if (!email || !fullName) {
+    return <div>Loading profile...</div>;
+    }
+  return (
+    <div className="min-h-screen bg-gray-100 flex">
+      {/* Sidebar */}
+      <AdminsistratorBar />
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col p-8">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-2xl font-bold text-gray-800">Coupons</h1>
+          <button
+            onClick={() => setOpen(true)}
+            className="rounded-xl px-4 py-2 bg-blue-600 text-white shadow hover:bg-blue-700 transition"
+          >
+            + เพิ่มคูปอง
+          </button>
+        </div>
+
+        {/* Coupon List/Table Placeholder */}
+        <div className="bg-white rounded-xl shadow p-6 min-h-[200px] flex items-center justify-center text-gray-400">
+          {/* TODO: Add your coupon list/table here */}
+          ยังไม่มีข้อมูลคูปอง
+        </div>
+      </div>
+
+      {/* Modal */}
+      <CouponCreateModal
+        open={open}
+        onClose={() => setOpen(false)}
+        email={email ?? undefined}
+        fullName={fullName ?? undefined}
+        avatarUrl={avatarUrl ?? undefined}
+        onCreated={(couponId) => {
+          // refresh รายการคูปอง หรือแจ้งเตือน
+          alert(`สร้างคูปองสำเร็จ! ID: ${couponId}`);
+        }}
+      />
+    </div>
+  );
+};
+
+export default AdministratorCreaCoupon;
+import { useContext, useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { AuthContext } from "../../../Authentication/AuthContext";
 
 type CouponPayload = {
-  id?: string;                 // ถ้าต้องการส่งเอง (ไม่จำเป็น)
-  authorEmail?: string;
-  authorName?: string;
-  avatarUrl?: string;          // mapped ไป authorAvatar ที่ฝั่ง BE
-  couponCode: string;
-  couponTitle: string;
-  couponDescription?: string;
-  active?: boolean;
-  startDate?: string;          // ISO string
-  endDate?: string;            // ISO string
-  pointsRequired?: number;
-};
+    id?:string;
+    authorEmail?:string;
+    authorName?:string;
+    avatarUrl?:string;
+    couponCode:string;
+    couponTitle:string;
+    couponDescription:string;
+    active?:boolean;
+    startDate?:string;
+    endDate?:string;
+    pointsRequired?:number;
+}
 
 type Props = {
-  open: boolean;
-  onClose: () => void;
-  onCreated?: (couponId: string) => void;
-};
+    open: boolean;
+    onClose: () => void;
+    onCreated?: (couponId : string ) => void
+    email?:string;
+    fullName?:string;
+    avatarUrl?:string;
+}
 
-const axiosClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "/",
-});
-axiosClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-  if (token) {
-    config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
-  }
-  return config;
-});
+const fmtToLocalInput = (d:Date) => {
+    const pad = (n:number) => String(n).padStart(2,"0");
+    const yyyy = d.getFullYear();
+    const MM = pad(d.getMonth()+1);
+    const dd = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const mm = pad(d.getMinutes());
+    return `${yyyy}-${MM}-${dd}T${hh}:${mm}`;
 
-const fmtToLocalInput = (d: Date) => {
-  // return yyyy-MM-ddTHH:mm สำหรับ input type="datetime-local"
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const MM = pad(d.getMonth() + 1);
-  const dd = pad(d.getDate());
-  const hh = pad(d.getHours());
-  const mm = pad(d.getMinutes());
-  return `${yyyy}-${MM}-${dd}T${hh}:${mm}`;
-};
+}
 
-export default function CouponCreateModal({ open, onClose, onCreated }: Props) {
-  const [form, setForm] = useState<CouponPayload>({
-    couponTitle: "",
-    couponCode: "",
-    couponDescription: "",
-    pointsRequired: 0,
-    active: true,
-    startDate: fmtToLocalInput(new Date()),
-    endDate: fmtToLocalInput(new Date(Date.now() + 7 * 24 * 3600 * 1000)), // +7 วัน
-    authorEmail: "",
-    authorName: "",
-    avatarUrl: "",
-  });
+export default function CouponCreateModal({ open, onClose, onCreated ,email,fullName,avatarUrl}: Props){
+    const { token: ctxToken } = useContext(AuthContext);
+    const token = ctxToken || localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken");  
+    const[submitting,setSubmitting] = useState(false);
+    const[error,setError] = useState<string | null>(null);
+    console.log(`Profile: ${email}`)
+  
 
-  const [submitting, setSubmitting] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+    const[form,setForm] = useState<CouponPayload>({
+        couponTitle:"",
+        couponCode:"",
+        couponDescription:"",
+        pointsRequired:0,
+        active:true,
+        startDate:fmtToLocalInput(new Date()),
+        endDate:fmtToLocalInput(new Date(Date.now()+ 7 * 24 * 3600 * 1000)),
+        authorEmail:"",
+        authorName:"",
+        avatarUrl:"",
+    })
+     useEffect(() => {
+        setForm((prev) => ({
+            ...prev,
+            authorEmail: email || "",
+            authorName: fullName || "",
+            avatarUrl: avatarUrl || "",
+        }));
+    }, [email, fullName, avatarUrl]);
 
-  // ลองดึง author จาก JWT (ถ้ามี)
-  useEffect(() => {
-    try {
-      const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-      if (!token) return;
-      const [, payload] = token.split(".");
-      const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
-      setForm((p) => ({
-        ...p,
-        authorEmail: p.authorEmail || json?.email || "",
-        authorName: p.authorName || json?.name || json?.preferred_username || "",
-      }));
-    } catch {
-      /* no-op */
+
+    const canSubmit = useMemo(()=> {
+        if (!form.couponTitle?.trim()) {
+            return false;
+        }
+        if (!form.couponCode?.trim()) {
+            return false;    
+        }
+        if (form.pointsRequired !== undefined && Number(form.pointsRequired) < 0) {
+            return false
+        }
+        if (form.startDate && form.endDate) {
+            const s = new Date(form.startDate);
+            const e = new Date(form.endDate);
+            if (e.getTime() < s.getTime()) {
+                return false
+            }
+        }
+        return true
+    },[form])
+
+    const toISOStringOrNull = (v?: string) => {
+        if (!v) {
+            return undefined;
+        }
+        const d = new Date(v);
+        return d.toISOString();
     }
-  }, []);
 
-  // validation ง่ายๆ
-  const canSubmit = useMemo(() => {
-    if (!form.couponTitle?.trim()) return false;
-    if (!form.couponCode?.trim()) return false;
-    if (form.pointsRequired !== undefined && Number(form.pointsRequired) < 0) return false;
-    if (form.startDate && form.endDate) {
-      const s = new Date(form.startDate);
-      const e = new Date(form.endDate);
-      if (e.getTime() < s.getTime()) return false;
+    const submit = async () => {
+        if (!canSubmit || submitting) {
+            return
+        }
+        setSubmitting(true);
+        setError(null);
+        try{
+            const payload = {
+                id: form.id || undefined,
+                authorEmail: email || undefined,
+                authorName: fullName || undefined,
+                avatarUrl: avatarUrl || undefined,
+                couponCode: form.couponCode.trim(),
+                couponTitle: form.couponTitle.trim(),
+                couponDescription: form.couponDescription?.trim() || undefined,
+                active: form.active ?? true,
+                startDate: toISOStringOrNull(form.startDate),
+                endDate: toISOStringOrNull(form.endDate),
+                pointsRequired:
+                form.pointsRequired !== undefined && form.pointsRequired !== null
+                    ? Number(form.pointsRequired)
+                    : undefined,
+            };
+            const res = await axios.post("/api/CouponPipelineService/Create-Coupon-For-User" ,payload,{
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const couponId = res?.data?.couponId ?? "";
+        if (onCreated) {
+            onCreated(couponId);
+        }
+        onClose();
+        }catch(e){
+            console.error(e)
+            setError("Can't finished create Coupon")
+        }finally{
+            setSubmitting(false);
+        }
+    };
+    if (!open) {
+        return null;
     }
-    return true;
-  }, [form]);
 
-  const toISOStringOrNull = (v?: string) => {
-    if (!v) return undefined;
-    // v มาจาก datetime-local => เป็น local time; ส่งเป็น ISO string (UTC) ให้ฝั่ง BE
-    const d = new Date(v);
-    return d.toISOString();
-  };
-
-  const submit = async () => {
-    if (!canSubmit || submitting) return;
-    setSubmitting(true);
-    setErr(null);
-    try {
-      const payload = {
-        id: form.id || undefined,
-        authorEmail: form.authorEmail || undefined,
-        authorName: form.authorName || undefined,
-        avatarUrl: form.avatarUrl || undefined,
-        couponCode: form.couponCode.trim(),
-        couponTitle: form.couponTitle.trim(),
-        couponDescription: form.couponDescription?.trim() || undefined,
-        active: form.active ?? true,
-        startDate: toISOStringOrNull(form.startDate),
-        endDate: toISOStringOrNull(form.endDate),
-        pointsRequired:
-          form.pointsRequired !== undefined && form.pointsRequired !== null
-            ? Number(form.pointsRequired)
-            : undefined,
-      };
-
-      const res = await axiosClient.post(
-        "/CouponPipelineService/Create-Coupon-For-User",
-        payload
-      );
-      // คาดว่าฝั่ง BE คืน { message, couponId }
-      const couponId = res?.data?.couponId ?? "";
-      if (onCreated) onCreated(couponId);
-      onClose();
-    } catch (e: any) {
-      console.error(e);
-      setErr(e?.response?.data || "สร้างคูปองไม่สำเร็จ");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  if (!open) return null;
-
-  return (
+   return (
     <div className="fixed inset-0 z-[60]">
       {/* Backdrop */}
       <div
@@ -252,9 +482,11 @@ export default function CouponCreateModal({ open, onClose, onCreated }: Props) {
                 <label className="text-sm font-medium">Author Email</label>
                 <input
                   className="w-full mt-1 rounded-xl border px-3 py-2"
-                  placeholder="admin@example.com"
-                  value={form.authorEmail || ""}
-                  onChange={(e) => setForm((p) => ({ ...p, authorEmail: e.target.value }))}
+                  placeholder="admin"
+                  value={email || ""}
+                  disabled
+                //   onChange={(e) => setForm((p) => ({ ...p, authorEmail: e.target.value }))}
+                readOnly
                 />
               </div>
               <div>
@@ -262,7 +494,8 @@ export default function CouponCreateModal({ open, onClose, onCreated }: Props) {
                 <input
                   className="w-full mt-1 rounded-xl border px-3 py-2"
                   placeholder="ชื่อผู้สร้างคูปอง"
-                  value={form.authorName || ""}
+                  value={fullName || ""}
+                  disabled
                   onChange={(e) => setForm((p) => ({ ...p, authorName: e.target.value }))}
                 />
               </div>
@@ -271,15 +504,16 @@ export default function CouponCreateModal({ open, onClose, onCreated }: Props) {
                 <input
                   className="w-full mt-1 rounded-xl border px-3 py-2"
                   placeholder="https://…"
-                  value={form.avatarUrl || ""}
+                  value={avatarUrl || ""}
+                  disabled
                   onChange={(e) => setForm((p) => ({ ...p, avatarUrl: e.target.value }))}
                 />
               </div>
             </div>
 
-            {err && (
+            {error && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {String(err)}
+                {String(error)}
               </div>
             )}
           </div>
@@ -305,40 +539,3 @@ export default function CouponCreateModal({ open, onClose, onCreated }: Props) {
     </div>
   );
 }
-
-
-
------------
-
-import { useState } from "react";
-import CouponCreateModal from "./CouponCreateModal";
-
-export default function CouponPage() {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Coupons</h1>
-        <button
-          onClick={() => setOpen(true)}
-          className="rounded-xl px-4 py-2 bg-blue-600 text-white"
-        >
-          + เพิ่มคูปอง
-        </button>
-      </div>
-
-      {/* ตาราง/รายการคูปองของคุณตรงนี้... */}
-
-      <CouponCreateModal
-        open={open}
-        onClose={() => setOpen(false)}
-        onCreated={(couponId) => {
-          // refresh รายการคูปอง หรือแจ้งเตือน
-          alert(`สร้างคูปองสำเร็จ! ID: ${couponId}`);
-        }}
-      />
-    </div>
-  );
-}
-
