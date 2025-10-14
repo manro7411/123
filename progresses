@@ -1,0 +1,326 @@
+package Testing;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
+import model.LearningContent;
+import model.LearningScoreEntity;
+import model.UserLessonProgress;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+@Path("/user/progress")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+@RolesAllowed({"user", "admin","administrator"})
+public class UserProgressResource {
+
+    private static final Logger log = LoggerFactory.getLogger(UserProgressResource.class);
+    @Inject EntityManager em;
+    @Inject JsonWebToken jwt;
+    @Inject
+    LearningContentResource learningContentResource;
+
+    @GET
+    public List<UserCourseProgressDto> getMyProgress() {
+        String userEmail = jwt.getSubject();
+        return fetchProgressByEmail(userEmail);
+    }
+
+    @GET
+    @Path("/all")
+    @RolesAllowed({"admin","user","administrator"})
+    public List<UserCourseProgressDto> getAllProgress() {
+        List<UserLessonProgress> progresses = em.createQuery("""
+                SELECT p FROM UserLessonProgress p
+                ORDER BY p.updatedAt DESC
+                """, UserLessonProgress.class).getResultList();
+
+        return buildProgressDtoList(progresses);
+    }
+
+    private List<UserCourseProgressDto> fetchProgressByEmail(String email) {
+        List<UserLessonProgress> progresses = em.createQuery("""
+                SELECT p FROM UserLessonProgress p
+                WHERE p.userEmail = :email
+                ORDER BY p.updatedAt DESC
+                """, UserLessonProgress.class)
+                .setParameter("email", email)
+                .getResultList();
+
+        return buildProgressDtoList(progresses);
+    }
+
+    private List<UserCourseProgressDto> buildProgressDtoList(List<UserLessonProgress> progresses) {
+        log.info("Building progress DTO list for {} entries", progresses.size());
+        List<UserCourseProgressDto> result = new ArrayList<>();
+        for (UserLessonProgress p : progresses) {
+            if (p.getLessonId() == null || p.getLessonId().isBlank()){
+                log.warn("Skipping progress entry with missing lessonId for user {}", p.getUserEmail());
+                continue;
+            }
+            LearningContent lesson = em.find(LearningContent.class, p.getLessonId().trim());
+            if (lesson == null) {
+                log.warn("Skipping progress entry for unknown lessonId: {}", p.getLessonId());
+                continue;
+            }
+
+            var dto = new UserCourseProgressDto();
+            dto.lessonId = lesson.getId();
+            dto.lessonTitle = Optional.ofNullable(lesson.getTitle()).orElse("Untitled");
+            dto.dueDate = lesson.getDueDate();
+            dto.percent = Optional.ofNullable(p.getPercent()).orElse(0);
+            dto.score = Optional.ofNullable(p.getScore()).orElse(0);
+            dto.attempts = Optional.ofNullable(p.getAttempts()).orElse(0);
+            dto.maxAttempts = Optional.ofNullable(lesson.getMaxAttempts()).orElse(1);
+            dto.userEmail = p.getUserEmail();
+            dto.lastTimestamp = p.getLastTimestamp();
+            dto.thumbnailUrl = p.getThumbnailUrl();
+            dto.updatedAt = p.getUpdatedAt();
+            result.add(dto);
+        }
+        return result;
+    }
+    @PUT
+    @Path("/{lessonId}/submit-score")
+    @Transactional
+    @RolesAllowed({"admin","user","administrator"})
+    public Response submitScore(@PathParam("lessonId") String lessonId, SubmitScoreRequest req, @Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        String method = Thread.currentThread().getStackTrace()[1].getMethodName();
+        String userEmail = jwt.getSubject();
+        log.info("User {} is calling {}() for lessonId: {}", currentUser, method, lessonId);
+        var progress = em.createQuery("""
+        SELECT p FROM UserLessonProgress p
+        WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
+        """, UserLessonProgress.class)
+                .setParameter("lessonId", lessonId)
+                .setParameter("userEmail", userEmail)
+                .getResultStream()
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException("No progress found. Please watch the lesson first."));
+
+        if (progress.getPercent() < 100) {
+            log.warn("User {} attempted to submit score without completing lesson {}", userEmail, lessonId);
+            throw new BadRequestException("You must complete the lesson (100%) before submitting score");
+        }
+        LearningContent lesson = em.find(LearningContent.class, lessonId);
+        if (lesson == null){
+            log.error("Lesson with ID {} not found for score submission", lessonId);
+            throw new NotFoundException("Lesson not found.");
+        }
+        int maxAttempts = Optional.ofNullable(lesson.getMaxAttempts()).orElse(1);
+        int currentAttempts = Optional.ofNullable(progress.getAttempts()).orElse(0);
+        if (currentAttempts >= maxAttempts) {
+            log.warn("User {} has reached max attempts for lesson {}", userEmail, lessonId);
+            throw new BadRequestException("You have reached the maximum number of attempts for this quiz.");
+        }
+        int score = req.score;
+        int totalQuestions = req.totalQuestions;
+        int percentScore = (int) Math.round((score * 100.0) / totalQuestions);
+        int levelScore;
+
+        if (percentScore >= 100) {
+            levelScore = 5;
+        } else if (percentScore >=80) {
+            levelScore = 4;
+        }else if (percentScore >=70) {
+            levelScore = 3;
+        }else if (percentScore >=60) {
+            levelScore = 2;
+        }else if (percentScore >=50) {
+            levelScore = 1;
+        }else {
+            levelScore = 0;
+        }
+        log.info("User {} scored {}/{} ({}%) => Level Score: {}", userEmail, score, totalQuestions, percentScore, levelScore);
+
+        progress.setAttempts(currentAttempts + 1);
+        progress.setScore(score);
+        progress.setTotalQuestions(totalQuestions);
+        progress.setUpdatedAt(LocalDateTime.now());
+        LearningScoreEntity learningScore = new LearningScoreEntity();
+        learningScore.setLessonId(lessonId);
+        learningScore.setUserEmail(userEmail);
+        learningScore.setOverallScore(levelScore);
+        learningScore.setUpdatedAt(LocalDateTime.now());
+        em.persist(learningScore);
+        log.info("Learning score of {} added for user {} on lesson {}", levelScore, userEmail, lessonId);
+        return Response.ok().build();
+    }
+
+    @GET
+    @Path("/scores/total")
+    @Transactional
+    public Response total() {
+        String userEmail = jwt.getSubject();
+
+        Long totalScore = em.createQuery("""
+        SELECT SUM(s.overallScore)
+        FROM LearningScoreEntity s
+        WHERE s.userEmail = :email
+        """, Long.class)
+                .setParameter("email", userEmail)
+                .getSingleResult();
+        return Response.ok(new TotalScoreDto(userEmail, (long) totalScore.intValue())).build();
+    }
+
+    @GET
+    @Path("/scores/top")
+    @Transactional
+    public Response topScore() {
+        List<TotalScoreDto> topScores = em.createQuery("""
+    SELECT s.userEmail, SUM(s.overallScore)
+    FROM LearningScoreEntity s
+    GROUP BY s.userEmail
+    ORDER BY SUM(s.overallScore) DESC
+    """, TotalScoreDto.class)
+                .setMaxResults(5)
+                .getResultList();
+
+
+        return Response.ok(topScores).build();
+    }
+
+
+    public static class TotalScoreDto {
+        public String userEmail;
+        public Long overallScore;
+
+        public TotalScoreDto(String userEmail, Long overallScore) {
+            this.userEmail = userEmail;
+            this.overallScore = overallScore;
+//            this.overallScore += (int) overallScore;
+        }
+    }
+
+
+    @PUT
+    @Path("/{lessonId}")
+    @Transactional
+    public Response updateProgress(@PathParam("lessonId") String lessonId, UpdateProgressRequest req) {
+        String userEmail = jwt.getSubject();
+        log.info("Received progress update for lessonId: {}, userEmail: {}", lessonId, userEmail);
+
+        var progress = em.createQuery("""
+                SELECT p FROM UserLessonProgress p
+                WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
+                """, UserLessonProgress.class)
+                .setParameter("lessonId", lessonId)
+                .setParameter("userEmail", userEmail)
+                .getResultStream()
+                .findFirst()
+                .orElseGet(() -> {
+                    var newProgress = new UserLessonProgress();
+                    newProgress.setLessonId(lessonId);
+                    newProgress.setUserEmail(userEmail);
+                    em.persist(newProgress);
+                    log.info("Created new UserLessonProgress for lessonId: {}, userEmail: {}", lessonId, userEmail);
+                    return newProgress;
+                });
+
+        if (progress.getStartedAt() == null) {
+            progress.setStartedAt(LocalDateTime.now());
+            log.info("Set startedAt for user {} on lesson {}: {}", userEmail, lessonId, progress.getStartedAt());
+        }
+
+        log.info("Request contentType: {}", req.contentType);
+        log.info("Request screenTime: {}", req.screenTime);
+        log.info("Existing progress screenTime: {}", progress.getScreenTime());
+
+        if ("video".equalsIgnoreCase(req.contentType)){
+            int prevTime = Optional.ofNullable(progress.getScreenTime()).orElse(0);
+            int newTime = Optional.ofNullable(req.screenTime).orElse(0);
+            progress.setScreenTime(prevTime+newTime);
+            log.info("Updated screenTime (video): {} + {} = {}", prevTime, newTime, progress.getScreenTime());
+        }else{
+            int newTime = Optional.ofNullable(progress.getScreenTime()).orElse(0);
+            progress.setScreenTime(Optional.ofNullable(req.screenTime).orElse(0));
+            log.info("Updated screenTime (non-video): {}", newTime);
+        }
+        progress.setPercent(req.percent);
+        if (req.percent == 100){
+            log.info("User {} has completed lesson {}", userEmail, lessonId);
+            progress.setCompletedAt(LocalDateTime.now());
+            progress.setStatus("completed");
+        }else if (req.percent > 0){
+            progress.setStatus("in-progress");
+            log.info("User {} progress on lesson {}: {}%", userEmail, lessonId, req.percent);
+        }else {
+            progress.setStatus("not-started");
+            log.info("User {} has not started lesson {}", userEmail, lessonId);
+        }
+
+        progress.setLastTimestamp(Optional.ofNullable(req.lastTimestamp).orElse(0));
+        progress.setUpdatedAt(LocalDateTime.now());
+        progress.setThumbnailUrl(req.thumbnailUrl);
+
+        System.out.println("Progress updated: " + progress.getPercent());
+        if (req.percent == 100 ) {
+            boolean scoreExists = em.createQuery("""
+            SELECT COUNT(ls) FROM LearningScoreEntity ls
+            WHERE ls.userEmail = :userEmail AND ls.lessonId = :lessonId
+            """, Long.class)
+                    .setParameter("userEmail", userEmail)
+                    .setParameter("lessonId", lessonId)
+                    .getSingleResult() > 0;
+
+            if (!scoreExists) {
+                LearningScoreEntity learningScore = new LearningScoreEntity();
+                learningScore.setUserEmail(userEmail);
+                learningScore.setLessonId(lessonId);
+                learningScore.setOverallScore(1);
+                learningScore.setUpdatedAt(LocalDateTime.now());
+                em.persist(learningScore);
+                log.info("Learning score added for completed lesson: {}", lessonId);
+            } else {
+                log.info("Learning score already exists for lesson: {}. Skipping insert.", lessonId);
+            }
+        }
+
+        log.info("Final screenTime for user {} on lesson {}:{}", userEmail, lessonId,progress.getScreenTime());
+        return Response.ok().build();
+    }
+
+    public static class UserCourseProgressDto {
+        public String lessonId;
+        public String thumbnailUrl;
+        public String lessonTitle;
+        public int percent;
+        public int score;
+        public int attempts;
+        public int screenTime;
+        public int totalQuestions;
+        public int maxAttempts;
+        public String userEmail;
+        public int lastTimestamp;
+        public LocalDateTime updatedAt;
+        public LocalDateTime dueDate;
+
+    }
+
+    public static class SubmitScoreRequest {
+        public int score;
+        public int totalQuestions;
+    }
+
+    public static class UpdateProgressRequest {
+        public int percent;
+        public String thumbnailUrl;
+        public Integer lastTimestamp;
+        public Integer screenTime;
+        public String contentType;
+    }
+}
