@@ -16,6 +16,7 @@ import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,10 +29,15 @@ import java.util.Optional;
 public class UserProgressResource {
 
     private static final Logger log = LoggerFactory.getLogger(UserProgressResource.class);
+
+    /** เพดานเวลาที่จะนับต่อ 1 คำขอ (วินาที) กันเปิดค้าง/สลิปนานๆ แล้วค่อยยิงทีเดียว */
+    private static final int MAX_SESSION_STEP_SECONDS = 120; // แนะนำ 60–180 ตามรอบ heartbeat ของคุณ
+
     @Inject EntityManager em;
     @Inject JsonWebToken jwt;
-    @Inject
-    LearningContentResource learningContentResource;
+    @Inject LearningContentResource learningContentResource;
+
+    // -------------------- Read APIs --------------------
 
     @GET
     public List<UserCourseProgressDto> getMyProgress() {
@@ -93,6 +99,9 @@ public class UserProgressResource {
         }
         return result;
     }
+
+    // -------------------- Score APIs --------------------
+
     @PUT
     @Path("/{lessonId}/submit-score")
     @Transactional
@@ -102,6 +111,7 @@ public class UserProgressResource {
         String method = Thread.currentThread().getStackTrace()[1].getMethodName();
         String userEmail = jwt.getSubject();
         log.info("User {} is calling {}() for lessonId: {}", currentUser, method, lessonId);
+
         var progress = em.createQuery("""
         SELECT p FROM UserLessonProgress p
         WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
@@ -116,17 +126,20 @@ public class UserProgressResource {
             log.warn("User {} attempted to submit score without completing lesson {}", userEmail, lessonId);
             throw new BadRequestException("You must complete the lesson (100%) before submitting score");
         }
+
         LearningContent lesson = em.find(LearningContent.class, lessonId);
         if (lesson == null){
             log.error("Lesson with ID {} not found for score submission", lessonId);
             throw new NotFoundException("Lesson not found.");
         }
+
         int maxAttempts = Optional.ofNullable(lesson.getMaxAttempts()).orElse(1);
         int currentAttempts = Optional.ofNullable(progress.getAttempts()).orElse(0);
         if (currentAttempts >= maxAttempts) {
             log.warn("User {} has reached max attempts for lesson {}", userEmail, lessonId);
             throw new BadRequestException("You have reached the maximum number of attempts for this quiz.");
         }
+
         int score = req.score;
         int totalQuestions = req.totalQuestions;
         int percentScore = (int) Math.round((score * 100.0) / totalQuestions);
@@ -134,15 +147,15 @@ public class UserProgressResource {
 
         if (percentScore >= 100) {
             levelScore = 5;
-        } else if (percentScore >=80) {
+        } else if (percentScore >= 80) {
             levelScore = 4;
-        }else if (percentScore >=70) {
+        } else if (percentScore >= 70) {
             levelScore = 3;
-        }else if (percentScore >=60) {
+        } else if (percentScore >= 60) {
             levelScore = 2;
-        }else if (percentScore >=50) {
+        } else if (percentScore >= 50) {
             levelScore = 1;
-        }else {
+        } else {
             levelScore = 0;
         }
         log.info("User {} scored {}/{} ({}%) => Level Score: {}", userEmail, score, totalQuestions, percentScore, levelScore);
@@ -151,12 +164,14 @@ public class UserProgressResource {
         progress.setScore(score);
         progress.setTotalQuestions(totalQuestions);
         progress.setUpdatedAt(LocalDateTime.now());
+
         LearningScoreEntity learningScore = new LearningScoreEntity();
         learningScore.setLessonId(lessonId);
         learningScore.setUserEmail(userEmail);
         learningScore.setOverallScore(levelScore);
         learningScore.setUpdatedAt(LocalDateTime.now());
         em.persist(learningScore);
+
         log.info("Learning score of {} added for user {} on lesson {}", levelScore, userEmail, lessonId);
         return Response.ok().build();
     }
@@ -174,6 +189,7 @@ public class UserProgressResource {
         """, Long.class)
                 .setParameter("email", userEmail)
                 .getSingleResult();
+
         return Response.ok(new TotalScoreDto(userEmail, (long) totalScore.intValue())).build();
     }
 
@@ -182,37 +198,40 @@ public class UserProgressResource {
     @Transactional
     public Response topScore() {
         List<TotalScoreDto> topScores = em.createQuery("""
-    SELECT s.userEmail, SUM(s.overallScore)
-    FROM LearningScoreEntity s
-    GROUP BY s.userEmail
-    ORDER BY SUM(s.overallScore) DESC
-    """, TotalScoreDto.class)
+            SELECT s.userEmail, SUM(s.overallScore)
+            FROM LearningScoreEntity s
+            GROUP BY s.userEmail
+            ORDER BY SUM(s.overallScore) DESC
+            """, TotalScoreDto.class)
                 .setMaxResults(5)
                 .getResultList();
-
 
         return Response.ok(topScores).build();
     }
 
-
     public static class TotalScoreDto {
         public String userEmail;
         public Long overallScore;
-
         public TotalScoreDto(String userEmail, Long overallScore) {
             this.userEmail = userEmail;
             this.overallScore = overallScore;
-//            this.overallScore += (int) overallScore;
         }
     }
 
+    // -------------------- Progress APIs (กันโกง screenTime) --------------------
 
+    /**
+     * อัปเดตความคืบหน้า/สถานะ โดย **ไม่รับ screenTime จาก client**
+     * แต่สะสมเวลาเป็นวินาทีฝั่งเซิร์ฟเวอร์โดยใช้ส่วนต่างระหว่าง updatedAt เดิมกับ now
+     */
     @PUT
     @Path("/{lessonId}")
     @Transactional
     public Response updateProgress(@PathParam("lessonId") String lessonId, UpdateProgressRequest req) {
         String userEmail = jwt.getSubject();
-        log.info("Received progress update for lessonId: {}, userEmail: {}", lessonId, userEmail);
+        LocalDateTime now = LocalDateTime.now();
+        log.info("Progress update -> user={}, lessonId={}, percent={}, lastTs={}",
+                userEmail, lessonId, req.percent, req.lastTimestamp);
 
         var progress = em.createQuery("""
                 SELECT p FROM UserLessonProgress p
@@ -226,73 +245,96 @@ public class UserProgressResource {
                     var newProgress = new UserLessonProgress();
                     newProgress.setLessonId(lessonId);
                     newProgress.setUserEmail(userEmail);
+                    // เริ่มนับเวลาตั้งแต่วินาทีถัดไป (ยังไม่เพิ่มเวลาในครั้งแรก)
+                    newProgress.setStartedAt(now);
+                    newProgress.setUpdatedAt(now);
                     em.persist(newProgress);
-                    log.info("Created new UserLessonProgress for lessonId: {}, userEmail: {}", lessonId, userEmail);
+                    log.info("Created new progress for user={}, lessonId={}", userEmail, lessonId);
                     return newProgress;
                 });
 
-        if (progress.getStartedAt() == null) {
-            progress.setStartedAt(LocalDateTime.now());
-            log.info("Set startedAt for user {} on lesson {}: {}", userEmail, lessonId, progress.getStartedAt());
-        }
+        // ---- คำนวณเวลาที่เพิ่ม (server-side) ----
+        LocalDateTime lastUpdate = Optional.ofNullable(progress.getUpdatedAt()).orElse(now);
+        long diffSecRaw = Duration.between(lastUpdate, now).getSeconds();
+        int step = (int) Math.max(0, Math.min(diffSecRaw, MAX_SESSION_STEP_SECONDS));
 
-        log.info("Request contentType: {}", req.contentType);
-        log.info("Request screenTime: {}", req.screenTime);
-        log.info("Existing progress screenTime: {}", progress.getScreenTime());
+        int prevScreen = Optional.ofNullable(progress.getScreenTime()).orElse(0);
+        int newScreen = prevScreen + step;
+        progress.setScreenTime(newScreen);
 
-        if ("video".equalsIgnoreCase(req.contentType)){
-            int prevTime = Optional.ofNullable(progress.getScreenTime()).orElse(0);
-            int newTime = Optional.ofNullable(req.screenTime).orElse(0);
-            progress.setScreenTime(prevTime+newTime);
-            log.info("Updated screenTime (video): {} + {} = {}", prevTime, newTime, progress.getScreenTime());
-        }else{
-            int newTime = Optional.ofNullable(progress.getScreenTime()).orElse(0);
-            progress.setScreenTime(Optional.ofNullable(req.screenTime).orElse(0));
-            log.info("Updated screenTime (non-video): {}", newTime);
-        }
+        // ---- อัปเดตฟิลด์อื่น ๆ จาก client (ยกเว้น screenTime) ----
         progress.setPercent(req.percent);
-        if (req.percent == 100){
-            log.info("User {} has completed lesson {}", userEmail, lessonId);
-            progress.setCompletedAt(LocalDateTime.now());
-            progress.setStatus("completed");
-        }else if (req.percent > 0){
-            progress.setStatus("in-progress");
-            log.info("User {} progress on lesson {}: {}%", userEmail, lessonId, req.percent);
-        }else {
-            progress.setStatus("not-started");
-            log.info("User {} has not started lesson {}", userEmail, lessonId);
-        }
-
         progress.setLastTimestamp(Optional.ofNullable(req.lastTimestamp).orElse(0));
-        progress.setUpdatedAt(LocalDateTime.now());
         progress.setThumbnailUrl(req.thumbnailUrl);
+        progress.setUpdatedAt(now);
 
-        System.out.println("Progress updated: " + progress.getPercent());
-        if (req.percent == 100 ) {
-            boolean scoreExists = em.createQuery("""
-            SELECT COUNT(ls) FROM LearningScoreEntity ls
-            WHERE ls.userEmail = :userEmail AND ls.lessonId = :lessonId
-            """, Long.class)
-                    .setParameter("userEmail", userEmail)
-                    .setParameter("lessonId", lessonId)
-                    .getSingleResult() > 0;
-
-            if (!scoreExists) {
-                LearningScoreEntity learningScore = new LearningScoreEntity();
-                learningScore.setUserEmail(userEmail);
-                learningScore.setLessonId(lessonId);
-                learningScore.setOverallScore(1);
-                learningScore.setUpdatedAt(LocalDateTime.now());
-                em.persist(learningScore);
-                log.info("Learning score added for completed lesson: {}", lessonId);
-            } else {
-                log.info("Learning score already exists for lesson: {}. Skipping insert.", lessonId);
-            }
+        if (progress.getStartedAt() == null) {
+            progress.setStartedAt(now);
         }
 
-        log.info("Final screenTime for user {} on lesson {}:{}", userEmail, lessonId,progress.getScreenTime());
+        // สถานะ & completedAt
+        if (req.percent >= 100) {
+            progress.setStatus("completed");
+            if (progress.getCompletedAt() == null) {
+                progress.setCompletedAt(now);
+            }
+        } else if (req.percent > 0) {
+            progress.setStatus("in-progress");
+            progress.setCompletedAt(null); // เผื่อเคสย้อนกลับ
+        } else {
+            progress.setStatus("not-started");
+            progress.setCompletedAt(null);
+        }
+
+        log.info("ScreenTime += {}s (capped), total={}s | percent={} | status={}",
+                step, newScreen, progress.getPercent(), progress.getStatus());
+
         return Response.ok().build();
     }
+
+    /**
+     * (ออปชัน) Endpoint เบาๆ สำหรับ “ping” ระหว่างเรียน
+     * ให้ frontend เรียกทุก ๆ 15–30 วินาที เพื่อให้ server สะสมเวลาแม่นขึ้น
+     * ไม่ต้องส่งอะไรมา นับจาก updatedAt -> now โดยยังคุมเพดาน/ครั้งเหมือนเดิม
+     */
+    @PUT
+    @Path("/{lessonId}/heartbeat")
+    @Transactional
+    public Response heartbeat(@PathParam("lessonId") String lessonId) {
+        String userEmail = jwt.getSubject();
+        LocalDateTime now = LocalDateTime.now();
+
+        var progress = em.createQuery("""
+                SELECT p FROM UserLessonProgress p
+                WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
+                """, UserLessonProgress.class)
+                .setParameter("lessonId", lessonId)
+                .setParameter("userEmail", userEmail)
+                .getResultStream()
+                .findFirst()
+                .orElseGet(() -> {
+                    var p = new UserLessonProgress();
+                    p.setLessonId(lessonId);
+                    p.setUserEmail(userEmail);
+                    p.setStartedAt(now);
+                    p.setUpdatedAt(now);
+                    em.persist(p);
+                    return p;
+                });
+
+        LocalDateTime lastUpdate = Optional.ofNullable(progress.getUpdatedAt()).orElse(now);
+        long diffSecRaw = Duration.between(lastUpdate, now).getSeconds();
+        int step = (int) Math.max(0, Math.min(diffSecRaw, MAX_SESSION_STEP_SECONDS));
+
+        progress.setScreenTime(Optional.ofNullable(progress.getScreenTime()).orElse(0) + step);
+        progress.setUpdatedAt(now);
+
+        log.debug("Heartbeat add {}s -> total {}s (user={}, lessonId={})",
+                step, progress.getScreenTime(), userEmail, lessonId);
+        return Response.ok().build();
+    }
+
+    // -------------------- DTOs --------------------
 
     public static class UserCourseProgressDto {
         public String lessonId;
@@ -308,7 +350,6 @@ public class UserProgressResource {
         public int lastTimestamp;
         public LocalDateTime updatedAt;
         public LocalDateTime dueDate;
-
     }
 
     public static class SubmitScoreRequest {
@@ -316,11 +357,15 @@ public class UserProgressResource {
         public int totalQuestions;
     }
 
+    /**
+     * หมายเหตุ: **ลบ** screenTime และ contentType ออกจาก request แล้ว
+     * ฝั่ง client ไม่ต้องส่งสองฟิลด์นี้มาอีก
+     */
     public static class UpdateProgressRequest {
         public int percent;
         public String thumbnailUrl;
         public Integer lastTimestamp;
-        public Integer screenTime;
-        public String contentType;
+        // public Integer screenTime;   // << ไม่ใช้แล้ว
+        // public String  contentType;  // << ไม่ใช้แล้ว
     }
 }
