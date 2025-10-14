@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import SupervisorSidebarWidget from "../Widgets/SupervisorSideBar";
 import { Download, Filter, RefreshCw } from "lucide-react";
 import {
@@ -13,42 +14,51 @@ import {
   Legend,
 } from "recharts";
 
-/**
- * Supervisor Learning Report (Mock Version)
- * - ไม่พึ่งพา API จริง ใช้ข้อมูลจำลองทั้งหมด
- * - สามารถสลับทีม/สมาชิก/ช่วงวัน และแสดงสรุป + กราฟ + ตารางได้ทันที
- */
+// ----------------------
+// Axios instance
+// ----------------------
+const axiosClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "/",
+});
+axiosClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+  if (token) {
+    config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+  }
+  return config;
+});
 
 // ----------------------
-// Types
+// Types (สอดคล้อง DTO ของ /report/learning)
 // ----------------------
-export type Team = { id: string; name: string; supervisorId: string; memberIds: string[] };
+export type Team = { id: string; name: string; supervisorId?: string | null; memberIds?: string[] };
 export type TeamMember = { userId: string; name?: string; role: string };
 
 export type UserLearningSummary = {
-  userId: string;
-  name?: string;
+  userId: string;            // backend คืนเป็น “อีเมล (lowercase)”
+  name?: string | null;
   totalModules: number;
   completedModules: number;
-  avgScore: number | null;     // 0..100
-  timeSpentMinutes: number;    // minutes
-  lastActiveAt?: string;       // ISO string
+  avgScore: number | null;   // 0..100
+  timeSpentMinutes: number;  // minutes
+  lastActiveAt?: string | null; // ISO
 };
 
 export type UserDailyProgress = {
-  date: string;                // YYYY-MM-DD
-  completed: number;           // modules completed that day
-  minutes: number;             // minutes spent that day
-  scoreAvg: number | null;     // average score that day
+  date: string;              // YYYY-MM-DD
+  completed: number;
+  minutes: number;
+  scoreAvg: number | null;
 };
 
 export type UserModuleDetail = {
   moduleId: string;
   moduleTitle: string;
-  status: "not_started" | "in_progress" | "completed";
+  status: "not_started" | "in-progress" | "completed";
   score: number | null;
+  totalQuestions?: number | null;
   timeSpentMinutes: number;
-  lastActiveAt?: string;
+  lastActiveAt?: string | null;
 };
 
 export type LearningReportPayload = {
@@ -68,116 +78,6 @@ export type LearningReportPayload = {
 };
 
 // ----------------------
-// Mock Generators
-// ----------------------
-const NAMES = [
-  "Alice", "Bob", "Charlie", "Daisy", "Ethan", "Fiona", "George", "Hana",
-  "Ivan", "Jenya", "Ken", "Lyla", "Mina", "Nate", "Oli", "Ploy", "Q", "Ray",
-  "Sara", "Tee", "Urs", "Vee", "Wen", "Xai", "Yui", "Zane"
-];
-
-function randInt(min: number, max: number) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function pick<T>(arr: T[]): T { return arr[randInt(0, arr.length - 1)]; }
-
-function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
-function toDateInput(d: Date) { return d.toISOString().slice(0,10); }
-
-// Mock teams & members (ผู้ใช้สามารถแก้ได้ตามต้องการ)
-const MOCK_TEAMS: Team[] = [
-  { id: "T-001", name: "Onboarding Squad", supervisorId: "svp@gmail.com", memberIds: [
-    "alice@example.com","bob@example.com","charlie@example.com","daisy@example.com","ethan@example.com"
-  ]},
-  { id: "T-002", name: "Sales Enablement", supervisorId: "svp@gmail.com", memberIds: [
-    "fiona@example.com","george@example.com","hana@example.com","ivan@example.com"
-  ]}
-];
-
-function makeMember(userId: string): TeamMember {
-  const base = userId.split("@")[0];
-  const name = base.charAt(0).toUpperCase() + base.slice(1);
-  return { userId, name, role: "member" };
-}
-
-// สร้างรายงานจำลองตามทีม/สมาชิก/ช่วงเวลา
-function generateMockReport(team: Team, selectedUserId: string | null, start: string, end: string): LearningReportPayload {
-  const members = team.memberIds.map(makeMember);
-  const rangeDays = Math.max(1, Math.floor((new Date(end).getTime() - new Date(start).getTime())/86400000) + 1);
-
-  // สร้างข้อมูลรายคน
-  const users = members
-    .filter(m => !selectedUserId || m.userId === selectedUserId)
-    .map(m => {
-      const totalModules = randInt(8, 16);
-      const completed = randInt(Math.floor(totalModules*0.3), totalModules);
-      const avgScore = Math.random() < 0.15 ? null : randInt(60, 95);
-      const timeSpent = randInt(180, 1200);
-      const lastActive = addDays(new Date(start), randInt(0, Math.max(0, rangeDays-1)));
-
-      // timeline รายวัน
-      const daily: UserDailyProgress[] = Array.from({length: rangeDays}).map((_, i) => {
-        const d = toDateInput(addDays(new Date(start), i));
-        const did = Math.random() < 0.4 ? randInt(0,2) : 0; // 40% ของวันมีความคืบหน้า
-        const mins = did > 0 ? randInt(10, 80) : randInt(0, 15);
-        const sAvg = did > 0 && Math.random() < 0.7 ? randInt(60, 95) : null;
-        return { date: d, completed: did, minutes: mins, scoreAvg: sAvg };
-      });
-
-      // รายละเอียดโมดูล
-      const modules: UserModuleDetail[] = Array.from({length: totalModules}).map((_, idx) => {
-        const statusPool = ["not_started","in_progress","completed"] as const;
-        // สุ่มโดยให้จำนวน completed ใกล้เคียงสรุปด้านบน
-        const status = idx < completed ? "completed" : pick(Array.from(statusPool));
-        const score = status === "completed" && Math.random() < 0.85 ? randInt(60,95) : null;
-        const mins = status === "not_started" ? 0 : randInt(10,80);
-        const last = addDays(new Date(start), randInt(0, Math.max(0, rangeDays-1)));
-        return {
-          moduleId: `M-${idx+1}`,
-          moduleTitle: `Module #${idx+1}`,
-          status,
-          score,
-          timeSpentMinutes: mins,
-          lastActiveAt: last.toISOString(),
-        };
-      });
-
-      const summary: UserLearningSummary = {
-        userId: m.userId,
-        name: m.name,
-        totalModules,
-        completedModules: completed,
-        avgScore,
-        timeSpentMinutes: timeSpent,
-        lastActiveAt: lastActive.toISOString(),
-      };
-
-      return { summary, daily, modules };
-    });
-
-  // รวมทีม
-  const totalLearners = users.length;
-  const sumCompletionRate = users.reduce((acc, u) => acc + (u.summary.totalModules ? (u.summary.completedModules/u.summary.totalModules) : 0), 0);
-  const avgCompletionRate = totalLearners ? sumCompletionRate / totalLearners : 0;
-  const scores = users.map(u => u.summary.avgScore).filter((s): s is number => s !== null);
-  const avgScore = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : null;
-  const totalTimeSpentMinutes = users.reduce((acc,u)=> acc + u.summary.timeSpentMinutes, 0);
-
-  return {
-    teamSummary: {
-      teamId: team.id,
-      teamName: team.name,
-      totalLearners,
-      avgCompletionRate,
-      avgScore,
-      totalTimeSpentMinutes,
-    },
-    users,
-  };
-}
-
-// ----------------------
 // Helpers
 // ----------------------
 function formatMinutes(min: number) {
@@ -188,18 +88,48 @@ function formatMinutes(min: number) {
   return `${h}h ${m}m`;
 }
 
+// JWT helper เพื่อหาผู้ใช้ปัจจุบัน (email/userId) จาก token หรือ /api/profile
+function parseJwt(token: string | null): any | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveCurrentUserId(): Promise<string | null> {
+  const cached = localStorage.getItem("userId") || sessionStorage.getItem("userId");
+  if (cached) return cached;
+  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+  const payload = parseJwt(token);
+  const jwtId = payload?.sub || payload?.userId || payload?.email || null;
+  if (jwtId) return String(jwtId);
+  try {
+    const { data } = await axiosClient.get<any>("/api/profile");
+    return data?.id || data?.userId || data?.email || null;
+  } catch {
+    return null;
+  }
+}
+
 // ----------------------
-// Main Component (Mock)
+// Main Component (เชื่อมต่อ Backend จริง)
 // ----------------------
 export default function Svplearningreport() {
   // filters
-  const [teams] = useState<Team[]>(MOCK_TEAMS);
-  const [selectedTeamId, setSelectedTeamId] = useState<string>(MOCK_TEAMS[0].id);
-  const [members, setMembers] = useState<TeamMember[]>(MOCK_TEAMS[0].memberIds.map(makeMember));
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<string>("");
+  const [members, setMembers] = useState<TeamMember[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
+  // date range: default 7 วันล่าสุด
   const today = useMemo(() => new Date(), []);
   const weekAgo = useMemo(() => new Date(Date.now() - 6 * 24 * 3600 * 1000), []);
+  const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(toDateInput(weekAgo));
   const [endDate, setEndDate] = useState(toDateInput(today));
 
@@ -207,36 +137,99 @@ export default function Svplearningreport() {
   const [report, setReport] = useState<LearningReportPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [booting, setBooting] = useState(true);
 
-  // team change -> update members
+  // โหลดทีมของฉัน
   useEffect(() => {
-    const team = teams.find(t => t.id === selectedTeamId)!;
-    const ms = team.memberIds.map(makeMember);
-    setMembers(ms);
-    // ถ้า user เดิมไม่อยู่ในทีมใหม่ ให้รีเซ็ต
-    setSelectedUserId(prev => (prev && ms.some(m => m.userId === prev)) ? prev : null);
-  }, [selectedTeamId, teams]);
+    (async () => {
+      setBooting(true);
+      setError(null);
+      try {
+        const uid = await resolveCurrentUserId();
+        if (!uid) {
+          setError("ไม่พบผู้ใช้ปัจจุบัน (userId) — ตรวจสอบโทเคน/การเข้าสู่ระบบ");
+          setBooting(false);
+          return;
+        }
+        // แก้ path ให้ตรง backend ของคุณ (มีทั้ง /api/teams/my-teams?userId=...)
+        const { data } = await axiosClient.get<Team[]>("/api/teams/my-teams", { params: { userId: uid } });
+        setTeams(data || []);
+        if (data?.length) {
+          setSelectedTeamId(data[0].id);
+        } else {
+          setSelectedTeamId("");
+        }
+      } catch (e: any) {
+        setError(e?.response?.data?.message || "โหลดทีมไม่สำเร็จ");
+      } finally {
+        setBooting(false);
+      }
+    })();
+  }, []);
 
-  // generate first report
-  useEffect(() => { fetchReport(); /* eslint-disable-next-line */ }, []);
+  // เมื่อเปลี่ยนทีม -> โหลดสมาชิก
+  useEffect(() => {
+    (async () => {
+      if (!selectedTeamId) {
+        setMembers([]);
+        setSelectedUserId(null);
+        setReport(null);
+        return;
+      }
+      setError(null);
+      try {
+        const { data } = await axiosClient.get<TeamMember[]>(`/api/teams/${selectedTeamId}/members`, {
+          params: { order: "roleThenJoined" },
+        });
+        // backend คืน TeamMemberDTO = { userId, name, role }
+        setMembers(data || []);
+        // reset ถ้า user เดิมไม่อยู่
+        setSelectedUserId((prev) => (prev && (data || []).some((m: TeamMember) => m.userId === prev)) ? prev : null);
+      } catch (e: any) {
+        setMembers([]);
+        setSelectedUserId(null);
+        setError(e?.response?.data?.message || "โหลดสมาชิกทีมไม่สำเร็จ");
+      }
+    })();
+  }, [selectedTeamId]);
 
-  const fetchReport = () => {
-    setLoading(true); setError(null);
+  // โหลดรายงานครั้งแรก (หลังมีทีม)
+  useEffect(() => {
+    if (!selectedTeamId) return;
+    fetchReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTeamId]);
+
+  // เรียก backend report
+  const fetchReport = async () => {
+    if (!selectedTeamId) return;
+    setLoading(true);
+    setError(null);
     try {
-      const team = teams.find(t => t.id === selectedTeamId)!;
-      const data = generateMockReport(team, selectedUserId, startDate, endDate);
-      // จำลอง latency เล็กน้อย
-      setTimeout(() => { setReport(data); setLoading(false); }, 300);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const params: any = {
+        teamId: selectedTeamId,
+        start: startDate,
+        end: endDate,
+      };
+      if (selectedUserId) params.userId = selectedUserId; // *** หมายเหตุ: backend คาดหวัง userId (ค่าที่เก็บใน memberId) ***
+
+      // แก้ path ให้ตรงกับ resource ของคุณ (ตัวอย่างนี้ใช้ /report/learning ตามที่เราสร้าง)
+      const { data } = await axiosClient.get<LearningReportPayload>("/report/learning", { params });
+      setReport(data || null);
     } catch (e: any) {
-      setError(e?.message || "สร้างรายงานจำลองไม่สำเร็จ");
+      setReport(null);
+      setError(e?.response?.data || e?.message || "โหลดรายงานไม่สำเร็จ");
+    } finally {
       setLoading(false);
     }
   };
 
   const teamSummary = report?.teamSummary || null;
   const users = report?.users || [];
-  const selectedUser = useMemo(() => users.find(u => u.summary.userId === selectedUserId) || null, [users, selectedUserId]);
+  const selectedUser = useMemo(
+    () => users.find((u) => u.summary.userId === (selectedUserId ?? "")) || null,
+    [users, selectedUserId]
+  );
 
   // export helpers
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -274,6 +267,7 @@ export default function Svplearningreport() {
       moduleTitle: m.moduleTitle,
       status: m.status,
       score: m.score ?? "",
+      totalQuestions: m.totalQuestions ?? "",
       timeSpentMinutes: m.timeSpentMinutes,
       lastActiveAt: m.lastActiveAt || "",
     }));
@@ -292,7 +286,7 @@ export default function Svplearningreport() {
             <button
               className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 bg-white hover:bg-gray-50"
               onClick={fetchReport}
-              disabled={loading}
+              disabled={loading || !selectedTeamId}
               title="Refresh"
             >
               <RefreshCw className="w-4 h-4" /> รีเฟรช
@@ -324,6 +318,7 @@ export default function Svplearningreport() {
             <div className="font-semibold">ตัวกรองรายงาน</div>
           </div>
 
+          {/* เลือกทีม/สมาชิก/ช่วงวัน */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {/* Team */}
             <div className="space-y-1">
@@ -332,7 +327,9 @@ export default function Svplearningreport() {
                 className="w-full rounded-xl border px-3 py-2 bg-white"
                 value={selectedTeamId}
                 onChange={(e) => setSelectedTeamId(e.target.value)}
+                disabled={booting}
               >
+                {!teams.length && <option value="">— ไม่มีทีม —</option>}
                 {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
@@ -344,6 +341,7 @@ export default function Svplearningreport() {
                 className="w-full rounded-xl border px-3 py-2 bg-white"
                 value={selectedUserId || ""}
                 onChange={(e) => setSelectedUserId(e.target.value || null)}
+                disabled={!members.length}
               >
                 <option value="">— ทั้งทีม —</option>
                 {members.map(m => (
@@ -355,11 +353,21 @@ export default function Svplearningreport() {
             {/* Date range */}
             <div className="space-y-1">
               <div className="text-xs uppercase opacity-60">เริ่ม</div>
-              <input type="date" className="w-full rounded-xl border px-3 py-2 bg-white" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <input
+                type="date"
+                className="w-full rounded-xl border px-3 py-2 bg-white"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
             </div>
             <div className="space-y-1">
               <div className="text-xs uppercase opacity-60">สิ้นสุด</div>
-              <input type="date" className="w-full rounded-xl border px-3 py-2 bg-white" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              <input
+                type="date"
+                className="w-full rounded-xl border px-3 py-2 bg-white"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
             </div>
           </div>
 
@@ -367,16 +375,16 @@ export default function Svplearningreport() {
             <button
               className="rounded-xl px-4 py-2 border bg-blue-600 text-white hover:opacity-90"
               onClick={fetchReport}
-              disabled={loading}
+              disabled={loading || !selectedTeamId}
             >
-              ดูรายงาน
+              {loading ? "กำลังโหลด..." : "ดูรายงาน"}
             </button>
           </div>
         </div>
 
         {/* Errors */}
         {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">{error}</div>
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-red-700">{String(error)}</div>
         )}
 
         {/* Team Summary */}
@@ -534,7 +542,7 @@ export default function Svplearningreport() {
         )}
 
         {!loading && !teamSummary && !error && (
-          <div className="text-sm opacity-70">เลือกทีม, ช่วงเวลา แล้วกด "ดูรายงาน" เพื่อเริ่มต้น (ข้อมูลจำลอง)</div>
+          <div className="text-sm opacity-70">เลือกทีม, ช่วงเวลา แล้วกด "ดูรายงาน"</div>
         )}
       </div>
     </div>
