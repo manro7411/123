@@ -1,0 +1,330 @@
+package Testing.dto;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+
+public class LearningReportDto {
+
+    public TeamSummaryDto teamSummary;
+    public List<UserReportDto> users;
+
+    public static class TeamSummaryDto {
+        public String teamId;
+        public String teamName;
+        public int totalLearners;
+        public double avgCompletionRate; // 0..1
+        public Integer avgScore;         // 0..100 or null
+        public int totalTimeSpentMinutes;
+    }
+
+    public static class UserReportDto {
+        public UserLearningSummary summary;
+        public List<UserDailyProgressDto> daily;
+        public List<UserModuleDetailDto> modules;
+    }
+
+    public static class UserLearningSummary {
+        public String userId;              // email
+        public String name;                // ถ้ามีในระบบอื่น ให้เติม
+        public int totalModules;
+        public int completedModules;
+        public Integer avgScore;           // 0..100 or null
+        public int timeSpentMinutes;
+        public String lastActiveAt;        // ISO string
+    }
+
+    public static class UserDailyProgressDto {
+        public LocalDate date;   // YYYY-MM-DD
+        public int completed;    // modules completed that day
+        public int minutes;      // 0 (เราไม่มี daily screenTime)
+        public Integer scoreAvg; // null (ไม่มี daily score เฉลี่ย)
+    }
+
+    public static class UserModuleDetailDto {
+        public String moduleId;
+        public String moduleTitle;
+        public String status;            // not_started | in-progress | completed
+        public Integer score;            // raw score (ถ้ามี)
+        public Integer totalQuestions;   // (ถ้ามี)
+        public Integer timeSpentMinutes; // จาก screenTime/60
+        public String lastActiveAt;      // ISO string
+    }
+}
+
+package Testing;
+
+import Testing.dto.LearningReportDto;
+import Testing.dto.LearningReportDto.*;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.time.*;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Path("/reports/learning")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+@RolesAllowed({"supervisor","administrator","admin"})
+public class SupervisorLearningReportResource {
+
+    private static final Logger log = LoggerFactory.getLogger(SupervisorLearningReportResource.class);
+
+    @Inject EntityManager em;
+
+    /**
+     * GET /reports/learning?teamId=...&start=YYYY-MM-DD&end=YYYY-MM-DD&userId=(optional)
+     * - teamId: บังคับ
+     * - start/end: ถ้าไม่ส่ง จะ default = 7 วันล่าสุด
+     * - userId: ถ้าส่ง จะกรองรายบุคคล (ในทีม)
+     */
+    @GET
+    public Response getReport(@QueryParam("teamId") String teamId,
+                              @QueryParam("start") String startStr,
+                              @QueryParam("end") String endStr,
+                              @QueryParam("userId") String filterUserId) {
+        if (teamId == null || teamId.isBlank()) {
+            throw new BadRequestException("teamId is required");
+        }
+
+        // ช่วงวัน (เป็น [start, end]) ใช้ใน where ด้วย updatedAt/completedAt
+        LocalDate startDate = (startStr == null || startStr.isBlank())
+                ? LocalDate.now().minusDays(6)
+                : LocalDate.parse(startStr);
+        LocalDate endDate = (endStr == null || endStr.isBlank())
+                ? LocalDate.now()
+                : LocalDate.parse(endStr);
+
+        // แปลงเป็น LocalDateTime ครอบสิ้นวัน
+        LocalDateTime startAt = startDate.atStartOfDay();
+        LocalDateTime endAt = endDate.atTime(LocalTime.MAX);
+
+        // โหลดทีม + สมาชิก
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) {
+            throw new NotFoundException("Team not found");
+        }
+        team.getMemberEntities().size(); // load
+        List<MemberEntity> teamMembers = team.getMemberEntities()
+                .stream()
+                .filter(m -> m.getMemberId() != null && !m.getMemberId().isBlank())
+                .collect(Collectors.toList());
+
+        // email รายคนในทีม
+        Set<String> memberEmails = teamMembers.stream()
+                .map(MemberEntity::getMemberId)
+                .map(String::toLowerCase)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        // กรอง userId ถ้ามี
+        if (filterUserId != null && !filterUserId.isBlank()) {
+            String target = filterUserId.toLowerCase();
+            if (!memberEmails.contains(target)) {
+                // ไม่ใช่สมาชิกทีม -> ว่าง
+                return Response.ok(emptyFor(team)).build();
+            }
+            memberEmails = new LinkedHashSet<>(List.of(target));
+        }
+
+        // โหลด progress ของคนในทีมภายในช่วง
+        // หมายเหตุ: เราไม่มีข้อมูลแยก "daily time" จึงใช้ screenTime แบบสะสม และใช้ completedAt เพื่อทำ daily completed
+        List<UserLessonProgress> progresses = em.createQuery("""
+            SELECT p FROM UserLessonProgress p
+            WHERE LOWER(p.userEmail) IN :emails
+              AND (
+                   (p.updatedAt BETWEEN :startAt AND :endAt)
+                OR (p.completedAt IS NOT NULL AND p.completedAt BETWEEN :startAt AND :endAt)
+              )
+            """, UserLessonProgress.class)
+            .setParameter("emails", memberEmails)
+            .setParameter("startAt", startAt)
+            .setParameter("endAt", endAt)
+            .getResultList();
+
+        // group by user
+        Map<String, List<UserLessonProgress>> byUser = progresses.stream()
+                .collect(Collectors.groupingBy(p -> p.getUserEmail().toLowerCase(), LinkedHashMap::new, Collectors.toList()));
+
+        // สร้างรายคน
+        List<UserReportDto> userReports = new ArrayList<>();
+        for (String userEmail : memberEmails) {
+            List<UserLessonProgress> userPs = byUser.getOrDefault(userEmail, List.of());
+
+            // รวมโมดูลทั้งหมดจาก progress ภายในช่วง
+            int totalModules = (int) userPs.stream()
+                    .map(UserLessonProgress::getLessonId)
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(s -> !s.isBlank())
+                    .distinct()
+                    .count();
+
+            // completed modules: percent==100 และ completedAt อยู่ในช่วง (ถ้ามี)
+            int completedModules = (int) userPs.stream()
+                    .filter(p -> p.getPercent() != null && p.getPercent() == 100)
+                    .filter(p -> p.getCompletedAt() == null
+                            || (!p.getCompletedAt().isAfter(endAt) && !p.getCompletedAt().isBefore(startAt)))
+                    .map(UserLessonProgress::getLessonId)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .count();
+
+            // avgScore (%): คิดจาก score/totalQuestions ที่มีข้อมูล
+            List<Integer> percs = userPs.stream()
+                    .filter(p -> p.getScore() != null && p.getTotalQuestions() != null && p.getTotalQuestions() > 0)
+                    .map(p -> (int) Math.round(p.getScore() * 100.0 / p.getTotalQuestions()))
+                    .collect(Collectors.toList());
+            Integer avgScore = percs.isEmpty() ? null :
+                    (int) Math.round(percs.stream().mapToInt(i -> i).average().orElse(0));
+
+            // timeSpentMinutes: ใช้ screenTime สะสม (วินาที) -> นาที (โดยประมาณ)
+            int timeSpentMinutes = userPs.stream()
+                    .map(UserLessonProgress::getScreenTime)
+                    .filter(Objects::nonNull)
+                    .mapToInt(Integer::intValue)
+                    .sum() / 60;
+
+            // lastActiveAt = updatedAt ล่าสุด
+            String lastActiveAt = userPs.stream()
+                    .map(UserLessonProgress::getUpdatedAt)
+                    .filter(Objects::nonNull)
+                    .max(Comparator.naturalOrder())
+                    .map(LocalDateTime::toString)
+                    .orElse(null);
+
+            // รายละเอียดโมดูล
+            List<UserModuleDetailDto> modules = userPs.stream()
+                    .collect(Collectors.groupingBy(p -> p.getLessonId() == null ? "" : p.getLessonId().trim()))
+                    .entrySet().stream()
+                    .filter(e -> e.getKey() != null && !e.getKey().isBlank())
+                    .map(e -> {
+                        String lessonId = e.getKey();
+                        List<UserLessonProgress> rows = e.getValue();
+
+                        // เอา row ล่าสุด (updatedAt มากสุด) มาเป็นตัวแทน
+                        UserLessonProgress latest = rows.stream()
+                                .max(Comparator.comparing(UserLessonProgress::getUpdatedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
+                                .orElse(rows.get(0));
+
+                        LearningContent lesson = em.find(LearningContent.class, lessonId);
+                        String title = (lesson != null && lesson.getTitle() != null) ? lesson.getTitle() : ("Lesson " + lessonId);
+
+                        UserModuleDetailDto md = new UserModuleDetailDto();
+                        md.moduleId = lessonId;
+                        md.moduleTitle = title;
+                        md.status = latest.getStatus() != null ? latest.getStatus() : (
+                                latest.getPercent() != null && latest.getPercent() >= 100 ? "completed" :
+                                        (latest.getPercent() != null && latest.getPercent() > 0 ? "in-progress" : "not_started")
+                        );
+                        md.score = latest.getScore(); // raw
+                        md.totalQuestions = latest.getTotalQuestions();
+                        md.timeSpentMinutes = Optional.ofNullable(latest.getScreenTime()).orElse(0) / 60;
+                        md.lastActiveAt = latest.getUpdatedAt() != null ? latest.getUpdatedAt().toString() : null;
+                        return md;
+                    })
+                    .sorted(Comparator.comparing(m -> m.moduleId))
+                    .collect(Collectors.toList());
+
+            // daily (best-effort): นับจำนวนโมดูลที่ "จบ" ในแต่ละวัน จาก completedAt
+            Map<LocalDate, Integer> completedByDay = new LinkedHashMap<>();
+            LocalDate cur = startDate;
+            while (!cur.isAfter(endDate)) {
+                completedByDay.put(cur, 0);
+                cur = cur.plusDays(1);
+            }
+            userPs.stream()
+                    .filter(p -> p.getCompletedAt() != null)
+                    .forEach(p -> {
+                        LocalDate d = p.getCompletedAt().toLocalDate();
+                        if (!d.isBefore(startDate) && !d.isAfter(endDate)) {
+                            completedByDay.computeIfPresent(d, (k, v) -> v + 1);
+                        }
+                    });
+
+            List<UserDailyProgressDto> daily = completedByDay.entrySet().stream()
+                    .map(e -> {
+                        UserDailyProgressDto dd = new UserDailyProgressDto();
+                        dd.date = e.getKey();
+                        dd.completed = e.getValue();
+                        dd.minutes = 0;      // ไม่มี daily time แท้
+                        dd.scoreAvg = null;  // ไม่มี daily avg score
+                        return dd;
+                    })
+                    .collect(Collectors.toList());
+
+            // สร้าง summary
+            UserLearningSummary summary = new UserLearningSummary();
+            summary.userId = userEmail;
+            summary.name = null; // ถ้ามี user table อื่นๆ ให้ join/เติมชื่อได้
+            summary.totalModules = totalModules;
+            summary.completedModules = completedModules;
+            summary.avgScore = avgScore;
+            summary.timeSpentMinutes = timeSpentMinutes;
+            summary.lastActiveAt = lastActiveAt;
+
+            UserReportDto ur = new UserReportDto();
+            ur.summary = summary;
+            ur.daily = daily;
+            ur.modules = modules;
+            userReports.add(ur);
+        }
+
+        // Team summary
+        TeamSummaryDto teamSummary = new TeamSummaryDto();
+        teamSummary.teamId = team.getId();
+        teamSummary.teamName = team.getName();
+        teamSummary.totalLearners = userReports.size();
+
+        // avgCompletionRate: เฉลี่ยของ (completed/total) รายคน (ถ้า total=0 นับ 0)
+        double sumRates = 0;
+        int countRates = 0;
+        for (UserReportDto ur : userReports) {
+            if (ur.summary.totalModules > 0) {
+                sumRates += (ur.summary.completedModules * 1.0 / ur.summary.totalModules);
+                countRates++;
+            }
+        }
+        teamSummary.avgCompletionRate = (countRates == 0) ? 0.0 : (sumRates / countRates);
+
+        // avgScore เฉลี่ยเลขเต็ม (0..100) จากรายคนที่มีค่า
+        List<Integer> teamScores = userReports.stream()
+                .map(ur -> ur.summary.avgScore)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        teamSummary.avgScore = teamScores.isEmpty() ? null :
+                (int) Math.round(teamScores.stream().mapToInt(i -> i).average().orElse(0));
+
+        // totalTimeSpentMinutes: รวมของรายคน
+        teamSummary.totalTimeSpentMinutes = userReports.stream()
+                .map(ur -> ur.summary.timeSpentMinutes)
+                .reduce(0, Integer::sum);
+
+        LearningReportDto dto = new LearningReportDto();
+        dto.teamSummary = teamSummary;
+        dto.users = userReports;
+
+        return Response.ok(dto).build();
+    }
+
+    private LearningReportDto emptyFor(TeamEntity team) {
+        LearningReportDto dto = new LearningReportDto();
+        TeamSummaryDto ts = new TeamSummaryDto();
+        ts.teamId = team.getId();
+        ts.teamName = team.getName();
+        ts.totalLearners = 0;
+        ts.avgCompletionRate = 0.0;
+        ts.avgScore = null;
+        ts.totalTimeSpentMinutes = 0;
+        dto.teamSummary = ts;
+        dto.users = List.of();
+        return dto;
+    }
+}
