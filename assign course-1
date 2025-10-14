@@ -1,0 +1,1018 @@
+package model;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "user_lesson_progress")
+public class UserLessonProgress {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "lesson_id", nullable = false, length = 30)
+    private String lessonId;
+
+    @Column(name = "thumbnail_url")
+    private String thumbnailUrl;
+
+    @Column(name = "user_email", nullable = false)
+    private String userEmail;
+
+    @Column(nullable = false)
+    private Integer percent = 0;
+
+    @Column(name = "score")
+    private Integer score = 0;
+
+    @Column(name = "attempts", nullable = false)
+    private Integer attempts = 0;
+
+    @Column(name = "last_timestamp", nullable = false)
+    private Integer lastTimestamp = 0;
+
+    @Column(name = "total_questions")
+    private Integer totalQuestions = 0;
+
+    @Column(name = "Screen time")
+    private Integer screenTime = 0;
+
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt = LocalDateTime.now();
+
+    @Column(name = "status")
+    private String status = "not_started";
+
+    @Column(name = "started_at")
+    private LocalDateTime startedAt = LocalDateTime.now();
+
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
+
+
+
+    public Long getId() {
+        return id;
+    }
+
+    public String getLessonId() {
+        return lessonId;
+    }
+
+    public String getUserEmail() {
+        return userEmail;
+    }
+
+    public Integer getPercent() {
+        return percent;
+    }
+
+    public Integer getScore() {
+        return score;
+    }
+
+    public Integer getAttempts() {
+        return attempts;
+    }
+
+    public Integer getLastTimestamp() {
+        return lastTimestamp;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setLessonId(String lessonId) {
+        this.lessonId = lessonId;
+    }
+
+    public void setUserEmail(String userEmail) {
+        this.userEmail = userEmail;
+    }
+
+    public void setPercent(Integer percent) {
+        this.percent = percent;
+    }
+
+    public void setScore(Integer score) {
+        this.score = score;
+    }
+
+
+    public void setAttempts(Integer attempts) {
+        this.attempts = attempts;
+    }
+
+    public void setLastTimestamp(Integer lastTimestamp) {
+        this.lastTimestamp = lastTimestamp;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public String getThumbnailUrl() {
+        return thumbnailUrl;
+    }
+    public void setThumbnailUrl(String thumbnailUrl) {
+        this.thumbnailUrl = thumbnailUrl;
+    }
+
+    public Integer getTotalQuestions() {
+        return totalQuestions;
+    }
+    public void setTotalQuestions(Integer totalQuestions) {
+        this.totalQuestions = totalQuestions;
+    }
+
+    public void setScreenTime(Integer screenTime) {
+        this.screenTime = screenTime;
+    }
+
+    public Integer getScreenTime() {
+        return screenTime;
+    }
+
+    public String getStatus() {return status;}
+
+    public void setStatus(String status) {this.status = status;}
+
+    public LocalDateTime getCompletedAt() {return completedAt;}
+
+    public void setCompletedAt(LocalDateTime completedAt) {this.completedAt = completedAt;}
+
+    public LocalDateTime getStartedAt() {return startedAt;}
+
+    public void setStartedAt(LocalDateTime startedAt) {this.startedAt = startedAt;}
+}
+
+---package Testing;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
+import model.LearningContent;
+import model.LearningScoreEntity;
+import model.UserLessonProgress;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+@Path("/user/progress")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+@RolesAllowed({"user", "admin","administrator"})
+public class UserProgressResource {
+
+    private static final Logger log = LoggerFactory.getLogger(UserProgressResource.class);
+    @Inject EntityManager em;
+    @Inject JsonWebToken jwt;
+    @Inject
+    LearningContentResource learningContentResource;
+
+    @GET
+    public List<UserCourseProgressDto> getMyProgress() {
+        String userEmail = jwt.getSubject();
+        return fetchProgressByEmail(userEmail);
+    }
+
+    @GET
+    @Path("/all")
+    @RolesAllowed({"admin","user","administrator"})
+    public List<UserCourseProgressDto> getAllProgress() {
+        List<UserLessonProgress> progresses = em.createQuery("""
+                SELECT p FROM UserLessonProgress p
+                ORDER BY p.updatedAt DESC
+                """, UserLessonProgress.class).getResultList();
+
+        return buildProgressDtoList(progresses);
+    }
+
+    private List<UserCourseProgressDto> fetchProgressByEmail(String email) {
+        List<UserLessonProgress> progresses = em.createQuery("""
+                SELECT p FROM UserLessonProgress p
+                WHERE p.userEmail = :email
+                ORDER BY p.updatedAt DESC
+                """, UserLessonProgress.class)
+                .setParameter("email", email)
+                .getResultList();
+
+        return buildProgressDtoList(progresses);
+    }
+
+    private List<UserCourseProgressDto> buildProgressDtoList(List<UserLessonProgress> progresses) {
+        log.info("Building progress DTO list for {} entries", progresses.size());
+        List<UserCourseProgressDto> result = new ArrayList<>();
+        for (UserLessonProgress p : progresses) {
+            if (p.getLessonId() == null || p.getLessonId().isBlank()){
+                log.warn("Skipping progress entry with missing lessonId for user {}", p.getUserEmail());
+                continue;
+            }
+            LearningContent lesson = em.find(LearningContent.class, p.getLessonId().trim());
+            if (lesson == null) {
+                log.warn("Skipping progress entry for unknown lessonId: {}", p.getLessonId());
+                continue;
+            }
+
+            var dto = new UserCourseProgressDto();
+            dto.lessonId = lesson.getId();
+            dto.lessonTitle = Optional.ofNullable(lesson.getTitle()).orElse("Untitled");
+            dto.dueDate = lesson.getDueDate();
+            dto.percent = Optional.ofNullable(p.getPercent()).orElse(0);
+            dto.score = Optional.ofNullable(p.getScore()).orElse(0);
+            dto.attempts = Optional.ofNullable(p.getAttempts()).orElse(0);
+            dto.maxAttempts = Optional.ofNullable(lesson.getMaxAttempts()).orElse(1);
+            dto.userEmail = p.getUserEmail();
+            dto.lastTimestamp = p.getLastTimestamp();
+            dto.thumbnailUrl = p.getThumbnailUrl();
+            dto.updatedAt = p.getUpdatedAt();
+            result.add(dto);
+        }
+        return result;
+    }
+    @PUT
+    @Path("/{lessonId}/submit-score")
+    @Transactional
+    @RolesAllowed({"admin","user","administrator"})
+    public Response submitScore(@PathParam("lessonId") String lessonId, SubmitScoreRequest req, @Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        String method = Thread.currentThread().getStackTrace()[1].getMethodName();
+        String userEmail = jwt.getSubject();
+        log.info("User {} is calling {}() for lessonId: {}", currentUser, method, lessonId);
+        var progress = em.createQuery("""
+        SELECT p FROM UserLessonProgress p
+        WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
+        """, UserLessonProgress.class)
+                .setParameter("lessonId", lessonId)
+                .setParameter("userEmail", userEmail)
+                .getResultStream()
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException("No progress found. Please watch the lesson first."));
+
+        if (progress.getPercent() < 100) {
+            log.warn("User {} attempted to submit score without completing lesson {}", userEmail, lessonId);
+            throw new BadRequestException("You must complete the lesson (100%) before submitting score");
+        }
+        LearningContent lesson = em.find(LearningContent.class, lessonId);
+        if (lesson == null){
+            log.error("Lesson with ID {} not found for score submission", lessonId);
+            throw new NotFoundException("Lesson not found.");
+        }
+        int maxAttempts = Optional.ofNullable(lesson.getMaxAttempts()).orElse(1);
+        int currentAttempts = Optional.ofNullable(progress.getAttempts()).orElse(0);
+        if (currentAttempts >= maxAttempts) {
+            log.warn("User {} has reached max attempts for lesson {}", userEmail, lessonId);
+            throw new BadRequestException("You have reached the maximum number of attempts for this quiz.");
+        }
+        int score = req.score;
+        int totalQuestions = req.totalQuestions;
+        int percentScore = (int) Math.round((score * 100.0) / totalQuestions);
+        int levelScore;
+
+        if (percentScore >= 100) {
+            levelScore = 5;
+        } else if (percentScore >=80) {
+            levelScore = 4;
+        }else if (percentScore >=70) {
+            levelScore = 3;
+        }else if (percentScore >=60) {
+            levelScore = 2;
+        }else if (percentScore >=50) {
+            levelScore = 1;
+        }else {
+            levelScore = 0;
+        }
+        log.info("User {} scored {}/{} ({}%) => Level Score: {}", userEmail, score, totalQuestions, percentScore, levelScore);
+
+        progress.setAttempts(currentAttempts + 1);
+        progress.setScore(score);
+        progress.setTotalQuestions(totalQuestions);
+        progress.setUpdatedAt(LocalDateTime.now());
+        LearningScoreEntity learningScore = new LearningScoreEntity();
+        learningScore.setLessonId(lessonId);
+        learningScore.setUserEmail(userEmail);
+        learningScore.setOverallScore(levelScore);
+        learningScore.setUpdatedAt(LocalDateTime.now());
+        em.persist(learningScore);
+        log.info("Learning score of {} added for user {} on lesson {}", levelScore, userEmail, lessonId);
+        return Response.ok().build();
+    }
+
+    @GET
+    @Path("/scores/total")
+    @Transactional
+    public Response total() {
+        String userEmail = jwt.getSubject();
+
+        Long totalScore = em.createQuery("""
+        SELECT SUM(s.overallScore)
+        FROM LearningScoreEntity s
+        WHERE s.userEmail = :email
+        """, Long.class)
+                .setParameter("email", userEmail)
+                .getSingleResult();
+        return Response.ok(new TotalScoreDto(userEmail, (long) totalScore.intValue())).build();
+    }
+
+    @GET
+    @Path("/scores/top")
+    @Transactional
+    public Response topScore() {
+        List<TotalScoreDto> topScores = em.createQuery("""
+    SELECT s.userEmail, SUM(s.overallScore)
+    FROM LearningScoreEntity s
+    GROUP BY s.userEmail
+    ORDER BY SUM(s.overallScore) DESC
+    """, TotalScoreDto.class)
+                .setMaxResults(5)
+                .getResultList();
+
+
+        return Response.ok(topScores).build();
+    }
+
+
+    public static class TotalScoreDto {
+        public String userEmail;
+        public Long overallScore;
+
+        public TotalScoreDto(String userEmail, Long overallScore) {
+            this.userEmail = userEmail;
+            this.overallScore = overallScore;
+//            this.overallScore += (int) overallScore;
+        }
+    }
+
+
+    @PUT
+    @Path("/{lessonId}")
+    @Transactional
+    public Response updateProgress(@PathParam("lessonId") String lessonId, UpdateProgressRequest req) {
+        String userEmail = jwt.getSubject();
+        log.info("Received progress update for lessonId: {}, userEmail: {}", lessonId, userEmail);
+
+        var progress = em.createQuery("""
+                SELECT p FROM UserLessonProgress p
+                WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
+                """, UserLessonProgress.class)
+                .setParameter("lessonId", lessonId)
+                .setParameter("userEmail", userEmail)
+                .getResultStream()
+                .findFirst()
+                .orElseGet(() -> {
+                    var newProgress = new UserLessonProgress();
+                    newProgress.setLessonId(lessonId);
+                    newProgress.setUserEmail(userEmail);
+                    em.persist(newProgress);
+                    log.info("Created new UserLessonProgress for lessonId: {}, userEmail: {}", lessonId, userEmail);
+                    return newProgress;
+                });
+
+        if (progress.getStartedAt() == null) {
+            progress.setStartedAt(LocalDateTime.now());
+            log.info("Set startedAt for user {} on lesson {}: {}", userEmail, lessonId, progress.getStartedAt());
+        }
+
+        log.info("Request contentType: {}", req.contentType);
+        log.info("Request screenTime: {}", req.screenTime);
+        log.info("Existing progress screenTime: {}", progress.getScreenTime());
+
+        if ("video".equalsIgnoreCase(req.contentType)){
+            int prevTime = Optional.ofNullable(progress.getScreenTime()).orElse(0);
+            int newTime = Optional.ofNullable(req.screenTime).orElse(0);
+            progress.setScreenTime(prevTime+newTime);
+            log.info("Updated screenTime (video): {} + {} = {}", prevTime, newTime, progress.getScreenTime());
+        }else{
+            int newTime = Optional.ofNullable(progress.getScreenTime()).orElse(0);
+            progress.setScreenTime(Optional.ofNullable(req.screenTime).orElse(0));
+            log.info("Updated screenTime (non-video): {}", newTime);
+        }
+        progress.setPercent(req.percent);
+        if (req.percent == 100){
+            log.info("User {} has completed lesson {}", userEmail, lessonId);
+            progress.setCompletedAt(LocalDateTime.now());
+            progress.setStatus("completed");
+        }else if (req.percent > 0){
+            progress.setStatus("in-progress");
+            log.info("User {} progress on lesson {}: {}%", userEmail, lessonId, req.percent);
+        }else {
+            progress.setStatus("not-started");
+            log.info("User {} has not started lesson {}", userEmail, lessonId);
+        }
+
+        progress.setLastTimestamp(Optional.ofNullable(req.lastTimestamp).orElse(0));
+        progress.setUpdatedAt(LocalDateTime.now());
+        progress.setThumbnailUrl(req.thumbnailUrl);
+
+        System.out.println("Progress updated: " + progress.getPercent());
+        if (req.percent == 100 ) {
+            boolean scoreExists = em.createQuery("""
+            SELECT COUNT(ls) FROM LearningScoreEntity ls
+            WHERE ls.userEmail = :userEmail AND ls.lessonId = :lessonId
+            """, Long.class)
+                    .setParameter("userEmail", userEmail)
+                    .setParameter("lessonId", lessonId)
+                    .getSingleResult() > 0;
+
+            if (!scoreExists) {
+                LearningScoreEntity learningScore = new LearningScoreEntity();
+                learningScore.setUserEmail(userEmail);
+                learningScore.setLessonId(lessonId);
+                learningScore.setOverallScore(1);
+                learningScore.setUpdatedAt(LocalDateTime.now());
+                em.persist(learningScore);
+                log.info("Learning score added for completed lesson: {}", lessonId);
+            } else {
+                log.info("Learning score already exists for lesson: {}. Skipping insert.", lessonId);
+            }
+        }
+
+        log.info("Final screenTime for user {} on lesson {}:{}", userEmail, lessonId,progress.getScreenTime());
+        return Response.ok().build();
+    }
+
+    public static class UserCourseProgressDto {
+        public String lessonId;
+        public String thumbnailUrl;
+        public String lessonTitle;
+        public int percent;
+        public int score;
+        public int attempts;
+        public int screenTime;
+        public int totalQuestions;
+        public int maxAttempts;
+        public String userEmail;
+        public int lastTimestamp;
+        public LocalDateTime updatedAt;
+        public LocalDateTime dueDate;
+
+    }
+
+    public static class SubmitScoreRequest {
+        public int score;
+        public int totalQuestions;
+    }
+
+    public static class UpdateProgressRequest {
+        public int percent;
+        public String thumbnailUrl;
+        public Integer lastTimestamp;
+        public Integer screenTime;
+        public String contentType;
+    }
+}
+import { useEffect, useMemo, useState } from "react";
+import SupervisorSidebarWidget from "../Widgets/SupervisorSideBar";
+import { Download, Filter, RefreshCw } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  Legend,
+} from "recharts";
+
+/**
+ * Supervisor Learning Report (Mock Version)
+ * - ไม่พึ่งพา API จริง ใช้ข้อมูลจำลองทั้งหมด
+ * - สามารถสลับทีม/สมาชิก/ช่วงวัน และแสดงสรุป + กราฟ + ตารางได้ทันที
+ */
+
+// ----------------------
+// Types
+// ----------------------
+export type Team = { id: string; name: string; supervisorId: string; memberIds: string[] };
+export type TeamMember = { userId: string; name?: string; role: string };
+
+export type UserLearningSummary = {
+  userId: string;
+  name?: string;
+  totalModules: number;
+  completedModules: number;
+  avgScore: number | null;     // 0..100
+  timeSpentMinutes: number;    // minutes
+  lastActiveAt?: string;       // ISO string
+};
+
+export type UserDailyProgress = {
+  date: string;                // YYYY-MM-DD
+  completed: number;           // modules completed that day
+  minutes: number;             // minutes spent that day
+  scoreAvg: number | null;     // average score that day
+};
+
+export type UserModuleDetail = {
+  moduleId: string;
+  moduleTitle: string;
+  status: "not_started" | "in_progress" | "completed";
+  score: number | null;
+  timeSpentMinutes: number;
+  lastActiveAt?: string;
+};
+
+export type LearningReportPayload = {
+  teamSummary: {
+    teamId: string;
+    teamName: string;
+    totalLearners: number;
+    avgCompletionRate: number;  // 0..1
+    avgScore: number | null;    // 0..100
+    totalTimeSpentMinutes: number;
+  };
+  users: Array<{
+    summary: UserLearningSummary;
+    daily: UserDailyProgress[];
+    modules: UserModuleDetail[];
+  }>;
+};
+
+// ----------------------
+// Mock Generators
+// ----------------------
+const NAMES = [
+  "Alice", "Bob", "Charlie", "Daisy", "Ethan", "Fiona", "George", "Hana",
+  "Ivan", "Jenya", "Ken", "Lyla", "Mina", "Nate", "Oli", "Ploy", "Q", "Ray",
+  "Sara", "Tee", "Urs", "Vee", "Wen", "Xai", "Yui", "Zane"
+];
+
+function randInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function pick<T>(arr: T[]): T { return arr[randInt(0, arr.length - 1)]; }
+
+function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function toDateInput(d: Date) { return d.toISOString().slice(0,10); }
+
+// Mock teams & members (ผู้ใช้สามารถแก้ได้ตามต้องการ)
+const MOCK_TEAMS: Team[] = [
+  { id: "T-001", name: "Onboarding Squad", supervisorId: "svp@gmail.com", memberIds: [
+    "alice@example.com","bob@example.com","charlie@example.com","daisy@example.com","ethan@example.com"
+  ]},
+  { id: "T-002", name: "Sales Enablement", supervisorId: "svp@gmail.com", memberIds: [
+    "fiona@example.com","george@example.com","hana@example.com","ivan@example.com"
+  ]}
+];
+
+function makeMember(userId: string): TeamMember {
+  const base = userId.split("@")[0];
+  const name = base.charAt(0).toUpperCase() + base.slice(1);
+  return { userId, name, role: "member" };
+}
+
+// สร้างรายงานจำลองตามทีม/สมาชิก/ช่วงเวลา
+function generateMockReport(team: Team, selectedUserId: string | null, start: string, end: string): LearningReportPayload {
+  const members = team.memberIds.map(makeMember);
+  const rangeDays = Math.max(1, Math.floor((new Date(end).getTime() - new Date(start).getTime())/86400000) + 1);
+
+  // สร้างข้อมูลรายคน
+  const users = members
+    .filter(m => !selectedUserId || m.userId === selectedUserId)
+    .map(m => {
+      const totalModules = randInt(8, 16);
+      const completed = randInt(Math.floor(totalModules*0.3), totalModules);
+      const avgScore = Math.random() < 0.15 ? null : randInt(60, 95);
+      const timeSpent = randInt(180, 1200);
+      const lastActive = addDays(new Date(start), randInt(0, Math.max(0, rangeDays-1)));
+
+      // timeline รายวัน
+      const daily: UserDailyProgress[] = Array.from({length: rangeDays}).map((_, i) => {
+        const d = toDateInput(addDays(new Date(start), i));
+        const did = Math.random() < 0.4 ? randInt(0,2) : 0; // 40% ของวันมีความคืบหน้า
+        const mins = did > 0 ? randInt(10, 80) : randInt(0, 15);
+        const sAvg = did > 0 && Math.random() < 0.7 ? randInt(60, 95) : null;
+        return { date: d, completed: did, minutes: mins, scoreAvg: sAvg };
+      });
+
+      // รายละเอียดโมดูล
+      const modules: UserModuleDetail[] = Array.from({length: totalModules}).map((_, idx) => {
+        const statusPool = ["not_started","in_progress","completed"] as const;
+        // สุ่มโดยให้จำนวน completed ใกล้เคียงสรุปด้านบน
+        const status = idx < completed ? "completed" : pick(Array.from(statusPool));
+        const score = status === "completed" && Math.random() < 0.85 ? randInt(60,95) : null;
+        const mins = status === "not_started" ? 0 : randInt(10,80);
+        const last = addDays(new Date(start), randInt(0, Math.max(0, rangeDays-1)));
+        return {
+          moduleId: `M-${idx+1}`,
+          moduleTitle: `Module #${idx+1}`,
+          status,
+          score,
+          timeSpentMinutes: mins,
+          lastActiveAt: last.toISOString(),
+        };
+      });
+
+      const summary: UserLearningSummary = {
+        userId: m.userId,
+        name: m.name,
+        totalModules,
+        completedModules: completed,
+        avgScore,
+        timeSpentMinutes: timeSpent,
+        lastActiveAt: lastActive.toISOString(),
+      };
+
+      return { summary, daily, modules };
+    });
+
+  // รวมทีม
+  const totalLearners = users.length;
+  const sumCompletionRate = users.reduce((acc, u) => acc + (u.summary.totalModules ? (u.summary.completedModules/u.summary.totalModules) : 0), 0);
+  const avgCompletionRate = totalLearners ? sumCompletionRate / totalLearners : 0;
+  const scores = users.map(u => u.summary.avgScore).filter((s): s is number => s !== null);
+  const avgScore = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : null;
+  const totalTimeSpentMinutes = users.reduce((acc,u)=> acc + u.summary.timeSpentMinutes, 0);
+
+  return {
+    teamSummary: {
+      teamId: team.id,
+      teamName: team.name,
+      totalLearners,
+      avgCompletionRate,
+      avgScore,
+      totalTimeSpentMinutes,
+    },
+    users,
+  };
+}
+
+// ----------------------
+// Helpers
+// ----------------------
+function formatMinutes(min: number) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h <= 0) return `${m}m`;
+  if (m <= 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+// ----------------------
+// Main Component (Mock)
+// ----------------------
+export default function Svplearningreport() {
+  // filters
+  const [teams] = useState<Team[]>(MOCK_TEAMS);
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(MOCK_TEAMS[0].id);
+  const [members, setMembers] = useState<TeamMember[]>(MOCK_TEAMS[0].memberIds.map(makeMember));
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+
+  const today = useMemo(() => new Date(), []);
+  const weekAgo = useMemo(() => new Date(Date.now() - 6 * 24 * 3600 * 1000), []);
+  const [startDate, setStartDate] = useState(toDateInput(weekAgo));
+  const [endDate, setEndDate] = useState(toDateInput(today));
+
+  // data
+  const [report, setReport] = useState<LearningReportPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // team change -> update members
+  useEffect(() => {
+    const team = teams.find(t => t.id === selectedTeamId)!;
+    const ms = team.memberIds.map(makeMember);
+    setMembers(ms);
+    // ถ้า user เดิมไม่อยู่ในทีมใหม่ ให้รีเซ็ต
+    setSelectedUserId(prev => (prev && ms.some(m => m.userId === prev)) ? prev : null);
+  }, [selectedTeamId, teams]);
+
+  // generate first report
+  useEffect(() => { fetchReport(); /* eslint-disable-next-line */ }, []);
+
+  const fetchReport = () => {
+    setLoading(true); setError(null);
+    try {
+      const team = teams.find(t => t.id === selectedTeamId)!;
+      const data = generateMockReport(team, selectedUserId, startDate, endDate);
+      // จำลอง latency เล็กน้อย
+      setTimeout(() => { setReport(data); setLoading(false); }, 300);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+      setError(e?.message || "สร้างรายงานจำลองไม่สำเร็จ");
+      setLoading(false);
+    }
+  };
+
+  const teamSummary = report?.teamSummary || null;
+  const users = report?.users || [];
+  const selectedUser = useMemo(() => users.find(u => u.summary.userId === selectedUserId) || null, [users, selectedUserId]);
+
+  // export helpers
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function downloadCsv(filename: string, rows: Array<Record<string, any>>) {
+    if (!rows?.length) return;
+    const head = Object.keys(rows[0]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const escape = (val: any) => typeof val === "string" ? `"${val.replace(/"/g, '""')}"` : (val ?? "");
+    const csv = [head.join(",")].concat(rows.map(r => head.map(k => escape(r[k])).join(","))).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const exportTeamCsv = () => {
+    const rows = users.map(u => ({
+      userId: u.summary.userId,
+      name: u.summary.name || "",
+      totalModules: u.summary.totalModules,
+      completedModules: u.summary.completedModules,
+      completionRate: u.summary.totalModules ? (u.summary.completedModules / u.summary.totalModules) : 0,
+      avgScore: u.summary.avgScore ?? "",
+      timeSpentMinutes: u.summary.timeSpentMinutes,
+      lastActiveAt: u.summary.lastActiveAt || "",
+    }));
+    downloadCsv(`team-learning-${selectedTeamId}.csv`, rows);
+  };
+
+  const exportUserModulesCsv = () => {
+    if (!selectedUser) return;
+    const rows = selectedUser.modules.map(m => ({
+      moduleId: m.moduleId,
+      moduleTitle: m.moduleTitle,
+      status: m.status,
+      score: m.score ?? "",
+      timeSpentMinutes: m.timeSpentMinutes,
+      lastActiveAt: m.lastActiveAt || "",
+    }));
+    downloadCsv(`user-modules-${selectedUser.summary.userId}.csv`, rows);
+  };
+
+  return (
+    <div className="flex h-screen bg-gray-50">
+      <SupervisorSidebarWidget />
+
+      <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <h1 className="text-2xl md:text-3xl font-bold">Learning Report</h1>
+          <div className="flex gap-2">
+            <button
+              className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 bg-white hover:bg-gray-50"
+              onClick={fetchReport}
+              disabled={loading}
+              title="Refresh"
+            >
+              <RefreshCw className="w-4 h-4" /> รีเฟรช
+            </button>
+            <button
+              className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 bg-white hover:bg-gray-50"
+              onClick={exportTeamCsv}
+              disabled={!users.length}
+              title="Export team CSV"
+            >
+              <Download className="w-4 h-4" /> ส่งออกทีม (CSV)
+            </button>
+            {selectedUser && (
+              <button
+                className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 bg-white hover:bg-gray-50"
+                onClick={exportUserModulesCsv}
+                title="Export user CSV"
+              >
+                <Download className="w-4 h-4" /> ส่งออกบุคคล (CSV)
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="rounded-2xl border bg-white p-4">
+          <div className="flex items-center gap-2 mb-4">
+            <Filter className="w-4 h-4" />
+            <div className="font-semibold">ตัวกรองรายงาน</div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* Team */}
+            <div className="space-y-1">
+              <div className="text-xs uppercase opacity-60">ทีม</div>
+              <select
+                className="w-full rounded-xl border px-3 py-2 bg-white"
+                value={selectedTeamId}
+                onChange={(e) => setSelectedTeamId(e.target.value)}
+              >
+                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+
+            {/* User */}
+            <div className="space-y-1">
+              <div className="text-xs uppercase opacity-60">สมาชิก</div>
+              <select
+                className="w-full rounded-xl border px-3 py-2 bg-white"
+                value={selectedUserId || ""}
+                onChange={(e) => setSelectedUserId(e.target.value || null)}
+              >
+                <option value="">— ทั้งทีม —</option>
+                {members.map(m => (
+                  <option key={m.userId} value={m.userId}>{m.name || m.userId}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Date range */}
+            <div className="space-y-1">
+              <div className="text-xs uppercase opacity-60">เริ่ม</div>
+              <input type="date" className="w-full rounded-xl border px-3 py-2 bg-white" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs uppercase opacity-60">สิ้นสุด</div>
+              <input type="date" className="w-full rounded-xl border px-3 py-2 bg-white" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <button
+              className="rounded-xl px-4 py-2 border bg-blue-600 text-white hover:opacity-90"
+              onClick={fetchReport}
+              disabled={loading}
+            >
+              ดูรายงาน
+            </button>
+          </div>
+        </div>
+
+        {/* Errors */}
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">{error}</div>
+        )}
+
+        {/* Team Summary */}
+        {teamSummary && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="rounded-2xl border bg-white p-4">
+              <div className="text-xs uppercase opacity-60">ผู้เรียน</div>
+              <div className="text-2xl font-bold">{teamSummary.totalLearners}</div>
+            </div>
+            <div className="rounded-2xl border bg-white p-4">
+              <div className="text-xs uppercase opacity-60">อัตราเรียนจบเฉลี่ย</div>
+              <div className="text-2xl font-bold">{Math.round(teamSummary.avgCompletionRate * 100)}%</div>
+            </div>
+            <div className="rounded-2xl border bg-white p-4">
+              <div className="text-xs uppercase opacity-60">คะแนนเฉลี่ย</div>
+              <div className="text-2xl font-bold">{teamSummary.avgScore ?? "-"}</div>
+            </div>
+            <div className="rounded-2xl border bg-white p-4">
+              <div className="text-xs uppercase opacity-60">เวลาที่ใช้รวม</div>
+              <div className="text-2xl font-bold">{formatMinutes(teamSummary.totalTimeSpentMinutes)}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Team table */}
+        {!!users.length && (
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="font-semibold">สรุปรายบุคคล</div>
+              <div className="text-sm opacity-60">ช่วง {startDate} → {endDate}</div>
+            </div>
+            <div className="overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left border-b">
+                    <th className="px-3 py-2">ผู้เรียน</th>
+                    <th className="px-3 py-2">เรียนจบ / ทั้งหมด</th>
+                    <th className="px-3 py-2">อัตราเรียนจบ</th>
+                    <th className="px-3 py-2">คะแนนเฉลี่ย</th>
+                    <th className="px-3 py-2">เวลาเรียนรวม</th>
+                    <th className="px-3 py-2">Active ล่าสุด</th>
+                    <th className="px-3 py-2">ดู</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => {
+                    const rate = u.summary.totalModules ? (u.summary.completedModules / u.summary.totalModules) : 0;
+                    return (
+                      <tr key={u.summary.userId} className="border-b hover:bg-gray-50">
+                        <td className="px-3 py-2 whitespace-nowrap">{u.summary.name || u.summary.userId}</td>
+                        <td className="px-3 py-2">{u.summary.completedModules} / {u.summary.totalModules}</td>
+                        <td className="px-3 py-2">{Math.round(rate * 100)}%</td>
+                        <td className="px-3 py-2">{u.summary.avgScore ?? "-"}</td>
+                        <td className="px-3 py-2">{formatMinutes(u.summary.timeSpentMinutes)}</td>
+                        <td className="px-3 py-2">{u.summary.lastActiveAt ? new Date(u.summary.lastActiveAt).toLocaleString() : "-"}</td>
+                        <td className="px-3 py-2">
+                          <button
+                            className={`rounded-lg border px-2 py-1 ${selectedUserId === u.summary.userId ? 'bg-black text-white' : 'bg-white'}`}
+                            onClick={() => setSelectedUserId(u.summary.userId)}
+                          >
+                            ดูรายคน
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Individual detail */}
+        {selectedUser && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Left: Metrics + Modules */}
+            <div className="lg:col-span-1 space-y-4">
+              <div className="rounded-2xl border bg-white p-4">
+                <div className="font-semibold mb-2">สรุปบุคคล</div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span>ผู้เรียน</span><span>{selectedUser.summary.name || selectedUser.summary.userId}</span></div>
+                  <div className="flex justify-between"><span>เรียนจบ/ทั้งหมด</span><span>{selectedUser.summary.completedModules}/{selectedUser.summary.totalModules}</span></div>
+                  <div className="flex justify-between"><span>อัตราเรียนจบ</span><span>{selectedUser.summary.totalModules ? Math.round(selectedUser.summary.completedModules/selectedUser.summary.totalModules*100) : 0}%</span></div>
+                  <div className="flex justify-between"><span>คะแนนเฉลี่ย</span><span>{selectedUser.summary.avgScore ?? '-'}</span></div>
+                  <div className="flex justify-between"><span>เวลาเรียนรวม</span><span>{formatMinutes(selectedUser.summary.timeSpentMinutes)}</span></div>
+                  <div className="flex justify-between"><span>Active ล่าสุด</span><span>{selectedUser.summary.lastActiveAt ? new Date(selectedUser.summary.lastActiveAt).toLocaleString() : '-'}</span></div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border bg-white p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold">โมดูลของบุคคล</div>
+                  <button className="rounded-lg border px-2 py-1" onClick={exportUserModulesCsv}><Download className="w-4 h-4" /></button>
+                </div>
+                <div className="max-h-[28rem] overflow-auto text-sm">
+                  <table className="min-w-full">
+                    <thead>
+                      <tr className="text-left border-b">
+                        <th className="px-2 py-2">โมดูล</th>
+                        <th className="px-2 py-2">สถานะ</th>
+                        <th className="px-2 py-2">คะแนน</th>
+                        <th className="px-2 py-2">เวลา</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedUser.modules.map(m => (
+                        <tr key={m.moduleId} className="border-b">
+                          <td className="px-2 py-2">{m.moduleTitle}</td>
+                          <td className="px-2 py-2 capitalize">{m.status.replace('_',' ')}</td>
+                          <td className="px-2 py-2">{m.score ?? '-'}</td>
+                          <td className="px-2 py-2">{formatMinutes(m.timeSpentMinutes)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Charts */}
+            <div className="lg:col-span-2 space-y-4">
+              <div className="rounded-2xl border bg-white p-4">
+                <div className="font-semibold mb-2">ความคืบหน้ารายวัน (Completed)</div>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={selectedUser.daily}>
+                      <XAxis dataKey="date" />
+                      <YAxis allowDecimals={false} />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="completed" name="Completed" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border bg-white p-4">
+                <div className="font-semibold mb-2">เวลาเรียนรายวัน (นาที) & คะแนนเฉลี่ย</div>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={selectedUser.daily}>
+                      <XAxis dataKey="date" />
+                      <YAxis yAxisId="left" />
+                      <YAxis yAxisId="right" orientation="right" />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="minutes" name="Minutes" yAxisId="left" />
+                      <Line type="monotone" dataKey="scoreAvg" name="Avg Score" yAxisId="right" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!loading && !teamSummary && !error && (
+          <div className="text-sm opacity-70">เลือกทีม, ช่วงเวลา แล้วกด "ดูรายงาน" เพื่อเริ่มต้น (ข้อมูลจำลอง)</div>
+        )}
+      </div>
+    </div>
+  );
+}
