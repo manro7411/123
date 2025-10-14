@@ -8,21 +8,17 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import model.MemberEntity;
 import model.TeamEntity;
+import model.User;
 import model.UserLessonProgress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.time.*;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Path("/report/learning")
-@RolesAllowed("supervisor")
+@RolesAllowed({"supervisor","administrator","admin"})
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class SupervisorLearningReportResource {
@@ -33,82 +29,96 @@ public class SupervisorLearningReportResource {
     EntityManager entityManager;
 
     /**
-     * GET /reports/learning?teamId=...&start=YYYY-MM-DD&end=YYYY-MM-DD&userId=(optional)
+     * GET /report/learning?teamId=...&start=YYYY-MM-DD&end=YYYY-MM-DD&userId=(optional)
      * - teamId: บังคับ
-     * - start/end: ถ้าไม่ส่ง จะ default = 7 วันล่าสุด
-     * - userId: ถ้าส่ง จะกรองรายบุคคล (ในทีม)
+     * - start/end: ถ้าไม่ส่ง -> 7 วันล่าสุด
+     * - userId: ถ้าส่ง -> กรองรายบุคคล (ระบุเป็น userId ที่อยู่ใน MemberEntity.memberId)
      */
-
     @GET
     public Response getReport(@QueryParam("teamId") String teamId,
                               @QueryParam("start") String startStr,
                               @QueryParam("end") String endStr,
                               @QueryParam("userId") String filterUserId) {
-        String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
-        log.info("Fetching report: method={}, teamId={}, startDate={}, endDate={}, filterUserId={}",
-                methodName, teamId, startStr, endStr, filterUserId);
-        if (teamId == null || teamId.isEmpty()) {
-            log.warn("teamId is missing in the request");
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity("teamId is required").build();
+
+        if (isBlank(teamId)) {
+            return Response.status(Response.Status.BAD_REQUEST).entity("teamId is required").build();
         }
-        LocalDate startDate = (startStr == null || startStr.isEmpty()) ?
-                LocalDate.now().minusDays(7) : LocalDate.parse(startStr);
-        LocalDate endDate = (endStr == null || endStr.isEmpty()) ?
-                LocalDate.now() : LocalDate.parse(endStr);
+
+        // ช่วงวัน
+        LocalDate startDate = (isBlank(startStr)) ? LocalDate.now().minusDays(6) : LocalDate.parse(startStr);
+        LocalDate endDate   = (isBlank(endStr))   ? LocalDate.now()              : LocalDate.parse(endStr);
         if (startDate.isAfter(endDate)) {
-            log.warn("Invalid date range: startDate {} is after endDate {}", startDate, endDate);
             return Response.status(Response.Status.BAD_REQUEST)
                     .entity("start date must be before or equal to end date").build();
         }
         LocalDateTime startAt = startDate.atStartOfDay();
-        LocalDateTime endAt = endDate.atTime(LocalTime.MAX);
+        LocalDateTime endAt   = endDate.atTime(LocalTime.MAX);
 
+        // ทีม + สมาชิก
         TeamEntity team = entityManager.find(TeamEntity.class, teamId);
         if (team == null) {
-            log.warn("Team not found for teamId: {}", teamId);
-            return Response.status(Response.Status.NOT_FOUND)
-                    .entity("Team not found: "+teamId).build();
+            return Response.status(Response.Status.NOT_FOUND).entity("Team not found: " + teamId).build();
         }
         team.getMemberEntities().size();
-        log.info("Team {} has {} members", team.getName(), team.getMemberEntities().size());
-        List<MemberEntity> teamMembers = team.getMemberEntities().stream().filter(m -> m.getMemberId() != null &&  !m.getMemberId().isBlank()).toList();
 
-        // 1. Collect memberIds from team members
-        log.info("Step 1: Collecting member IDs from team members");
+        List<MemberEntity> teamMembers = team.getMemberEntities().stream()
+                .filter(m -> m != null && !isBlank(m.getMemberId()))
+                .toList();
+
+        // userId (จาก memberId) ทั้งหมดของทีม
         Set<String> memberIds = teamMembers.stream()
                 .map(MemberEntity::getMemberId)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
                 .map(String::toLowerCase)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        log.info("Collected {} member IDs: {}", memberIds.size(), memberIds);
 
-        // 2. If filtering by userId, check and reduce memberIds
-                if (filterUserId != null && !filterUserId.isBlank()) {
-                    String target = filterUserId.toLowerCase();
-                    log.info("Step 2: Filtering by userId: {}", target);
-                    if (!memberIds.contains(target)) {
-                        log.warn("User {} is not in team {}", target, teamId);
-                        return Response.status(Response.Status.BAD_REQUEST)
-                                .entity("User " + target + " is not in team " + teamId).build();
-                    }
-                    memberIds = new LinkedHashSet<>(List.of(target));
-                    log.info("Filtered memberIds to single user: {}", memberIds);
-                }
+        // กรองรายบุคคลถ้าระบุ
+        if (!isBlank(filterUserId)) {
+            String target = filterUserId.trim().toLowerCase();
+            if (!memberIds.contains(target)) {
+                // ไม่ใช่สมาชิกทีม -> ส่งผลลัพธ์ว่างของทีมนั้น
+                return Response.ok(emptyFor(team)).build();
+            }
+            memberIds = new LinkedHashSet<>(List.of(target));
+        }
 
-        // 3. Map memberIds to user emails
-                log.info("Step 3: Mapping member IDs to user emails");
-                Set<String> userEmails = new LinkedHashSet<>(
-                        entityManager.createQuery("""
-                SELECT u.email FROM User u WHERE LOWER(u.id) IN :ids
-            """, String.class)
-                                .setParameter("ids", memberIds)
-                                .getResultList()
-                ).stream().map(String::toLowerCase).collect(Collectors.toSet());
-                log.info("Mapped to {} user emails: {}", userEmails.size(), userEmails);
+        if (memberIds.isEmpty()) {
+            return Response.ok(emptyFor(team)).build();
+        }
 
-        // 4. Query progress by user emails
-                log.info("Step 4: Querying UserLessonProgress between {} and {}", startAt, endAt);
-                List<UserLessonProgress> progresses = entityManager.createQuery("""
+        // ดึง User เพื่อ map: userId (u.id) -> (email, name)
+        List<User> users = entityManager.createQuery(
+                        "SELECT u FROM User u WHERE LOWER(u.id) IN :ids", User.class)
+                .setParameter("ids", memberIds)
+                .getResultList();
+
+        Map<String, String> userIdLower_to_emailLower = new HashMap<>();
+        Map<String, String> emailLower_to_displayName = new HashMap<>();
+        for (User u : users) {
+            String idLower = safeLower(u.getId() != null ? u.getId().toString() : null);
+            String emailLower = safeLower(u.getEmail());
+            if (idLower != null && emailLower != null) {
+                userIdLower_to_emailLower.put(idLower, emailLower);
+            }
+            if (emailLower != null && !isBlank(u.getName())) {
+                emailLower_to_displayName.put(emailLower, u.getName());
+            }
+        }
+
+        // เซ็ตอีเมลผู้ใช้ในทีม (lowercase)
+        Set<String> memberEmails = memberIds.stream()
+                .map(userIdLower_to_emailLower::get)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        if (memberEmails.isEmpty()) {
+            return Response.ok(emptyFor(team)).build();
+        }
+
+        // Query progress ของคนในทีมภายในช่วง
+        List<UserLessonProgress> progresses = entityManager.createQuery("""
             SELECT p FROM UserLessonProgress p
             WHERE LOWER(p.userEmail) IN :emails
               AND (
@@ -116,15 +126,236 @@ public class SupervisorLearningReportResource {
                 OR (p.completedAt IS NOT NULL AND p.completedAt BETWEEN :startAt AND :endAt)
               )
             """, UserLessonProgress.class)
-                        .setParameter("emails", userEmails)
-                        .setParameter("startAt", startAt)
-                        .setParameter("endAt", endAt)
-                        .getResultList();
-                log.info("Retrieved {} progress records", progresses.size());
+                .setParameter("emails", memberEmails)
+                .setParameter("startAt", startAt)
+                .setParameter("endAt", endAt)
+                .getResultList();
 
-        return Response.ok().entity("Everything is okay").build();
+        // group by userEmail (lower)
+        Map<String, List<UserLessonProgress>> byUser = progresses.stream()
+                .collect(Collectors.groupingBy(p -> safeLower(p.getUserEmail()),
+                        LinkedHashMap::new, Collectors.toList()));
+
+        // ประกอบรายงานรายบุคคล
+        List<UserReportDto> userReports = new ArrayList<>();
+        for (String emailLower : memberEmails) {
+            List<UserLessonProgress> ups = byUser.getOrDefault(emailLower, List.of());
+
+            // รวมโมดูลจาก lessonId ในช่วง
+            int totalModules = (int) ups.stream()
+                    .map(UserLessonProgress::getLessonId)
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .distinct().count();
+
+            // จำนวนที่จบ: percent == 100 และ completedAt อยู่ในช่วง
+            int completedModules = (int) ups.stream()
+                    .filter(p -> p.getPercent() != null && p.getPercent() == 100)
+                    .filter(p -> p.getCompletedAt() == null ||
+                            (!p.getCompletedAt().isAfter(endAt) && !p.getCompletedAt().isBefore(startAt)))
+                    .map(UserLessonProgress::getLessonId)
+                    .filter(Objects::nonNull)
+                    .distinct().count();
+
+            // คะแนนเฉลี่ย (เปอร์เซ็นต์)
+            List<Integer> percs = ups.stream()
+                    .filter(p -> p.getScore() != null && p.getTotalQuestions() != null && p.getTotalQuestions() > 0)
+                    .map(p -> (int) Math.round(p.getScore() * 100.0 / p.getTotalQuestions()))
+                    .toList();
+            Integer avgScore = percs.isEmpty() ? null
+                    : (int) Math.round(percs.stream().mapToInt(i -> i).average().orElse(0));
+
+            // เวลาเรียนรวม (นาที) : screenTime สะสม / 60
+            int timeSpentMinutes = ups.stream()
+                    .map(UserLessonProgress::getScreenTime)
+                    .filter(Objects::nonNull).mapToInt(Integer::intValue)
+                    .sum() / 60;
+
+            // กิจกรรมล่าสุด (updatedAt ล่าสุด)
+            String lastActiveAt = ups.stream()
+                    .map(UserLessonProgress::getUpdatedAt)
+                    .filter(Objects::nonNull)
+                    .max(Comparator.naturalOrder())
+                    .map(LocalDateTime::toString)
+                    .orElse(null);
+
+            // รายโมดูล: เอา row ล่าสุดของแต่ละ lessonId
+            List<UserModuleDetailDto> modules = ups.stream()
+                    .collect(Collectors.groupingBy(p -> {
+                        String lid = p.getLessonId();
+                        return (lid == null) ? "" : lid.trim();
+                    }))
+                    .entrySet().stream()
+                    .filter(e -> e.getKey() != null && !e.getKey().isBlank())
+                    .map(e -> {
+                        String lessonId = e.getKey();
+                        List<UserLessonProgress> rows = e.getValue();
+
+                        UserLessonProgress latest = rows.stream()
+                                .max(Comparator.comparing(UserLessonProgress::getUpdatedAt, Comparator.nullsFirst(Comparator.naturalOrder())))
+                                .orElse(rows.get(0));
+
+                        UserModuleDetailDto md = new UserModuleDetailDto();
+                        md.moduleId = lessonId;
+                        md.moduleTitle = "Lesson " + lessonId; // ถ้ามี LearningContent สามารถ lookup ชื่อจริงมาวางได้
+                        // สถานะ: ใช้ field status ถ้ามี, ไม่มีก็ derive จาก percent
+                        md.status = (latest.getStatus() != null) ? latest.getStatus()
+                                : (latest.getPercent() != null && latest.getPercent() >= 100) ? "completed"
+                                : (latest.getPercent() != null && latest.getPercent() > 0) ? "in-progress" : "not_started";
+                        md.score = latest.getScore();
+                        md.totalQuestions = latest.getTotalQuestions();
+                        md.timeSpentMinutes = Optional.ofNullable(latest.getScreenTime()).orElse(0) / 60;
+                        md.lastActiveAt = latest.getUpdatedAt() != null ? latest.getUpdatedAt().toString() : null;
+                        return md;
+                    })
+                    .sorted(Comparator.comparing(m -> m.moduleId))
+                    .toList();
+
+            // รายวัน: ใช้ completedAt นับจำนวน “จบ” ต่อวัน
+            Map<LocalDate, Integer> completedByDay = new LinkedHashMap<>();
+            for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
+                completedByDay.put(d, 0);
+            }
+            ups.stream().filter(p -> p.getCompletedAt() != null).forEach(p -> {
+                LocalDate d = p.getCompletedAt().toLocalDate();
+                if (!d.isBefore(startDate) && !d.isAfter(endDate)) {
+                    completedByDay.computeIfPresent(d, (k, v) -> v + 1);
+                }
+            });
+            List<UserDailyProgressDto> daily = completedByDay.entrySet().stream().map(e -> {
+                UserDailyProgressDto dd = new UserDailyProgressDto();
+                dd.date = e.getKey().toString();
+                dd.completed = e.getValue();
+                dd.minutes = 0;      // ไม่มี daily time แท้
+                dd.scoreAvg = null;  // ไม่มี daily avg score แยกวัน
+                return dd;
+            }).toList();
+
+            // ชื่อแสดงผล (จาก User.name)
+            String displayName = emailLower_to_displayName.getOrDefault(emailLower, null);
+
+            UserLearningSummary summary = new UserLearningSummary();
+            summary.userId = emailLower; // เก็บเป็นอีเมล (lower)
+            summary.name = displayName;
+            summary.totalModules = totalModules;
+            summary.completedModules = completedModules;
+            summary.avgScore = avgScore;
+            summary.timeSpentMinutes = timeSpentMinutes;
+            summary.lastActiveAt = lastActiveAt;
+
+            UserReportDto ur = new UserReportDto();
+            ur.summary = summary;
+            ur.daily = daily;
+            ur.modules = modules;
+
+            userReports.add(ur);
+        }
+
+        // Team summary
+        TeamSummaryDto teamSummary = new TeamSummaryDto();
+        teamSummary.teamId = team.getId();
+        teamSummary.teamName = team.getName();
+        teamSummary.totalLearners = userReports.size();
+
+        double sumRates = 0.0;
+        int cntRates = 0;
+        for (UserReportDto ur : userReports) {
+            if (ur.summary.totalModules > 0) {
+                sumRates += (ur.summary.completedModules * 1.0 / ur.summary.totalModules);
+                cntRates++;
+            }
+        }
+        teamSummary.avgCompletionRate = (cntRates == 0) ? 0.0 : (sumRates / cntRates);
+
+        List<Integer> teamScores = userReports.stream()
+                .map(u -> u.summary.avgScore)
+                .filter(Objects::nonNull)
+                .toList();
+        teamSummary.avgScore = teamScores.isEmpty() ? null
+                : (int) Math.round(teamScores.stream().mapToInt(i -> i).average().orElse(0));
+
+        teamSummary.totalTimeSpentMinutes = userReports.stream()
+                .map(u -> u.summary.timeSpentMinutes)
+                .reduce(0, Integer::sum);
+
+        LearningReportDto dto = new LearningReportDto();
+        dto.teamSummary = teamSummary;
+        dto.users = userReports;
+
+        return Response.ok(dto).build();
     }
 
+    // ----------------- DTOs -----------------
 
+    public static class LearningReportDto {
+        public TeamSummaryDto teamSummary;
+        public List<UserReportDto> users;
+    }
 
+    public static class TeamSummaryDto {
+        public String teamId;
+        public String teamName;
+        public int totalLearners;
+        public double avgCompletionRate; // 0..1
+        public Integer avgScore;         // 0..100, null ถ้าไม่มีข้อมูล
+        public int totalTimeSpentMinutes;
+    }
+
+    public static class UserReportDto {
+        public UserLearningSummary summary;
+        public List<UserDailyProgressDto> daily;
+        public List<UserModuleDetailDto> modules;
+    }
+
+    public static class UserLearningSummary {
+        public String userId;             // อีเมล (lower)
+        public String name;               // แสดงผล
+        public int totalModules;
+        public int completedModules;
+        public Integer avgScore;          // 0..100 หรือ null
+        public int timeSpentMinutes;
+        public String lastActiveAt;       // ISO string
+    }
+
+    public static class UserDailyProgressDto {
+        public String date;               // YYYY-MM-DD
+        public int completed;             // จำนวนโมดูลที่จบในวันนั้น
+        public int minutes;               // ไม่มีข้อมูลรายวัน -> 0
+        public Integer scoreAvg;          // ไม่มีข้อมูลรายวัน -> null
+    }
+
+    public static class UserModuleDetailDto {
+        public String moduleId;
+        public String moduleTitle;
+        public String status;             // not_started | in-progress | completed
+        public Integer score;             // raw score
+        public Integer totalQuestions;
+        public int timeSpentMinutes;
+        public String lastActiveAt;
+    }
+
+    // ----------------- Helpers -----------------
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    private static String safeLower(String s) {
+        return (s == null) ? null : s.toLowerCase();
+    }
+
+    private LearningReportDto emptyFor(TeamEntity team) {
+        LearningReportDto dto = new LearningReportDto();
+        TeamSummaryDto ts = new TeamSummaryDto();
+        ts.teamId = team.getId();
+        ts.teamName = team.getName();
+        ts.totalLearners = 0;
+        ts.avgCompletionRate = 0.0;
+        ts.avgScore = null;
+        ts.totalTimeSpentMinutes = 0;
+        dto.teamSummary = ts;
+        dto.users = List.of();
+        return dto;
+    }
 }
