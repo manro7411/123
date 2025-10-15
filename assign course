@@ -1,72 +1,3 @@
-2025-10-15 10:57:09,186 ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-1) HTTP Request to /assignments failed, error id: 43dbf452-0412-46ea-beab-55ebca99efb1-1
-
-Exception in AssignmentResource.java:227rently ''), [:] for the terminal, [h] for more options>
-          225          if (dueAt != null) header.setDueDate(dueAt);                                                                                                                                                                 
-          226                                                                                                                                                                                                                       
-        ? 227          em.persist(header);                                                                                                                                                                                          
-          228                                                                                                                                                                                                                       
-          229          // ---- persist items (de-dup ��� email ��� course) ----                                                                                                                                                     
-
-Exception in AssignmentResource.java:227
-          225          if (dueAt != null) header.setDueDate(dueAt);                                                                                                                                                                 
-          226                                                                                                                                                                                                                       
-        ? 227          em.persist(header);                                                                                                                                                                                          
-          228                                                                                                                                                                                                                       
-          229          // ---- persist items (de-dup ��� email ��� course) ----: jakarta.persistence.EntityExistsException: detached entity passed to persist: AssignCourse.Entity.AssignmentEntity                                 
-        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:126)                                                                                                                                   
-        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:167)                                                                                                                                   
-        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:173)                                                                                                                                   
-        at org.hibernate.internal.SessionImpl.firePersist(SessionImpl.java:767)                                                                                                                                                     
-        at org.hibernate.internal.SessionImpl.persist(SessionImpl.java:745)                                                                                                                                                         
-        at io.quarkus.hibernate.orm.runtime.session.TransactionScopedSession.persist(TransactionScopedSession.java:158)                                                                                                             
-        at org.hibernate.engine.spi.SessionLazyDelegator.persist(SessionLazyDelegator.java:282)                                                                                                                                     
-        at org.hibernate.Session_OpdLahisOZ9nWRPXMsEFQmQU03A_Synthetic_ClientProxy.persist(Unknown Source)                                                                                                                          
-        at AssignCourse.Resourse.AssignmentResource.create(AssignmentResource.java:227)                                                                                                                                             
-        at AssignCourse.Resourse.AssignmentResource_Subclass.create$$superforward(Unknown Source)                                                                                                                                   
-        at AssignCourse.Resourse.AssignmentResource_Subclass$$function$$1.apply(Unknown Source)                                                                                                                                     
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
-        at io.quarkus.security.runtime.interceptor.SecurityHandler.handle(SecurityHandler.java:27)                                                                                                                                  
-        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor.intercept(RolesAllowedInterceptor.java:29)                                                                                                               
-        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                                                           
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
-        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor.intercept(StandardSecurityCheckInterceptor.java:44)                                                                                         
-        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor_RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                      
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:136)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:107)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.doIntercept(TransactionalInterceptorRequired.java:38)                                                                                       
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.intercept(TransactionalInterceptorBase.java:61)                                                                                                 
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.intercept(TransactionalInterceptorRequired.java:32)                                                                                         
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired_Bean.intercept(Unknown Source)                                                                                                              
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
-        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
-        at AssignCourse.Resourse.AssignmentResource_Subclass.create(Unknown Source)                                                                                                                                                 
-        at AssignCourse.Resourse.AssignmentResource$quarkusrestinvoker$create_be8456ded4b100372e114b1446e137321177ca1f.invoke(Unknown Source)                                                                                       
-        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
-        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
-        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
-        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
-        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
-        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
-        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
-Caused by: org.hibernate.PersistentObjectException: detached entity passed to persist: AssignCourse.Entity.AssignmentEntity                                                                                                         
-        at org.hibernate.event.internal.DefaultPersistEventListener.persist(DefaultPersistEventListener.java:90)                                                                                                                    
-        at org.hibernate.event.internal.DefaultPersistEventListener.onPersist(DefaultPersistEventListener.java:79)                                                                                                                  
-        at org.hibernate.event.internal.DefaultPersistEventListener.onPersist(DefaultPersistEventListener.java:55)                                                                                                                  
-        at org.hibernate.event.service.internal.EventListenerGroupImpl.fireEventOnEachListener(EventListenerGroupImpl.java:127)                                                                                                     
-        at org.hibernate.internal.SessionImpl.firePersist(SessionImpl.java:761)  
-
 package AssignCourse.Resourse;
 
 import AssignCourse.Entity.AssignmentEntity;
@@ -97,16 +28,16 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * AssignmentResource (v2)
+ * AssignmentResource (v3)
  * - POST /assignments : มอบหมายคอร์สให้สมาชิกทีม
- * - รองรับ payload:
+ *   Payload ตัวอย่าง:
  *   {
  *     "teamId": "3fbf03f3013f42d2b9402",
- *     "assignees": ["UeJ5XJf6np3VVCJcRx_FI", "oIbg_l-oMsRKvnYZwHZlS"],
- *     "courseIds": ["7933da8c8aa14b9598ec3", "ffa7eea7d281477bbf8a2"],
- *     "dueDate": "YYYY-MM-DD",
- *     "priority": "Low|Normal|High",
- *     "note": "ข้อความโน้ต"
+ *     "assignees": ["UeJ5XJf6np3VVCJcRx_FI","oIbg_l-oMsRKvnYZwHZlS"],
+ *     "courseIds": ["7933da8c8aa14b9598ec3","ffa7eea7d281477bbf8a2"],
+ *     "dueDate": "2025-11-01",
+ *     "priority": "High",
+ *     "note": "Urgent training required"
  *   }
  */
 @Path("/assignments")
@@ -120,7 +51,7 @@ public class AssignmentResource {
     @Inject EntityManager em;
     @Inject JsonWebToken jwt;
 
-    // ======================= DTO =======================
+    // ---------- DTO ----------
     public static class CreateAssignmentReq {
         public String teamId;
         public List<String> assignees; // user identifiers (อาจเป็น email หรือ userId)
@@ -134,25 +65,24 @@ public class AssignmentResource {
         public int assignedCount;
         public int courseCount;
         public int itemCount;
-        public List<String> ignoredAssignees; // รายชื่อที่ไม่อยู่ในทีม ถูกละทิ้ง
-        public List<String> missingCourseIds; // courseIds ที่หาไม่พบ
+        public List<String> ignoredAssignees; // ส่งมาด้วยแต่ไม่อยู่ในทีม
+        public List<String> missingCourseIds; // courseIds ที่หาไม่เจอ
     }
 
-    // ======================= API =======================
     @POST
     @Transactional
     @RolesAllowed(ROLE_SUPERVISOR)
     public Response create(CreateAssignmentReq req, @Context SecurityContext sc) {
-        // ---- actor info (กัน NOT NULL ทุกฟิลด์ header) ----
+        // ---------- actor (กัน NOT NULL) ----------
         final String actorName   = optClaim(jwt, "name").orElse(sc.getUserPrincipal().getName());
         final String actorEmail  = optClaim(jwt, "email").orElse(jwt.getSubject());
         final String actorId     = jwt.getSubject() != null ? jwt.getSubject() : actorEmail;
         final String actorAvatar = optClaim(jwt, "picture")
                 .or(() -> optClaim(jwt, "avatar"))
                 .or(() -> optClaim(jwt, "avatar_url"))
-                .orElse(""); // DB เป็น NOT NULL → ใช้ "" แทน
+                .orElse(""); // DB: NOT NULL → ใช้ "" เมื่อไม่มี
 
-        log.info("Supervisor '{}' ({}) is creating assignment. Payload: teamId={}, assignees={}, courseIds={}, dueDate={}, priority={}, noteLen={}",
+        log.info("Supervisor '{}' ({}) is creating assignment. teamId={}, assignees={}, courseIds={}, dueDate={}, priority={}, noteLen={}",
                 actorName, actorEmail,
                 req != null ? req.teamId : null,
                 req != null && req.assignees != null ? req.assignees.size() : null,
@@ -161,24 +91,22 @@ public class AssignmentResource {
                 req != null ? req.priority : null,
                 req != null && req.note != null ? req.note.length() : 0);
 
-        // ---- basic validation ----
+        // ---------- validate base input ----------
         if (req == null) throw new BadRequestException("Request body is required.");
         if (isBlank(req.teamId)) throw new BadRequestException("teamId is required.");
         if (req.assignees == null || req.assignees.isEmpty()) throw new BadRequestException("assignees must not be empty.");
         if (req.courseIds == null  || req.courseIds.isEmpty()) throw new BadRequestException("courseIds must not be empty.");
 
-        // ---- load team & members ----
+        // ---------- team & members ----------
         TeamEntity team = em.find(TeamEntity.class, req.teamId);
         if (team == null) throw new BadRequestException("Invalid teamId.");
-        // load lazy
-        team.getMemberEntities().size();
+        team.getMemberEntities().size(); // load lazy
 
-        // รวบรวม identifier ของสมาชิกทีม (memberId และ userID ถ้ามี)
+        // รวม identifiers สมาชิกทีม: memberId และ userID (ถ้ามี)
         Set<String> teamIdsExact = team.getMemberEntities().stream()
                 .flatMap(m -> {
                     List<String> ids = new ArrayList<>();
                     if (notBlank(m.getMemberId())) ids.add(m.getMemberId());
-                    // ถ้าโปรเจ็กต์มี getUserID จริง ให้ใช้ด้วย (รองรับหลายสคีมา)
                     try {
                         var method = MemberEntity.class.getMethod("getUserID");
                         Object v = method.invoke(m);
@@ -189,19 +117,18 @@ public class AssignmentResource {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-
         Set<String> teamIdsLower = teamIdsExact.stream().map(String::toLowerCase).collect(Collectors.toSet());
 
-        // ---- normalize & validate assignees vs team ----
+        // ---------- normalize & filter assignees ----------
         List<String> requestedExact = req.assignees.stream()
                 .filter(Objects::nonNull).map(String::trim).filter(s -> !s.isEmpty()).toList();
         List<String> requestedLower = requestedExact.stream().map(String::toLowerCase).toList();
 
-        // หา assignee ที่ไม่อยู่ในทีม (เพื่อรายงานกลับ)
+        // หาตัวที่ไม่อยู่ในทีม (ส่งกลับเพื่อแจ้งเตือน)
         Set<String> notInTeamLower = new LinkedHashSet<>(requestedLower);
         notInTeamLower.removeAll(teamIdsLower);
 
-        // รายการที่ผ่าน (อยู่ในทีม) – เทียบแบบ ignore-case
+        // เหลือเฉพาะที่อยู่ในทีม (ignore case)
         List<String> validAssigneesExact = new ArrayList<>();
         for (int i = 0; i < requestedExact.size(); i++) {
             String ex = requestedExact.get(i);
@@ -214,14 +141,13 @@ public class AssignmentResource {
             throw new BadRequestException("No valid assignees in the team.");
         }
 
-        // ---- resolve assignees to emails ----
-        // ดึง candidate จาก User ตาม lower(id/email) เพื่อลดสแกนทั้งตาราง
-        Set<String> lowerKeys = validAssigneesExact.stream().map(String::toLowerCase).collect(Collectors.toSet());
+        // ---------- map assignees -> emails ----------
+        Set<String> keys = validAssigneesExact.stream().map(String::toLowerCase).collect(Collectors.toSet());
         List<User> candidates = em.createQuery("""
                 SELECT u FROM User u
                 WHERE LOWER(u.id) IN :xs OR LOWER(u.email) IN :xs
                 """, User.class)
-                .setParameter("xs", lowerKeys)
+                .setParameter("xs", keys)
                 .getResultList();
 
         Map<String, String> idLowerToEmailLower = new HashMap<>();
@@ -241,12 +167,10 @@ public class AssignmentResource {
             if (email == null && ex.contains("@")) email = ex.toLowerCase(); // ถ้า ex เป็นอีเมลอยู่แล้ว
             if (email != null) assigneeEmails.add(email);
         }
-        // dedup
         assigneeEmails = assigneeEmails.stream().distinct().toList();
         if (assigneeEmails.isEmpty()) throw new BadRequestException("No valid assignee emails found.");
 
-        // ---- validate courses (และหา courseIds ที่หาย) ----
-        // dedup courseIds จาก payload ก่อน
+        // ---------- validate courses & หา missing ----------
         List<String> reqCourseIdsUniq = req.courseIds.stream()
                 .filter(Objects::nonNull).map(String::trim).filter(s -> !s.isEmpty())
                 .distinct().toList();
@@ -258,36 +182,30 @@ public class AssignmentResource {
                 .getResultList();
 
         Set<String> foundIds = contents.stream().map(LearningContent::getId).collect(Collectors.toSet());
-        List<String> missingCourseIds = reqCourseIdsUniq.stream()
-                .filter(id -> !foundIds.contains(id))
-                .toList();
-
+        List<String> missingCourseIds = reqCourseIdsUniq.stream().filter(id -> !foundIds.contains(id)).toList();
         if (contents.isEmpty()) throw new BadRequestException("No valid courseIds found.");
-        // ใช้เฉพาะที่พบจริง
         List<String> contentIdsUniq = contents.stream().map(LearningContent::getId).distinct().toList();
 
-        // ---- parse due date (ถ้ามี) ----
+        // ---------- due date ----------
         LocalDateTime dueAt = null;
         if (notBlank(req.dueDate)) {
             try {
-                // ใช้ปลายวัน (23:59:59.999999999) เพื่อไม่ตัดเวลาเร็วเกินไป
                 dueAt = LocalDate.parse(req.dueDate).atTime(LocalTime.MAX);
             } catch (Exception e) {
                 throw new BadRequestException("Invalid dueDate format, expected YYYY-MM-DD");
             }
         }
 
-        // ---- persist header (ใส่ทุกฟิลด์ NOT NULL ให้ครบ) ----
+        // ---------- persist header (กัน NOT NULL ทุกช่อง) ----------
         AssignmentEntity header = new AssignmentEntity();
-        // ถ้า Entity ของคุณมี @GeneratedValue(UUID) แล้ว ไม่จำเป็นต้องเซ็ต id เอง
-        header.setId(UUID.randomUUID());
+        header.setId(UUID.randomUUID());                 // ถ้า entity ใช้ @GeneratedValue ก็ลบได้
         header.setTeamId(req.teamId);
         header.setCreatedAt(LocalDateTime.now());
 
         header.setCreaterId(nvl(actorId));
         header.setCreaterEmail(nvl(actorEmail));
         header.setCreaterName(nvl(actorName));
-        header.setCreaterAvatar(nvl(actorAvatar)); // สำคัญ: ไม่ปล่อย null
+        header.setCreaterAvatar(nvl(actorAvatar));       // สำคัญ: DB not-null
 
         header.setPriority(notBlank(req.priority) ? req.priority : "Normal");
         header.setNotes(req.note);
@@ -295,7 +213,7 @@ public class AssignmentResource {
 
         em.persist(header);
 
-        // ---- persist items (de-dup ทั้ง email และ course) ----
+        // ---------- persist items (de-dup ทั้งคู่) ----------
         int itemCount = 0;
         for (String email : assigneeEmails) {
             for (String contentId : contentIdsUniq) {
@@ -308,14 +226,14 @@ public class AssignmentResource {
             }
         }
 
-        // ---- response ----
+        // ---------- response ----------
         CreateAssignmentResp resp = new CreateAssignmentResp();
-        resp.assignmentId    = header.getId().toString();
-        resp.assignedCount   = assigneeEmails.size();
-        resp.courseCount     = contentIdsUniq.size();
-        resp.itemCount       = itemCount;
-        resp.ignoredAssignees= new ArrayList<>(notInTeamLower); // รายชื่อ (lowercase) ที่ถูกละทิ้งเพราะไม่อยู่ในทีม
-        resp.missingCourseIds= missingCourseIds;                // id ที่หาไม่พบ
+        resp.assignmentId     = header.getId().toString();
+        resp.assignedCount    = assigneeEmails.size();
+        resp.courseCount      = contentIdsUniq.size();
+        resp.itemCount        = itemCount;
+        resp.ignoredAssignees = new ArrayList<>(notInTeamLower); // (lowercase) เพื่อบอกว่าไม่อยู่ในทีม
+        resp.missingCourseIds = missingCourseIds;
 
         if (!resp.ignoredAssignees.isEmpty()) {
             log.warn("Ignored assignees (not in team {}): {}", req.teamId, resp.ignoredAssignees);
@@ -330,165 +248,17 @@ public class AssignmentResource {
         return Response.status(Response.Status.CREATED).entity(resp).build();
     }
 
-    // ======================= helpers =======================
-    private static boolean isBlank(String s) { return s == null || s.isBlank(); }
-    private static boolean notBlank(String s) { return s != null && !s.isBlank(); }
-    private static String safeLower(String s) { return s == null ? null : s.toLowerCase(); }
-    private static String nvl(String s) { return s == null ? "" : s; }
-
-    private static Optional<String> optClaim(JsonWebToken jwt, String name) {
+    // ---------- helpers ----------
+    private static boolean isBlank(String s){ return s == null || s.isBlank(); }
+    private static boolean notBlank(String s){ return s != null && !s.isBlank(); }
+    private static String safeLower(String s){ return s == null ? null : s.toLowerCase(); }
+    private static String nvl(String s){ return s == null ? "" : s; }
+    private static Optional<String> optClaim(JsonWebToken jwt, String claim) {
         try {
-            Object v = jwt.getClaim(name);
+            Object v = jwt.getClaim(claim);
             return Optional.ofNullable(v).map(Object::toString);
         } catch (Exception e) {
             return Optional.empty();
         }
     }
-}
-
-package AssignCourse.Entity;
-
-import jakarta.persistence.*;
-
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
-
-@Entity
-@Table(name="assignments")
-public class AssignmentEntity {
-
-    @Id
-    @GeneratedValue
-    private UUID id;
-
-    @Column(name = "creater_id", nullable = false)
-    private String createrId;
-
-    @Column(name = "creater_name")
-    private String createrName;
-
-    @Column(name = "creater_avatar")
-    private String createrAvatar;
-
-    @Column(name = "creater_email")
-    private String createrEmail;
-
-    @Column(name = "team_id", nullable = false)
-    private String teamId;
-
-    @Column(name = "priority", nullable = false)
-    private String priority;
-
-    @Column(name = "notes", columnDefinition = "TEXT",length = 200)
-    private String notes;
-
-    @Column(name = "Created_at", nullable = false)
-    private LocalDateTime createdAt = LocalDateTime.now();
-
-    @OneToMany(mappedBy = "assignment", cascade = CascadeType.ALL, orphanRemoval = true)
-    private java.util.List<AssignmentItemEntity> items = new java.util.ArrayList<>();
-
-    @Column(name = "due_date")
-    private LocalDateTime dueDate;
-
-    public UUID getId() {return id;}
-
-    public void setId(UUID id) {this.id = id;}
-
-    public String getCreaterId() {return createrId;}
-
-    public void setCreaterId(String createrId) {this.createrId = createrId;}
-
-    public String getCreaterName() {return createrName;}
-
-    public void setCreaterName(String createrName) {this.createrName = createrName;}
-
-    public String getCreaterAvatar() {return createrAvatar;}
-
-    public void setCreaterAvatar(String createrAvatar) {this.createrAvatar = createrAvatar;}
-
-    public String getCreaterEmail() {return createrEmail;}
-
-    public void setCreaterEmail(String createrEmail) {this.createrEmail = createrEmail;}
-
-    public String getTeamId() {return teamId;}
-
-    public void setTeamId(String teamId) {this.teamId = teamId;}
-
-    public String getPriority() {return priority;}
-
-    public void setPriority(String priority) {this.priority = priority;}
-
-    public String getNotes() {return notes;}
-
-    public void setNotes(String notes) {this.notes = notes;}
-
-    public LocalDateTime getCreatedAt() {return createdAt;}
-
-    public void setCreatedAt(LocalDateTime createdAt) {this.createdAt = createdAt;}
-
-    public List<AssignmentItemEntity> getItems() {return items;}
-
-    public void setItems(List<AssignmentItemEntity> items) {this.items = items;}
-
-    public LocalDateTime getDueDate() {return dueDate;}
-
-    public void setDueDate(LocalDateTime dueDate) {this.dueDate = dueDate;}
-}
-
-package AssignCourse.Entity;
-
-
-import jakarta.persistence.*;
-
-import java.util.UUID;
-
-@Entity
-@Table(name = "assignment_items")
-public class AssignmentItemEntity {
-
-    @Id
-    @GeneratedValue
-    private UUID id;
-
-    @Column(name = "destination_email", nullable = false)
-    private String destinationEmail;
-
-    @Column(name="content_id", nullable = false)
-    private String contentId;
-
-    @Column(name = "content_title", nullable = false)
-    private String contentTitle;
-
-    @Column(name="status", nullable = false)
-    private String status = "not_started";
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "assignment_id", referencedColumnName = "id", nullable = false)
-    private AssignmentEntity assignment;
-
-    public UUID getId() {return id;}
-
-    public void setId(UUID id) {this.id = id;}
-
-    public String getDestinationEmail() {return destinationEmail;}
-
-    public void setDestinationEmail(String destinationEmail) {this.destinationEmail = destinationEmail;}
-
-    public String getContentTitle() {return contentTitle;}
-
-    public void setContentTitle(String contentTitle) {this.contentTitle = contentTitle;}
-
-    public String getContentId() {return contentId;}
-
-    public void setContentId(String contentId) {this.contentId = contentId;}
-
-    public String getStatus() {return status;}
-
-    public void setStatus(String status) {this.status = status;}
-
-    public AssignmentEntity getAssignment() {return assignment;}
-
-    public void setAssignment(AssignmentEntity assignment) {this.assignment = assignment;}
 }
