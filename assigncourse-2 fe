@@ -1,0 +1,527 @@
+import { useEffect, useMemo, useState } from "react";
+import SupervisorSidebarWidget from "../Widgets/SupervisorSideBar";
+import { CalendarDays, Check, ChevronDown, ChevronRight, Filter, Search, Send, Users, BookOpen, X } from "lucide-react";
+
+/**
+ * Supervisor Assign Courses (LIVE API with Bearer)
+ * - Endpoints:
+ *   - GET  /teams/mine
+ *   - GET  /teams/{teamId}/members
+ *   - GET  /learning/all
+ *   - POST /assignments
+ * - แนบ Authorization: Bearer <token> ให้ทุกคำขอผ่าน fetchJson()
+ */
+
+// ----------------------
+// Config & Endpoints
+// ----------------------
+const API_BASE = import.meta.env.VITE_API_BASE || ""; // เช่น "https://api.mycompany.com/api"
+const ENDPOINTS = {
+  teamsMine: `${API_BASE}/teams/mine`,
+  teamsAll: `${API_BASE}/teams`,
+  teamMembers: (teamId: string) => `${API_BASE}/teams/${teamId}/members`,
+  catalog: `${API_BASE}/learning/all`,
+  assign: `${API_BASE}/assignments`,
+};
+
+// ----------------------
+// Types (UI)
+// ----------------------
+export type Team = { id: string; name: string; supervisorId?: string };
+export type Member = { userId: string; name: string; role?: string };
+export type Course = {
+  id: string;
+  title: string;
+  category?: string;
+  level?: "Beginner" | "Intermediate" | "Advanced";
+  durationMin?: number;
+  tags?: string[];
+};
+export type AssignmentDraft = {
+  assignees: string[]; // userIds (email หรือ userId ตามระบบ)
+  courseIds: string[];
+  dueDate?: string; // YYYY-MM-DD
+  priority: "Low" | "Normal" | "High";
+  note?: string;
+};
+
+// ----------------------
+// Mock (fallback)
+// ----------------------
+const MOCK_TEAMS: Team[] = [
+  { id: "T-001", name: "Onboarding Squad", supervisorId: "svp@gmail.com" },
+  { id: "T-002", name: "Sales Enablement", supervisorId: "svp@gmail.com" }
+];
+function mkMember(userId: string): Member {
+  const base = userId.split("@")[0];
+  const name = base.charAt(0).toUpperCase()+base.slice(1);
+  return { userId, name, role: "member" };
+}
+const MOCK_MEMBERS: Record<string, Member[]> = {
+  "T-001": ["alice@example.com","bob@example.com","charlie@example.com","daisy@example.com","ethan@example.com"].map(mkMember),
+  "T-002": ["fiona@example.com","george@example.com","hana@example.com","ivan@example.com"].map(mkMember),
+};
+const MOCK_CATALOG: Course[] = [
+  { id: "C-101", title: "Company Onboarding 101", category: "Onboarding", level: "Beginner", durationMin: 45, tags:["policy","intro"]},
+  { id: "C-201", title: "Security Basics", category: "Compliance", level: "Beginner", durationMin: 30, tags:["security","policy"]},
+  { id: "C-310", title: "Effective Sales Pitch", category: "Sales", level: "Intermediate", durationMin: 60, tags:["sales","presentation"]},
+  { id: "C-330", title: "CRM for Sales", category: "Sales", level: "Beginner", durationMin: 50, tags:["crm"]},
+  { id: "C-405", title: "Advanced Data Privacy", category: "Compliance", level: "Advanced", durationMin: 70, tags:["privacy"]},
+  { id: "C-420", title: "Coaching Skills for Trainers", category: "Leadership", level: "Intermediate", durationMin: 55, tags:["trainer","leadership"]},
+];
+
+// ----------------------
+// Helpers
+// ----------------------
+function getToken(): string | null {
+  return (
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("token") ||
+    null
+  );
+}
+
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
+  const res = await fetch(url, {
+    credentials: "include", // เผื่อมี cookie ควบคู่
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
+    ...init,
+  });
+
+  if (!res.ok) {
+    // ดัก 401 เพื่อบอกผู้ใช้ให้ล็อกอินใหม่
+    if (res.status === 401) {
+      const msg = "401 Unauthorized — กรุณาเข้าสู่ระบบใหม่";
+      try {
+        const text = await res.text();
+        throw new Error(text || msg);
+      } catch {
+        throw new Error(msg);
+      }
+    }
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `HTTP ${res.status} - ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// ----------------------
+// Component
+// ----------------------
+export default function Svpassigncourses() {
+  // data states
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [catalog, setCatalog] = useState<Course[]>([]);
+
+  // selections
+  const [selectedTeamId, setSelectedTeamId] = useState<string>("");
+  const [draft, setDraft] = useState<AssignmentDraft>({ assignees: [], courseIds: [], priority: "Normal" });
+  const [dueDate, setDueDate] = useState<string>("");
+  const [note, setNote] = useState<string>("");
+
+  // UI & filters
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<string>("All");
+  const [level, setLevel] = useState<string>("All");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // ---------- load teams ----------
+  useEffect(() => {
+    (async () => {
+      try {
+        // ลอง /teams/mine ก่อน ถ้าไม่มี/ล้มเหลว ค่อย /teams
+        let list = await fetchJson<any[]>(ENDPOINTS.teamsMine).catch(async () => {
+          return fetchJson<any[]>(ENDPOINTS.teamsAll);
+        });
+
+        const mapped: Team[] = list.map((t) => ({
+          id: t.id || t.teamId || t.uuid,
+          name: t.name || t.teamName || "Untitled Team",
+          supervisorId: t.supervisorId || t.owner || undefined
+        })).filter(t => !!t.id);
+
+        if (!mapped.length) throw new Error("No team found");
+        setTeams(mapped);
+        setSelectedTeamId(mapped[0].id);
+      } catch (e) {
+        console.error(e);
+        // Fallback mock
+        setTeams(MOCK_TEAMS);
+        setSelectedTeamId(MOCK_TEAMS[0].id);
+        setToast("⚠️ โหลดรายชื่อทีมจากระบบไม่สำเร็จ แสดงข้อมูลจำลองแทน");
+      }
+    })();
+  }, []);
+
+  // ---------- load members when team changes ----------
+  useEffect(() => {
+    if (!selectedTeamId) return;
+    (async () => {
+      try {
+        const list = await fetchJson<any[]>(ENDPOINTS.teamMembers(selectedTeamId));
+        const mapped: Member[] = list.map(m => ({
+          userId: m.userId || m.email || m.id,
+          name: m.name || m.displayName || m.email || "Unnamed",
+          role: m.role, // ถ้า backend ส่งมาก็ใช้เลย
+        })).filter(m => !!m.userId);
+        setMembers(mapped);
+      } catch (e) {
+        console.error(e);
+        setMembers(MOCK_MEMBERS[selectedTeamId] || []);
+        setToast("⚠️ โหลดสมาชิกทีมจากระบบไม่สำเร็จ แสดงข้อมูลจำลองแทน");
+      } finally {
+        // reset assignees เมื่อสลับทีม
+        setDraft(prev => ({ ...prev, assignees: [] }));
+      }
+    })();
+  }, [selectedTeamId]);
+
+  // ---------- load catalog once ----------
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await fetchJson<any[]>(ENDPOINTS.catalog); // <- แนบ Bearer แล้ว
+        // LearningContentDto: id, title, category, thumbnailUrl, contentType, dueDate, ...
+        const mapped: Course[] = list.map((c) => ({
+          id: c.id,
+          title: c.title || "Untitled",
+          category: c.category || c.contentType || "General",
+          level: "Beginner",
+          durationMin: undefined,
+          tags: c.tags || [],
+        })).filter(c => !!c.id);
+        if (!mapped.length) throw new Error("No courses");
+        setCatalog(mapped);
+      } catch (e) {
+        console.error(e);
+        setCatalog(MOCK_CATALOG);
+        setToast("⚠️ โหลดคอร์สจากระบบไม่สำเร็จ แสดงข้อมูลจำลองแทน");
+      }
+    })();
+  }, []);
+
+  // computed
+  const categories = useMemo(() => {
+    const allCats = catalog.map(c => c.category || "General");
+    return Array.from(new Set(["All", ...allCats]));
+  }, [catalog]);
+  const levels = ["All","Beginner","Intermediate","Advanced"];
+
+  const filteredCatalog = useMemo(() => {
+    return catalog.filter(c =>
+      (category === "All" || (c.category || "General") === category) &&
+      (level === "All" || (c.level || "Beginner") === level) &&
+      (query.trim() === "" ||
+        c.title.toLowerCase().includes(query.toLowerCase()) ||
+        (c.tags || []).some(t => t.toLowerCase().includes(query.toLowerCase())))
+    );
+  }, [catalog, category, level, query]);
+
+  // actions
+  const toggleAssignee = (userId: string) => {
+    setDraft(prev => {
+      const has = prev.assignees.includes(userId);
+      const next = has ? prev.assignees.filter(id => id !== userId) : [...prev.assignees, userId];
+      return { ...prev, assignees: next };
+    });
+  };
+
+  const toggleCourse = (courseId: string) => {
+    setDraft(prev => {
+      const has = prev.courseIds.includes(courseId);
+      const next = has ? prev.courseIds.filter(id => id !== courseId) : [...prev.courseIds, courseId];
+      return { ...prev, courseIds: next };
+    });
+  };
+
+  const setAllTeam = () => setDraft(prev => ({ ...prev, assignees: members.map(m => m.userId) }));
+  const clearAssignees = () => setDraft(prev => ({ ...prev, assignees: [] }));
+  const clearCourses = () => setDraft(prev => ({ ...prev, courseIds: [] }));
+
+  const doAssign = async () => {
+    if (!selectedTeamId) { setToast("กรุณาเลือกทีม"); return; }
+    if (!draft.assignees.length) { setToast("กรุณาเลือกผู้รับมอบหมายอย่างน้อย 1 คน"); return; }
+    if (!draft.courseIds.length) { setToast("กรุณาเลือกคอร์สอย่างน้อย 1 รายการ"); return; }
+
+    setLoading(true);
+    try {
+      const payload = {
+        teamId: selectedTeamId,
+        assignees: draft.assignees,
+        courseIds: draft.courseIds,
+        dueDate: dueDate || undefined,   // YYYY-MM-DD
+        priority: draft.priority,
+        note: note || undefined,
+      };
+      const res = await fetchJson<{ assignmentId: string; itemCount?: number; notifications?: number }>(ENDPOINTS.assign, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      setToast(
+        `✅ มอบหมายแล้ว (items: ${
+          res.itemCount ?? draft.assignees.length * draft.courseIds.length
+        }${res.notifications != null ? `, แจ้งเตือน: ${res.notifications}`: ""})`
+      );
+      setDraft(prev => ({ ...prev, courseIds: [] })); // เคลียร์เฉพาะคอร์ส
+    } catch (e: any) {
+      console.error(e);
+      const msg = typeof e?.message === "string" ? e.message : "Assignment failed";
+      setToast(`❌ มอบหมายไม่สำเร็จ: ${msg}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // UI helpers
+  const AssigneeChip = ({ id, name }: { id: string; name: string }) => (
+    <div className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm bg-white">
+      <Users className="w-3.5 h-3.5" />
+      <span className="truncate max-w-[140px]">{name}</span>
+      <button className="opacity-60 hover:opacity-100" onClick={() => toggleAssignee(id)} title="Remove">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+
+  const CourseChip = ({ id, title }: { id: string; title: string }) => (
+    <div className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm bg-white">
+      <BookOpen className="w-3.5 h-3.5" />
+      <span className="truncate max-w-[160px]">{title}</span>
+      <button className="opacity-60 hover:opacity-100" onClick={() => toggleCourse(id)} title="Remove">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+
+  const selectedTeam = teams.find(t => t.id === selectedTeamId);
+  const selectedMembers = members.filter(m => draft.assignees.includes(m.userId));
+  const selectedCourses = catalog.filter(c => draft.courseIds.includes(c.id));
+
+  return (
+    <div className="flex h-screen bg-gray-50">
+      <SupervisorSidebarWidget />
+
+      <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <h1 className="text-2xl md:text-3xl font-bold">Assign Courses</h1>
+          <div className="text-sm opacity-70">
+            ทีมที่เลือก: <span className="font-medium">{selectedTeam?.name || "-"}</span>
+          </div>
+        </div>
+
+        {/* Top filters row */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Team & members (left) */}
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-semibold">ทีมของฉัน</div>
+              <div className="text-xs opacity-60">{teams.length ? "เลือกทีม แล้วเลือกสมาชิก" : "กำลังโหลดทีม..."}</div>
+            </div>
+
+            {/* Team selector */}
+            <div className="mb-3">
+              <button className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 bg-white" disabled={!teams.length}>
+                <ChevronDown className="w-4 h-4" /> {selectedTeam?.name || "—"}
+              </button>
+              <div className="mt-2 flex gap-2 flex-wrap">
+                {teams.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setSelectedTeamId(t.id)}
+                    className={`rounded-full px-3 py-1 border text-sm ${selectedTeamId===t.id? 'bg-blue-600 text-white':'bg-white'}`}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Members list */}
+            <div className="border rounded-xl overflow-hidden">
+              <div className="px-3 py-2 text-xs uppercase bg-gray-50 border-b">สมาชิกในทีม</div>
+              <div className="max-h-64 overflow-auto divide-y">
+                {members.length ? members.map(m => {
+                  const active = draft.assignees.includes(m.userId);
+                  return (
+                    <button
+                      key={m.userId}
+                      onClick={() => toggleAssignee(m.userId)}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-left hover:bg-gray-50 ${active ? 'bg-gray-50' : ''}`}
+                    >
+                      <div className="truncate">
+                        <div className="font-medium truncate">{m.name}</div>
+                        <div className="text-xs opacity-60 truncate">{m.userId}</div>
+                      </div>
+                      {active ? <Check className="w-4 h-4" /> : <ChevronRight className="w-4 h-4 opacity-60" />}
+                    </button>
+                  );
+                }) : (
+                  <div className="px-3 py-6 text-sm opacity-60">ไม่มีสมาชิกหรือกำลังโหลด…</div>
+                )}
+              </div>
+              <div className="px-3 py-2 flex gap-2">
+                <button className="rounded-lg border px-2 py-1 text-sm" onClick={setAllTeam} disabled={!members.length}>เลือกทั้งทีม</button>
+                <button className="rounded-lg border px-2 py-1 text-sm" onClick={clearAssignees}>ล้าง</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Catalog (middle) */}
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-semibold">คอร์สทั้งหมด</div>
+              <div className="text-xs opacity-60">{catalog.length ? "ค้นหา/กรอง เพื่อเพิ่มเข้าตะกร้า" : "กำลังโหลดคอร์ส..."}</div>
+            </div>
+
+            <div className="flex items-center gap-2 mb-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-60" />
+                <input
+                  className="w-full rounded-xl border pl-9 pr-3 py-2 bg-white"
+                  placeholder="ค้นหาชื่อคอร์สหรือแท็ก"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 bg-white">
+                <Filter className="w-4 h-4" />
+                <select className="bg-transparent" value={category} onChange={(e)=>setCategory(e.target.value)}>
+                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <span className="opacity-30">|</span>
+                <select className="bg-transparent" value={level} onChange={(e)=>setLevel(e.target.value)}>
+                  {levels.map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="border rounded-xl overflow-hidden">
+              <div className="px-3 py-2 text-xs uppercase bg-gray-50 border-b">รายการคอร์ส</div>
+              <div className="max-h-64 overflow-auto divide-y">
+                {filteredCatalog.map(c => {
+                  const active = draft.courseIds.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => toggleCourse(c.id)}
+                      className={`w-full grid grid-cols-12 gap-2 items-center px-3 py-3 text-left hover:bg-gray-50 ${active? 'bg-gray-50':''}`}
+                    >
+                      <div className="col-span-6">
+                        <div className="font-medium truncate">{c.title}</div>
+                        <div className="text-xs opacity-60 truncate">{(c.category || "General")} • {(c.level || "Beginner")}</div>
+                      </div>
+                      <div className="col-span-3 text-xs opacity-70">{c.durationMin ? `${c.durationMin} นาที` : "-"}</div>
+                      <div className="col-span-3 flex justify-end">
+                        {active ? (
+                          <span className="inline-flex items-center gap-1 text-green-700 text-xs"><Check className="w-4 h-4"/> เลือกแล้ว</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs opacity-70"><BookOpen className="w-4 h-4"/> เลือก</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+                {!filteredCatalog.length && (
+                  <div className="px-3 py-6 text-sm opacity-60">ไม่พบคอร์สที่ตรงเงื่อนไข</div>
+                )}
+              </div>
+              <div className="px-3 py-2 flex gap-2">
+                <button className="rounded-lg border px-2 py-1 text-sm" onClick={clearCourses}>ล้างคอร์ส</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Basket (right) */}
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-semibold">ตะกร้ามอบหมาย</div>
+              <div className="text-xs opacity-60">ตรวจสอบก่อนกดมอบหมาย</div>
+            </div>
+
+            {/* Assignees */}
+            <div className="mb-3">
+              <div className="text-xs uppercase opacity-60 mb-2">ผู้เรียนที่เลือก ({selectedMembers.length})</div>
+              <div className="flex gap-2 flex-wrap">
+                {selectedMembers.length ? selectedMembers.map(m => (
+                  <AssigneeChip key={m.userId} id={m.userId} name={m.name} />
+                )) : <div className="text-sm opacity-60">ยังไม่เลือกผู้เรียน</div>}
+              </div>
+            </div>
+
+            {/* Courses */}
+            <div className="mb-3">
+              <div className="text-xs uppercase opacity-60 mb-2">คอร์สที่เลือก ({selectedCourses.length})</div>
+              <div className="flex gap-2 flex-wrap">
+                {selectedCourses.length ? selectedCourses.map(c => (
+                  <CourseChip key={c.id} id={c.id} title={c.title} />
+                )) : <div className="text-sm opacity-60">ยังไม่เลือกคอร์ส</div>}
+              </div>
+            </div>
+
+            {/* Settings */}
+            <div className="grid grid-cols-1 gap-3 mb-3">
+              <div>
+                <div className="text-xs uppercase opacity-60 mb-1">กำหนดส่ง</div>
+                <div className="relative">
+                  <CalendarDays className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-60" />
+                  <input type="date" className="w-full rounded-xl border pl-9 pr-3 py-2 bg-white" value={dueDate} onChange={(e)=>setDueDate(e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase opacity-60 mb-1">ความสำคัญ</div>
+                <select
+                  className="w-full rounded-xl border px-3 py-2 bg-white"
+                  value={draft.priority}
+                  onChange={(e)=>setDraft(prev=>({...prev, priority: e.target.value as AssignmentDraft["priority"]}))}
+                >
+                  <option>Low</option>
+                  <option>Normal</option>
+                  <option>High</option>
+                </select>
+              </div>
+              <div>
+                <div className="text-xs uppercase opacity-60 mb-1">บันทึกข้อความถึงผู้เรียน (ไม่บังคับ)</div>
+                <textarea
+                  className="w-full rounded-xl border px-3 py-2 bg-white min-h-[84px]"
+                  placeholder="เช่น โปรดเรียนภายในสัปดาห์นี้"
+                  value={note}
+                  onChange={(e)=>setNote(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <button
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 bg-blue-600 text-white hover:opacity-90 disabled:opacity-60"
+              onClick={doAssign}
+              disabled={loading}
+            >
+              <Send className="w-4 h-4" /> {loading ? "กำลังมอบหมาย..." : "มอบหมายคอร์ส"}
+            </button>
+
+            <div className="mt-3 text-xs opacity-60">
+              *ใช้ข้อมูลจริงจากระบบ (fallback เป็น mock อัตโนมัติเมื่อ API ล้มเหลว)
+            </div>
+          </div>
+        </div>
+
+        {/* Toast */}
+        {toast && (
+          <div className="fixed bottom-4 right-4 rounded-xl border bg-white shadow p-3 flex items-center gap-2 text-sm">
+            <Check className="w-4 h-4 text-green-700" />
+            <span>{toast}</span>
+            <button className="ml-2 opacity-60 hover:opacity-100" onClick={()=>setToast(null)}><X className="w-4 h-4"/></button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
