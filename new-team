@@ -1,0 +1,269 @@
+package TeamFeature.Resource;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.*;
+import model.MemberEntity;
+import model.TeamEntity;
+import model.User;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * Base path ควรวางหลัง prefix /api ที่คุณตั้งใน reverse proxy
+ * Frontend เรียก /api/teams/... ดังนั้น @Path("/teams") จะตรง
+ */
+@Path("/teams")
+@Consumes(MediaType.APPLICATION_JSON)
+@Produces(MediaType.APPLICATION_JSON)
+public class TeamResource {
+
+    private static final Logger log = LoggerFactory.getLogger(TeamResource.class);
+
+    @Inject EntityManager em;
+    @Inject JsonWebToken jwt;
+
+    // ---------- DTOs ที่ตรงกับ frontend ----------
+    public static class TeamDto {
+        public String id;
+        public String name;
+        public String supervisorId;
+        public List<String> memberIds;
+    }
+    public static class TeamMemberDto {
+        public String userId;   // อีเมลหรือ user id
+        public String name;     // ชื่อแสดงผล (optional)
+        public String role;     // "member" | "trainer" | "supervisor"
+    }
+    public static class UpdateRoleReq {
+        /** frontend ส่ง "admin" เพื่อเลื่อนเป็น trainer, "user" เพื่อถอดเป็น member */
+        public String role; // "admin" | "user"
+    }
+
+    // ---------- helpers ----------
+    private String currentUserId() {
+        // พยายามใช้ email ก่อน ถ้าไม่มี fallback เป็น subject
+        String email = Optional.ofNullable(jwt.getClaim("email")).map(Object::toString).orElse(null);
+        return email != null ? email : jwt.getSubject();
+    }
+    private static boolean isBlank(String s){ return s == null || s.isBlank(); }
+
+    // =========================================================
+    // 1) GET /api/teams/my-teams?userId=<optional>
+    //    คืนทีมที่คนนั้นเป็น supervisor (ผ่าน Team.supervisorId)
+    //    หรือเป็นสมาชิก team ที่ role == 'supervisor'
+    // =========================================================
+    @GET
+    @Path("/my-teams")
+    @RolesAllowed({"supervisor","admin"})
+    public List<TeamDto> myTeams(@QueryParam("userId") String userIdFromQuery) {
+        String caller = currentUserId();
+        String userId = !isBlank(userIdFromQuery) ? userIdFromQuery : caller;
+
+        log.info("GET /teams/my-teams by {} (effective userId={})", caller, userId);
+
+        // 1) ทีมที่เป็น supervisor โดยตรง
+        List<TeamEntity> byOwner = em.createQuery("""
+            SELECT t FROM TeamEntity t WHERE t.supervisorId = :uid
+        """, TeamEntity.class)
+                .setParameter("uid", userId)
+                .getResultList();
+
+        // 2) ทีมที่มีสมาชิกเป็น supervisor (กรณี role เก็บใน MemberEntity)
+        List<TeamEntity> byMemberSupervisor = em.createQuery("""
+            SELECT DISTINCT m.team FROM MemberEntity m
+            WHERE (m.memberId = :uid OR m.userID = :uid) AND LOWER(m.role) = 'supervisor'
+        """, TeamEntity.class)
+                .setParameter("uid", userId)
+                .getResultList();
+
+        // รวม & unique
+        Set<String> seen = new HashSet<>();
+        List<TeamEntity> union = new ArrayList<>();
+        for (TeamEntity t : byOwner) if (seen.add(t.getId())) union.add(t);
+        for (TeamEntity t : byMemberSupervisor) if (seen.add(t.getId())) union.add(t);
+
+        // map -> DTO
+        return union.stream().map(t -> {
+            TeamDto dto = new TeamDto();
+            dto.id = t.getId();
+            dto.name = t.getName();
+            dto.supervisorId = t.getSupervisorId();
+            // preload member ids
+            var mids = t.getMemberEntities() == null ? List.<MemberEntity>of() : t.getMemberEntities();
+            dto.memberIds = mids.stream()
+                    .map(m -> {
+                        // เลือกใช้อะไรเป็น userId ให้ frontend — ถ้ามีอีเมลใน userID ก็เหมาะสุด
+                        if (!isBlank(m.getUserID())) return m.getUserID();
+                        return m.getMemberId(); // fallback
+                    })
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .toList();
+            return dto;
+        }).toList();
+    }
+
+    // =========================================================
+    // 2) GET /api/teams/{teamId}/members
+    //    คืนสมาชิกทั้งหมดในทีมในรูป TeamMemberDto
+    //    ตรงกับที่หน้า React เรียกใช้
+    // =========================================================
+    @GET
+    @Path("/{teamId}/members")
+    @RolesAllowed({"supervisor","admin"})
+    public List<TeamMemberDto> listMembers(@PathParam("teamId") String teamId) {
+        String caller = currentUserId();
+        log.info("GET /teams/{}/members by {}", teamId, caller);
+
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found");
+
+        // (ทางเลือก) ตรวจสิทธิ์ว่า caller เป็น supervisor ของทีมนี้
+        boolean callerIsSupervisor =
+                Objects.equals(team.getSupervisorId(), caller) ||
+                em.createQuery("""
+                    SELECT COUNT(m) FROM MemberEntity m
+                    WHERE m.team.id = :tid AND (m.memberId = :uid OR m.userID = :uid)
+                      AND LOWER(m.role) = 'supervisor'
+                """, Long.class)
+                  .setParameter("tid", teamId)
+                  .setParameter("uid", caller)
+                  .getSingleResult() > 0;
+
+        if (!callerIsSupervisor) {
+            // ถ้าอยากให้ admin ดูได้ ให้เพิ่มเงื่อนไขตรวจ role จาก JWT group ตรงนี้
+            throw new ForbiddenException("Not a team supervisor");
+        }
+
+        List<MemberEntity> members = em.createQuery("""
+            SELECT m FROM MemberEntity m
+            WHERE m.team.id = :tid
+            ORDER BY m.createdAt ASC
+        """, MemberEntity.class)
+                .setParameter("tid", teamId)
+                .getResultList();
+
+        // preload users เพื่อแปลงชื่อ
+        // เราจะรวบรวม user keys (ทั้ง userID และ memberId) ไปค้นใน User
+        Set<String> keys = members.stream()
+                .flatMap(m -> {
+                    List<String> list = new ArrayList<>();
+                    if (!isBlank(m.getUserID())) list.add(m.getUserID());
+                    if (!isBlank(m.getMemberId())) list.add(m.getMemberId());
+                    return list.stream();
+                })
+                .map(String::toLowerCase)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Map<String, User> byIdLower = new HashMap<>();
+        Map<String, User> byEmailLower = new HashMap<>();
+        if (!keys.isEmpty()) {
+            // ดึงเฉพาะที่มีโอกาสแมตช์ (แมปทั้ง id และ email แบบ ignore-case)
+            List<User> candidates = em.createQuery("""
+                SELECT u FROM User u
+                WHERE LOWER(u.id) IN :ks OR LOWER(u.email) IN :ks
+            """, User.class)
+                    .setParameter("ks", keys)
+                    .getResultList();
+            for (User u : candidates) {
+                if (u.getId() != null) byIdLower.put(u.getId().toString().toLowerCase(), u);
+                if (u.getEmail() != null) byEmailLower.put(u.getEmail().toLowerCase(), u);
+            }
+        }
+
+        // map -> DTO
+        return members.stream().map(m -> {
+            String uid = !isBlank(m.getUserID()) ? m.getUserID() : m.getMemberId();
+            String userKeyLower = uid != null ? uid.toLowerCase() : null;
+
+            User found = null;
+            if (userKeyLower != null) {
+                found = byEmailLower.get(userKeyLower);
+                if (found == null) found = byIdLower.get(userKeyLower);
+            }
+            String name = (found != null && !isBlank(found.getName())) ? found.getName() : uid;
+
+            // normalize role -> member/trainer/supervisor
+            String r = String.valueOf(m.getRole() == null ? "" : m.getRole()).toLowerCase();
+            String role;
+            if ("supervisor".equals(r) || Objects.equals(team.getSupervisorId(), uid)) {
+                role = "supervisor";
+            } else if ("admin".equals(r) || "trainer".equals(r)) {
+                role = "trainer";
+            } else {
+                role = "member";
+            }
+
+            TeamMemberDto dto = new TeamMemberDto();
+            dto.userId = uid;
+            dto.name = name;
+            dto.role = role;
+            return dto;
+        }).toList();
+    }
+
+    // =========================================================
+    // 3) PUT /api/teams/{teamId}/members/{userId}/role
+    //    frontend ส่ง { role: "admin" | "user" }
+    //    - "admin"  -> ยกระดับเป็น trainer (เก็บใน MemberEntity.role = 'trainer')
+    //    - "user"   -> ลดเป็น member (MemberEntity.role = 'member')
+    // =========================================================
+    @PUT
+    @Path("/{teamId}/members/{userId}/role")
+    @Transactional
+    @RolesAllowed({"supervisor","admin"})
+    public Response updateMemberRole(@PathParam("teamId") String teamId,
+                                     @PathParam("userId") String userId,
+                                     UpdateRoleReq req) {
+        String caller = currentUserId();
+        log.info("PUT /teams/{}/members/{}/role by {} -> {}", teamId, userId, caller, req != null ? req.role : null);
+
+        if (req == null || isBlank(req.role)) throw new BadRequestException("role is required");
+
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found");
+
+        // ต้องเป็น supervisor ของทีมนี้เท่านั้น
+        boolean callerIsSupervisor =
+                Objects.equals(team.getSupervisorId(), caller) ||
+                em.createQuery("""
+                    SELECT COUNT(m) FROM MemberEntity m
+                    WHERE m.team.id = :tid AND (m.memberId = :uid OR m.userID = :uid)
+                      AND LOWER(m.role) = 'supervisor'
+                """, Long.class)
+                        .setParameter("tid", teamId)
+                        .setParameter("uid", caller)
+                        .getSingleResult() > 0;
+
+        if (!callerIsSupervisor) throw new ForbiddenException("Not a team supervisor");
+
+        // หา member record
+        MemberEntity member = em.createQuery("""
+            SELECT m FROM MemberEntity m
+            WHERE m.team.id = :tid AND (m.userID = :uid OR m.memberId = :uid)
+        """, MemberEntity.class)
+                .setParameter("tid", teamId)
+                .setParameter("uid", userId)
+                .getResultStream().findFirst()
+                .orElseThrow(() -> new NotFoundException("Member not found in team"));
+
+        String next = switch (req.role.toLowerCase()) {
+            case "admin" -> "trainer";
+            case "user"  -> "member";
+            default      -> throw new BadRequestException("Unsupported role value: " + req.role + " (use 'admin' or 'user')");
+        };
+
+        member.setRole(next);
+        // em.merge(member); // ไม่จำเป็น ถ้า entity เป็น managed อยู่แล้ว
+
+        return Response.noContent().build();
+    }
+}
