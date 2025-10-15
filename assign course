@@ -1,3 +1,74 @@
+2025-10-15 10:52:47,531 ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-1) HTTP Request to /assignments failed, error id: 4d5310b7-064b-4df6-8e0b-e7c028b318f4-5
+
+Exception in AssignmentResource.java:185
+          183          header.setNotes(req.note);                                                                                                                                                                                   
+          184          if (dueAt != null) header.setDueDate(dueAt);                                                                                                                                                                 
+        ? 185          em.merge(header);                                                                                                                                                                                            
+          186          // ---------- persist items ----------                                                                                                                                                                       
+          187          int createdCount = 0;                                                                                                                                                                                        
+
+Exception in AssignmentResource.java:185
+          183          header.setNotes(req.note);                                                                                                                                                                                   
+          184          if (dueAt != null) header.setDueDate(dueAt);                                                                                                                                                                 
+        ? 185          em.merge(header);                                                                                                                                                                                            
+          186          // ---------- persist items ----------                                                                                                                                                                       
+          187          int createdCount = 0;: jakarta.persistence.OptimisticLockException: Row was updated or deleted by another transaction (or unsaved-value mapping was incorrect): [AssignCourse.Entity.AssignmentEntity#b9198231-089c-451b-a9d1-c6a894d3ab27]                                                                                                                                                                                                      
+        at org.hibernate.internal.ExceptionConverterImpl.wrapStaleStateException(ExceptionConverterImpl.java:209)                                                                                                                   
+        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:95)                                                                                                                                    
+        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:167)                                                                                                                                   
+        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:173)                                                                                                                                   
+        at org.hibernate.internal.SessionImpl.fireMerge(SessionImpl.java:865)                                                                                                                                                       
+        at org.hibernate.internal.SessionImpl.merge(SessionImpl.java:840)                                                                                                                                                           
+        at io.quarkus.hibernate.orm.runtime.session.TransactionScopedSession.merge(TransactionScopedSession.java:169)                                                                                                               
+        at org.hibernate.engine.spi.SessionLazyDelegator.merge(SessionLazyDelegator.java:272)                                                                                                                                       
+        at org.hibernate.Session_OpdLahisOZ9nWRPXMsEFQmQU03A_Synthetic_ClientProxy.merge(Unknown Source)                                                                                                                            
+        at AssignCourse.Resourse.AssignmentResource.create(AssignmentResource.java:185)                                                                                                                                             
+        at AssignCourse.Resourse.AssignmentResource_Subclass.create$$superforward(Unknown Source)                                                                                                                                   
+        at AssignCourse.Resourse.AssignmentResource_Subclass$$function$$4.apply(Unknown Source)                                                                                                                                     
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
+        at io.quarkus.security.runtime.interceptor.SecurityHandler.handle(SecurityHandler.java:27)                                                                                                                                  
+        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor.intercept(RolesAllowedInterceptor.java:29)                                                                                                               
+        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                                                           
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
+        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor.intercept(StandardSecurityCheckInterceptor.java:44)                                                                                         
+        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor_RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                      
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:136)                                                                                            
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:107)                                                                                            
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.doIntercept(TransactionalInterceptorRequired.java:38)                                                                                       
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.intercept(TransactionalInterceptorBase.java:61)                                                                                                 
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.intercept(TransactionalInterceptorRequired.java:32)                                                                                         
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired_Bean.intercept(Unknown Source)                                                                                                              
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
+        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
+        at AssignCourse.Resourse.AssignmentResource_Subclass.create(Unknown Source)                                                                                                                                                 
+        at AssignCourse.Resourse.AssignmentResource$quarkusrestinvoker$create_be8456ded4b100372e114b1446e137321177ca1f.invoke(Unknown Source)                                                                                       
+        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
+        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
+        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
+        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
+        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
+        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
+        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
+        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
+        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
+        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
+Caused by: org.hibernate.StaleObjectStateException: Row was updated or deleted by another transaction (or unsaved-value mapping was incorrect): [AssignCourse.Entity.AssignmentEntity#b9198231-089c-451b-a9d1-c6a894d3ab27]         
+        at org.hibernate.event.internal.DefaultMergeEventListener.entityIsDetached(DefaultMergeEventListener.java:426)                                                                                                              
+        at org.hibernate.event.internal.DefaultMergeEventListener.merge(DefaultMergeEventListener.java:214)                                                                                                                         
+        at org.hibernate.event.internal.DefaultMergeEventListener.doMerge(DefaultMergeEventListener.java:152)                                                                                                                       
+        at org.hibernate.event.internal.DefaultMergeEventListener.onMerge(DefaultMergeEventListener.java:132)                                                                                                                       
+        at org.hibernate.event.internal.DefaultMergeEventListener.onMerge(DefaultMergeEventListener.java:89)                                                                                                                        
+        at org.hibernate.event.service.internal.
+
 package AssignCourse.Resourse;
 
 import AssignCourse.Entity.AssignmentEntity;
@@ -177,14 +248,12 @@ public class AssignmentResource {
         header.setCreaterId(actorId);
         header.setCreaterEmail(actorEmail != null ? actorEmail : "");
         header.setCreaterName(actorName != null ? actorName : "");
-        header.setCreaterAvatar(actorAvatar != null ? actorAvatar : ""); // สำคัญ: กัน NOT NULL
+        header.setCreaterAvatar("https://example.com/default-avatar.png"); // or extract from JWT
 
         header.setPriority(notBlank(req.priority) ? req.priority : "Normal");
         header.setNotes(req.note);
         if (dueAt != null) header.setDueDate(dueAt);
-
-        em.persist(header);
-
+        em.merge(header);
         // ---------- persist items ----------
         int createdCount = 0;
         for (String email : assigneeEmails) {
@@ -214,3 +283,4 @@ public class AssignmentResource {
     private static boolean notBlank(String s){ return s != null && !s.isBlank(); }
     private static String safeLower(String s){ return s == null ? null : s.toLowerCase(); }
 }
+
