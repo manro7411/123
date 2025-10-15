@@ -6,14 +6,8 @@ import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import jakarta.transaction.Transactional;
-import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.POST;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.core.Context;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.SecurityContext;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.*;
 import model.LearningContent;
 import model.MemberEntity;
 import model.TeamEntity;
@@ -22,7 +16,7 @@ import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.LocalDate;
+import java.time.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -32,130 +26,15 @@ import java.util.stream.Collectors;
 public class AssignmentResource {
 
     private static final Logger log = LoggerFactory.getLogger(AssignmentResource.class);
+    private static final String ROLE_SUPERVISOR = "supervisor";
 
-    public static final String ROLE_SUPERVISOR = "supervisor";
+    @Inject EntityManager em;
+    @Inject JsonWebToken jwt;
 
-    @Inject
-    EntityManager entityManager;
-
-    @Inject
-    JsonWebToken jsonWebToken;
-
-    @POST
-    @Transactional
-    @RolesAllowed(ROLE_SUPERVISOR)
-    public Response create(CreateAssignmentReq request,
-                           @Context SecurityContext securityContext){
-        String currentUser = securityContext.getUserPrincipal().getName();
-        String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
-        log.info("Supervisor name : {} is calling method : {} with request: {}", currentUser, methodName, request);
-        if (request == null || request.teamId == null || request.teamId.isBlank()) {
-            log.warn("Invalid request: teamId is required");
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity("teamId is required").build();
-        }
-        if (request.assignees == null || request.assignees.isEmpty()) {
-            log.warn("Invalid request: assignees list is required");
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity("assignees list is required").build();
-        }
-        if (request.courseIds == null || request.courseIds.isEmpty()) {
-            log.warn("Invalid request: courseIds list is required");
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity("courseIds list is required").build();
-        }
-        TeamEntity team = entityManager.find(TeamEntity.class, request.teamId);
-        if (team == null) {
-            log.warn("Team not found for teamId: {}", request.teamId);
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity("Invalid teamId").build();
-        }
-        Set<String> memberIds = team.getMemberEntities().stream()
-                .map(MemberEntity::getMemberId)
-                .filter(Objects::nonNull).map(String::trim).filter(s->!s.isEmpty())
-                .map(String::toLowerCase).collect(Collectors.toSet());
-
-        List<String> requested = request.assignees.stream().map(s->s.toLowerCase()).toList();
-        List<String> validAssignees = requested.stream().filter(memberIds::contains).toList();
-
-        if (validAssignees.isEmpty()){
-            log.warn("No valid assignees found in the team for requested assignees: {}", requested);
-            return Response.status(Response.Status.BAD_REQUEST).entity("No valid assignees in the team").build();
-        }
-
-        List<User> users = entityManager.createQuery("SELECT u FROM User u", User.class).getResultList();
-        log.info("Total users in system: {}", users.size());
-        Map<String,String> idLower_to_emailLower = new HashMap<>();
-
-        for (User u : users) {
-            String idL = u.getId()==null? null : u.getId().toString().toLowerCase();
-            String emailL = u.getEmail()==null? null : u.getEmail().toLowerCase();
-            if (idL != null && emailL != null){
-                log.info("Mapping user id {} to email {}", idL, emailL);
-                idLower_to_emailLower.put(idL, emailL);
-            }
-            if (emailL != null){
-                log.info("Mapping user email {} to itself", emailL);
-                idLower_to_emailLower.put(emailL, emailL);
-            }
-        }
-
-        List<String> assigneeEmails = validAssignees.stream()
-                .map(idLower_to_emailLower::get)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-
-        if (assigneeEmails.isEmpty()){
-            log.warn("No valid assignee emails found for valid assignees: {}", validAssignees);
-            return Response.status(Response.Status.BAD_REQUEST).entity("No valid assignee emails found").build();
-        }
-        List<LearningContent> contents = entityManager.createQuery("""
-            SELECT lc FROM LearningContent lc WHERE lc.id IN :ids
-        """, LearningContent.class)
-                .setParameter("ids", request.courseIds)
-                .getResultList();
-        if (contents.isEmpty()){
-            log.warn("No valid LearningContent found for courseIds: {}", request.courseIds);
-            return Response.status(Response.Status.BAD_REQUEST).entity("No valid courseIds found").build();
-        }
-        AssignmentEntity header = new AssignmentEntity();
-        header.setTeamId(request.teamId);
-        header.setCreaterId("system");
-        header.setPriority(request.priority == null ? "Normal" : request.priority);
-        if (request.dueDate != null){
-            try {
-                LocalDate due = LocalDate.parse(request.dueDate);
-                header.setDueDate(due.atStartOfDay());
-            } catch (Exception e){
-                log.warn("Invalid dueDate format: {}", request.dueDate);
-                return Response.status(Response.Status.BAD_REQUEST).entity("Invalid dueDate format, expected YYYY-MM-DD").build();
-            }
-        }
-        entityManager.persist(header);
-        int createdCount = 0;
-        for (String email : assigneeEmails) {
-            for (LearningContent lc : contents) {
-                AssignmentItemEntity item = new AssignmentItemEntity();
-                item.setAssignment(header);
-                item.setDestinationEmail(email);
-                item.setContentId(lc.getId());
-                entityManager.persist(item);
-                createdCount++;
-            }
-        }
-        CreateAssignmentResp resp = new CreateAssignmentResp();
-        resp.assignmentId = header.getId().toString();
-        resp.assignedCount = assigneeEmails.size();
-        resp.courseCount = contents.size();
-        log.info("Created assignment {} with {} assignees and {} courses", header.getId(), resp.assignedCount, resp.courseCount);
-        return Response.status(Response.Status.CREATED).entity(resp).build();
-
-    }
-
+    // ---------- DTO ----------
     public static class CreateAssignmentReq {
         public String teamId;
-        public List<String> assignees; // memberId (อีเมล/UUID) จาก frontend
+        public List<String> assignees; // user identifiers (อาจเป็น email หรือ userId)
         public List<String> courseIds; // LearningContent.id
         public String dueDate;         // YYYY-MM-DD
         public String priority;        // Low/Normal/High
@@ -166,88 +45,172 @@ public class AssignmentResource {
         public int assignedCount;
         public int courseCount;
     }
-}
-2025-10-15 10:43:48,690 ERROR [org.hib.eng.jdb.spi.SqlExceptionHelper] (executor-thread-1) ERROR: null value in column "creater_avatar" of relation "assignments" violates not-null constraint
-  Detail: Failing row contains (d4841b17-f077-4832-9039-e7f21d460798, 2025-10-15 10:43:48.662074, null, null, system, null, null, High, 3fbf03f3013f42d2b9402, 2025-11-01 00:00:00).
-2025-10-15 10:43:48,696 WARN  [com.arj.ats.arjuna] (executor-thread-1) ARJUNA012125: TwoPhaseCoordinator.beforeCompletion - failed for SynchronizationImple< 0:ffff0a914c45:cc0e:68ef092e:5, org.hibernate.resource.transaction.backend.jta.internal.synchronization.RegisteredSynchronization@28768feb >: org.hibernate.exception.ConstraintViolationException: could not execute statement [ERROR: null value in column "creater_avatar" of relation "assignments" violates not-null constraint line args (currently ''), [:] for the terminal, [h] for more options>
-  Detail: Failing row contains (d4841b17-f077-4832-9039-e7f21d460798, 2025-10-15 10:43:48.662074, null, null, system, null, null, High, 3fbf03f3013f42d2b9402, 2025-11-01 00:00:00).] [insert into assignments (Created_at,creater_avatar,creater_email,creater_id,creater_name,due_date,notes,priority,team_id,id) values (?,?,?,?,?,?,?,?,?,?)]                                                                                                                       
-        at org.hibernate.exception.internal.SQLStateConversionDelegate.convert(SQLStateConversionDelegate.java:97)                                                                                                                  
-        at org.hibernate.exception.internal.StandardSQLExceptionConverter.convert(StandardSQLExceptionConverter.java:58)                                                                                                            
-        at org.hibernate.engine.jdbc.spi.SqlExceptionHelper.convert(SqlExceptionHelper.java:108)                                                                                                                                    
-        at org.hibernate.engine.jdbc.internal.ResultSetReturnImpl.executeUpdate(ResultSetReturnImpl.java:197)                                                                                                                       
-        at org.hibernate.engine.jdbc.mutation.internal.AbstractMutationExecutor.performNonBatchedMutation(AbstractMutationExecutor.java:134)                                                                                        
-        at org.hibernate.engine.jdbc.mutation.internal.MutationExecutorSingleNonBatched.performNonBatchedOperations(MutationExecutorSingleNonBatched.java:55)                                                                       
-        at org.hibernate.engine.jdbc.mutation.internal.AbstractMutationExecutor.execute(AbstractMutationExecutor.java:55)                                                                                                           
-        at org.hibernate.persister.entity.mutation.InsertCoordinatorStandard.doStaticInserts(InsertCoordinatorStandard.java:194)                                                                                                    
-        at org.hibernate.persister.entity.mutation.InsertCoordinatorStandard.coordinateInsert(InsertCoordinatorStandard.java:132)                                                                                                   
-        at org.hibernate.persister.entity.mutation.InsertCoordinatorStandard.insert(InsertCoordinatorStandard.java:104)                                                                                                             
-        at org.hibernate.action.internal.EntityInsertAction.execute(EntityInsertAction.java:110)                                                                                                                                    
-        at org.hibernate.engine.spi.ActionQueue.executeActions(ActionQueue.java:644)                                                                                                                                                
-        at org.hibernate.engine.spi.ActionQueue.executeActions(ActionQueue.java:511)                                                                                                                                                
-        at org.hibernate.event.internal.AbstractFlushingEventListener.performExecutions(AbstractFlushingEventListener.java:414)                                                                                                     
-        at org.hibernate.event.internal.DefaultFlushEventListener.onFlush(DefaultFlushEventListener.java:41)                                                                                                                        
-        at org.hibernate.event.service.internal.EventListenerGroupImpl.fireEventOnEachListener(EventListenerGroupImpl.java:127)                                                                                                     
-        at org.hibernate.internal.SessionImpl.doFlush(SessionImpl.java:1429)                                                                                                                                                        
-        at org.hibernate.internal.SessionImpl.managedFlush(SessionImpl.java:491)                                                                                                                                                    
-        at org.hibernate.internal.SessionImpl.flushBeforeTransactionCompletion(SessionImpl.java:2354)                                                                                                                               
-        at org.hibernate.internal.SessionImpl.beforeTransactionCompletion(SessionImpl.java:1978)                                                                                                                                    
-        at org.hibernate.engine.jdbc.internal.JdbcCoordinatorImpl.beforeTransactionCompletion(JdbcCoordinatorImpl.java:439)                                                                                                         
-        at org.hibernate.resource.transaction.backend.jta.internal.JtaTransactionCoordinatorImpl.beforeCompletion(JtaTransactionCoordinatorImpl.java:336)                                                                           
-        at org.hibernate.resource.transaction.backend.jta.internal.synchronization.SynchronizationCallbackCoordinatorNonTrackingImpl.beforeCompletion(SynchronizationCallbackCoordinatorNonTrackingImpl.java:47)                    
-        at org.hibernate.resource.transaction.backend.jta.internal.synchronization.RegisteredSynchronization.beforeCompletion(RegisteredSynchronization.java:37)                                                                    
-        at com.arjuna.ats.internal.jta.resources.arjunacore.SynchronizationImple.beforeCompletion(SynchronizationImple.java:52)                                                                                                     
-        at com.arjuna.ats.arjuna.coordinator.TwoPhaseCoordinator.beforeCompletion(TwoPhaseCoordinator.java:348)                                                                                                                     
-        at com.arjuna.ats.arjuna.coordinator.TwoPhaseCoordinator.end(TwoPhaseCoordinator.java:66)                                                                                                                                   
-        at com.arjuna.ats.arjuna.AtomicAction.commit(AtomicAction.java:135)                                                                                                                                                         
-        at com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple.commitAndDisassociate(TransactionImple.java:1307)                                                                                                    
-        at com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction.commit(BaseTransaction.java:104)                                                                                                                      
-        at io.quarkus.narayana.jta.runtime.NotifyingTransactionManager.commit(NotifyingTransactionManager.java:70)                                                                                                                  
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.endTransaction(TransactionalInterceptorBase.java:406)                                                                                           
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:171)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:107)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.doIntercept(TransactionalInterceptorRequired.java:38)                                                                                       
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.intercept(TransactionalInterceptorBase.java:61)                                                                                                 
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.intercept(TransactionalInterceptorRequired.java:32)                                                                                         
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired_Bean.intercept(Unknown Source)                                                                                                              
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
-        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
-        at AssignCourse.Resourse.AssignmentResource_Subclass.create(Unknown Source)                                                                                                                                                 
-        at AssignCourse.Resourse.AssignmentResource$quarkusrestinvoker$create_03ee639883baa320a967d1df36fa6086c9d1bb4d.invoke(Unknown Source)                                                                                       
-        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
-        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
-        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
-        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
-        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
-        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
-        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
-Caused by: org.postgresql.util.PSQLException: ERROR: null value in column "creater_avatar" of relation "assignments" violates not-null constraint                                                                                   
-  Detail: Failing row contains (d4841b17-f077-4832-9039-e7f21d460798, 2025-10-15 10:43:48.662074, null, null, system, null, null, High, 3fbf03f3013f42d2b9402, 2025-11-01 00:00:00).                                                
-        at org.postgresql.core.v3.QueryExecutorImpl.receiveErrorResponse(QueryExecutorImpl.java:2736)                                                                                                                               
-        at org.postgresql.core.v3.QueryExecutorImpl.processResults(QueryExecutorImpl.java:2423)                                                                                                                                     
-        at org.postgresql.core.v3.QueryExecutorImpl.execute(QueryExecutorImpl.java:374)                                                                                                                                             
-        at org.postgresql.jdbc.PgStatement.executeInternal(PgStatement.java:518)                                                                                                                                                    
-        at org.postgresql.jdbc.PgStatement.execute(PgStatement.java:435)                                                                                                                                                            
-        at org.postgresql.jdbc.PgPreparedStatement.executeWithFlags(PgPreparedStatement.java:196)                                                                                                                                   
-        at org.postgresql.jdbc.PgPreparedStatement.executeUpdate(PgPreparedStatement.java:157)                                                                                                                                      
-        at io.agroal.pool.wrapper.PreparedStatementWrapper.executeUpdate(PreparedStatementWrapper.java:90)                                                                                                                          
-        at org.hibernate.engine.jdbc.internal.ResultSetReturnImpl.execute
-{
-  "teamId": "3fbf03f3013f42d2b9402",
-  "assignees": [
-    "UeJ5XJf6np3VVCJcRx_FI",
-    "oIbg_l-oMsRKvnYZwHZlS"
-  ],
-  "courseIds": [
-    "7933da8c8aa14b9598ec3",
-    "ffa7eea7d281477bbf8a2"
-  ],
-  "dueDate": "2025-11-01",
-  "priority": "High",
-  "note": "Urgent training required"
+
+    @POST
+    @Transactional
+    @RolesAllowed(ROLE_SUPERVISOR)
+    public Response create(CreateAssignmentReq req, @Context SecurityContext sc) {
+        final String actorName  = Optional.ofNullable(jwt.getClaim("name")).map(Object::toString).orElse(sc.getUserPrincipal().getName());
+        final String actorEmail = Optional.ofNullable(jwt.getClaim("email")).map(Object::toString).orElse(jwt.getSubject());
+        final String actorId    = Optional.ofNullable(jwt.getSubject()).orElse(actorEmail);
+        final String actorAvatar= // รับจาก claim ชื่อที่พบได้บ่อย ๆ
+                Optional.ofNullable(jwt.getClaim("picture"))
+                        .or(() -> Optional.ofNullable(jwt.getClaim("avatar")))
+                        .or(() -> Optional.ofNullable(jwt.getClaim("avatar_url")))
+                        .map(Object::toString)
+                        .orElse(""); // กัน null เพราะ DB not-null
+
+        log.info("Supervisor '{}' ({}) is creating assignment. Payload: teamId={}, assignees={}, courseIds={}, dueDate={}, priority={}, noteLen={}",
+                actorName, actorEmail, req != null ? req.teamId : null,
+                req != null ? (req.assignees != null ? req.assignees.size() : 0) : null,
+                req != null ? (req.courseIds  != null ? req.courseIds.size()  : 0) : null,
+                req != null ? req.dueDate : null,
+                req != null ? req.priority : null,
+                req != null && req.note != null ? req.note.length() : 0);
+
+        // ---------- validate base input ----------
+        if (req == null) throw new BadRequestException("Request body is required.");
+        if (isBlank(req.teamId)) throw new BadRequestException("teamId is required.");
+        if (req.assignees == null || req.assignees.isEmpty()) throw new BadRequestException("assignees is required and must not be empty.");
+        if (req.courseIds == null  || req.courseIds.isEmpty()) throw new BadRequestException("courseIds is required and must not be empty.");
+
+        // ---------- team & members ----------
+        TeamEntity team = em.find(TeamEntity.class, req.teamId);
+        if (team == null) throw new BadRequestException("Invalid teamId");
+        // load members (lazy)
+        team.getMemberEntities().size();
+
+        // เก็บ identifiers ของสมาชิกทีม (ทั้ง memberId และ userID เผื่อโปรเจ็กต์คุณใช้ต่างที่กัน)
+        Set<String> teamIdsExact = team.getMemberEntities().stream()
+                .flatMap(m -> {
+                    List<String> ids = new ArrayList<>();
+                    if (notBlank(m.getMemberId())) ids.add(m.getMemberId());
+                    try {
+                        // บางที่ใช้ userID เป็น email
+                        var method = m.getClass().getMethod("getUserID");
+                        Object v = method.invoke(m);
+                        if (v != null && !String.valueOf(v).isBlank()) ids.add(String.valueOf(v));
+                    } catch (Exception ignored) {}
+                    return ids.stream();
+                })
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        // สำหรับเทียบแบบไม่สนตัวพิมพ์
+        Set<String> teamIdsLower = teamIdsExact.stream().map(String::toLowerCase).collect(Collectors.toSet());
+
+        // ---------- normalize assignees ----------
+        List<String> requestedExact = req.assignees.stream()
+                .filter(Objects::nonNull).map(String::trim).filter(s -> !s.isEmpty()).toList();
+        List<String> requestedLower = requestedExact.stream().map(String::toLowerCase).toList();
+
+        // ตรวจว่าเป็นสมาชิกทีม (แบบ ignore case)
+        List<String> validAssigneesExact = new ArrayList<>();
+        for (int i = 0; i < requestedExact.size(); i++) {
+            String ex = requestedExact.get(i);
+            String lo = requestedLower.get(i);
+            if (teamIdsExact.contains(ex) || teamIdsLower.contains(lo)) {
+                validAssigneesExact.add(ex);
+            }
+        }
+        if (validAssigneesExact.isEmpty()) {
+            throw new BadRequestException("No valid assignees in the team.");
+        }
+
+        // ---------- resolve assignees -> email ----------
+        // พยายามแมปจาก User โดยดูทั้ง id และ email แบบ ignore-case
+        List<String> lowers = validAssigneesExact.stream().map(String::toLowerCase).toList();
+        // ดึงมาเฉพาะที่อาจแมตช์ (เลี่ยง SELECT ทั้งตาราง)
+        List<User> candidates = em.createQuery("""
+                SELECT u FROM User u
+                WHERE LOWER(u.id) IN :xs OR LOWER(u.email) IN :xs
+                """, User.class)
+                .setParameter("xs", new HashSet<>(lowers))
+                .getResultList();
+
+        Map<String, String> idLowerToEmail = new HashMap<>();
+        Map<String, String> emailLowerToEmail = new HashMap<>();
+        for (User u : candidates) {
+            String idL = safeLower(u.getId() != null ? u.getId().toString() : null);
+            String emL = safeLower(u.getEmail());
+            if (idL != null && emL != null) idLowerToEmail.put(idL, emL);
+            if (emL != null) emailLowerToEmail.put(emL, emL);
+        }
+
+        List<String> assigneeEmails = new ArrayList<>();
+        for (String ex : validAssigneesExact) {
+            String lo = ex.toLowerCase();
+            String email = emailLowerToEmail.get(lo);
+            if (email == null) email = idLowerToEmail.get(lo);
+            // ยังไม่ได้? ถ้า ex เป็นอีเมลจริงอยู่แล้วให้ใช้ได้เลย
+            if (email == null && ex.contains("@")) email = ex.toLowerCase();
+            if (email != null) assigneeEmails.add(email);
+        }
+        assigneeEmails = assigneeEmails.stream().distinct().toList();
+        if (assigneeEmails.isEmpty()) throw new BadRequestException("No valid assignee emails found.");
+
+        // ---------- validate courses ----------
+        List<LearningContent> contents = em.createQuery("""
+            SELECT lc FROM LearningContent lc WHERE lc.id IN :ids
+        """, LearningContent.class)
+                .setParameter("ids", req.courseIds)
+                .getResultList();
+        if (contents.isEmpty()) throw new BadRequestException("No valid courseIds found.");
+
+        // ---------- parse due date ----------
+        LocalDateTime dueAt = null;
+        if (notBlank(req.dueDate)) {
+            try {
+                dueAt = LocalDate.parse(req.dueDate).atTime(LocalTime.MAX);
+            } catch (Exception e) {
+                throw new BadRequestException("Invalid dueDate format, expected YYYY-MM-DD");
+            }
+        }
+
+        // ---------- persist header (ใส่ทุกฟิลด์ NOT NULL ให้ครบ) ----------
+        AssignmentEntity header = new AssignmentEntity();
+        header.setId(UUID.randomUUID());
+        header.setTeamId(req.teamId);
+        header.setCreatedAt(LocalDateTime.now());
+
+        header.setCreaterId(actorId);
+        header.setCreaterEmail(actorEmail != null ? actorEmail : "");
+        header.setCreaterName(actorName != null ? actorName : "");
+        header.setCreaterAvatar(actorAvatar != null ? actorAvatar : ""); // สำคัญ: กัน NOT NULL
+
+        header.setPriority(notBlank(req.priority) ? req.priority : "Normal");
+        header.setNotes(req.note);
+        if (dueAt != null) header.setDueDate(dueAt);
+
+        em.persist(header);
+
+        // ---------- persist items ----------
+        int createdCount = 0;
+        for (String email : assigneeEmails) {
+            for (LearningContent lc : contents) {
+                AssignmentItemEntity item = new AssignmentItemEntity();
+                item.setAssignment(header);
+                item.setDestinationEmail(email);
+                item.setContentId(lc.getId());
+                em.persist(item);
+                createdCount++;
+            }
+        }
+
+        // ---------- response ----------
+        CreateAssignmentResp resp = new CreateAssignmentResp();
+        resp.assignmentId = header.getId().toString();
+        resp.assignedCount = assigneeEmails.size();
+        resp.courseCount = contents.size();
+
+        log.info("Assignment created: id={}, assignees={}, courses={}, items={}",
+                resp.assignmentId, resp.assignedCount, resp.courseCount, createdCount);
+        return Response.status(Response.Status.CREATED).entity(resp).build();
+    }
+
+    // ---------- helpers ----------
+    private static boolean isBlank(String s){ return s == null || s.isBlank(); }
+    private static boolean notBlank(String s){ return s != null && !s.isBlank(); }
+    private static String safeLower(String s){ return s == null ? null : s.toLowerCase(); }
 }
