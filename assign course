@@ -17,6 +17,7 @@ import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.SecurityContext;
 import model.LearningContent;
 import model.MemberEntity;
+import model.Notification;
 import model.TeamEntity;
 import model.User;
 import org.eclipse.microprofile.jwt.JsonWebToken;
@@ -24,6 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.*;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -41,7 +43,7 @@ public class AssignmentResource {
     // ---------- DTO ----------
     public static class CreateAssignmentReq {
         public String teamId;
-        public List<String> assignees; // อาจเป็น email หรือ userId
+        public List<String> assignees; // email หรือ userId
         public List<String> courseIds; // LearningContent.id
         public String dueDate;         // YYYY-MM-DD
         public String priority;        // Low/Normal/High
@@ -54,6 +56,7 @@ public class AssignmentResource {
         public int itemCount;
         public List<String> ignoredAssignees;
         public List<String> missingCourseIds;
+        public int notifications; // จำนวน notification ที่สร้างจริง
     }
 
     @POST
@@ -107,7 +110,7 @@ public class AssignmentResource {
         List<String> requestedExact = req.assignees.stream().filter(Objects::nonNull).map(String::trim).filter(s->!s.isEmpty()).toList();
         List<String> requestedLower = requestedExact.stream().map(String::toLowerCase).toList();
 
-        // ไม่อยู่ในทีม (แจ้งกลับ)
+        // ระบุคนที่ไม่อยู่ในทีม (สำหรับส่งกลับ)
         Set<String> notInTeamLower = new LinkedHashSet<>(requestedLower);
         notInTeamLower.removeAll(teamIdsLower);
 
@@ -169,15 +172,15 @@ public class AssignmentResource {
         LocalDateTime dueAt = null;
         if (notBlank(req.dueDate)) {
             try {
+                // ใช้เวลา MAX ของวันเพื่อให้ดูเด่นชัดว่าหมดวันนั้น
                 dueAt = LocalDate.parse(req.dueDate).atTime(LocalTime.MAX);
             } catch (Exception e) {
                 throw new BadRequestException("Invalid dueDate format, expected YYYY-MM-DD");
             }
         }
 
-        // ---- persist header (สำคัญ: อย่า setId เอง และอย่า merge ของใหม่) ----
+        // ---- persist header (สำคัญ: อย่าตั้ง id เอง และอย่า merge ของใหม่) ----
         AssignmentEntity header = new AssignmentEntity();
-        // **ห้าม** header.setId(...);  // ปล่อยให้ @GeneratedValue ทำงาน
         header.setTeamId(req.teamId);
         header.setCreatedAt(LocalDateTime.now());
 
@@ -190,7 +193,7 @@ public class AssignmentResource {
         header.setNotes(req.note);
         if (dueAt != null) header.setDueDate(dueAt);
 
-        em.persist(header); // ✅ ใช้ persist สำหรับ entity ใหม่
+        em.persist(header);
 
         // ---- persist items ----
         int itemCount = 0;
@@ -205,12 +208,22 @@ public class AssignmentResource {
             }
         }
 
+        // ---- build & send notifications ----
+        int notiCount = createAssignmentNotifications(
+                assigneeEmails,
+                contents,
+                header,
+                actorName,
+                dueAt
+        );
+
         // ---- resp ----
         CreateAssignmentResp resp = new CreateAssignmentResp();
         resp.assignmentId     = header.getId() != null ? header.getId().toString() : null;
         resp.assignedCount    = assigneeEmails.size();
         resp.courseCount      = contentIdsUniq.size();
         resp.itemCount        = itemCount;
+        resp.notifications    = notiCount;
         resp.ignoredAssignees = new ArrayList<>(notInTeamLower);
         resp.missingCourseIds = missingCourseIds;
 
@@ -221,10 +234,67 @@ public class AssignmentResource {
             log.warn("Missing courseIds ignored: {}", resp.missingCourseIds);
         }
 
-        log.info("Assignment created: id={}, assignees={}, courses={}, items={}",
-                resp.assignmentId, resp.assignedCount, resp.courseCount, resp.itemCount);
+        log.info("Assignment created: id={}, assignees={}, courses={}, items={}, notifications={}",
+                resp.assignmentId, resp.assignedCount, resp.courseCount, resp.itemCount, resp.notifications);
 
         return Response.status(Response.Status.CREATED).entity(resp).build();
+    }
+
+    /**
+     * สร้าง Notification ให้ผู้รับแต่ละคน 1 รายการ (สรุป assignment)
+     */
+    private int createAssignmentNotifications(
+            List<String> assigneeEmails,
+            List<LearningContent> contents,
+            AssignmentEntity header,
+            String actorName,
+            LocalDateTime dueAt
+    ) {
+        if (assigneeEmails == null || assigneeEmails.isEmpty()) return 0;
+
+        // ดึง User recipients ทีเดียว
+        List<User> recipients = em.createQuery("""
+                SELECT u FROM User u
+                WHERE LOWER(u.email) IN :emails
+            """, User.class)
+                .setParameter("emails", assigneeEmails.stream().map(String::toLowerCase).collect(Collectors.toSet()))
+                .getResultList();
+
+        Map<String, User> byEmailLower = recipients.stream()
+                .filter(u -> u.getEmail() != null)
+                .collect(Collectors.toMap(u -> u.getEmail().toLowerCase(), u -> u, (a,b)->a, LinkedHashMap::new));
+
+        // เตรียมข้อความสรุป
+        String dueText = (dueAt != null)
+                ? "ภายใน " + dueAt.toLocalDate().format(DateTimeFormatter.ISO_DATE)
+                : "เร็วที่สุด";
+        int n = contents.size();
+        String preview = contents.stream().map(LearningContent::getTitle).filter(Objects::nonNull).limit(3)
+                .collect(Collectors.joining(", "));
+        if (n > 3) preview += " (+อีก " + (n - 3) + ")";
+
+        String baseMessage = "คุณได้รับมอบหมายคอร์สจำนวน " + n + " รายการ"
+                + (preview.isBlank() ? "" : " ได้แก่: " + preview)
+                + " โดย " + (actorName != null ? actorName : "ผู้ดูแล")
+                + (header.getPriority() != null ? " (ความสำคัญ: " + header.getPriority() + ")" : "")
+                + " " + dueText + ".";
+
+        int count = 0;
+        for (String email : assigneeEmails) {
+            User u = byEmailLower.get(email.toLowerCase());
+            if (u == null) continue;
+
+            Notification nEnt = new Notification();
+            nEnt.setMessage(baseMessage);
+            nEnt.setRecipient(u);
+            nEnt.setTarget("ASSIGNMENT"); // ใช้ค่าเดียวกับ NotificationResource ของคุณ
+            nEnt.setRead(false);
+            nEnt.setCreatedAt(LocalDateTime.now());
+            em.persist(nEnt);
+            count++;
+        }
+        log.info("Created {} notifications for assignment {}", count, header.getId());
+        return count;
     }
 
     // ---------- helpers ----------
