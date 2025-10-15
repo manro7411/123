@@ -1,3 +1,72 @@
+2025-10-15 10:57:09,186 ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-1) HTTP Request to /assignments failed, error id: 43dbf452-0412-46ea-beab-55ebca99efb1-1
+
+Exception in AssignmentResource.java:227rently ''), [:] for the terminal, [h] for more options>
+          225          if (dueAt != null) header.setDueDate(dueAt);                                                                                                                                                                 
+          226                                                                                                                                                                                                                       
+        ? 227          em.persist(header);                                                                                                                                                                                          
+          228                                                                                                                                                                                                                       
+          229          // ---- persist items (de-dup ��� email ��� course) ----                                                                                                                                                     
+
+Exception in AssignmentResource.java:227
+          225          if (dueAt != null) header.setDueDate(dueAt);                                                                                                                                                                 
+          226                                                                                                                                                                                                                       
+        ? 227          em.persist(header);                                                                                                                                                                                          
+          228                                                                                                                                                                                                                       
+          229          // ---- persist items (de-dup ��� email ��� course) ----: jakarta.persistence.EntityExistsException: detached entity passed to persist: AssignCourse.Entity.AssignmentEntity                                 
+        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:126)                                                                                                                                   
+        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:167)                                                                                                                                   
+        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:173)                                                                                                                                   
+        at org.hibernate.internal.SessionImpl.firePersist(SessionImpl.java:767)                                                                                                                                                     
+        at org.hibernate.internal.SessionImpl.persist(SessionImpl.java:745)                                                                                                                                                         
+        at io.quarkus.hibernate.orm.runtime.session.TransactionScopedSession.persist(TransactionScopedSession.java:158)                                                                                                             
+        at org.hibernate.engine.spi.SessionLazyDelegator.persist(SessionLazyDelegator.java:282)                                                                                                                                     
+        at org.hibernate.Session_OpdLahisOZ9nWRPXMsEFQmQU03A_Synthetic_ClientProxy.persist(Unknown Source)                                                                                                                          
+        at AssignCourse.Resourse.AssignmentResource.create(AssignmentResource.java:227)                                                                                                                                             
+        at AssignCourse.Resourse.AssignmentResource_Subclass.create$$superforward(Unknown Source)                                                                                                                                   
+        at AssignCourse.Resourse.AssignmentResource_Subclass$$function$$1.apply(Unknown Source)                                                                                                                                     
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
+        at io.quarkus.security.runtime.interceptor.SecurityHandler.handle(SecurityHandler.java:27)                                                                                                                                  
+        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor.intercept(RolesAllowedInterceptor.java:29)                                                                                                               
+        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                                                           
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
+        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor.intercept(StandardSecurityCheckInterceptor.java:44)                                                                                         
+        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor_RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                      
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:136)                                                                                            
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:107)                                                                                            
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.doIntercept(TransactionalInterceptorRequired.java:38)                                                                                       
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.intercept(TransactionalInterceptorBase.java:61)                                                                                                 
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.intercept(TransactionalInterceptorRequired.java:32)                                                                                         
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired_Bean.intercept(Unknown Source)                                                                                                              
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
+        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
+        at AssignCourse.Resourse.AssignmentResource_Subclass.create(Unknown Source)                                                                                                                                                 
+        at AssignCourse.Resourse.AssignmentResource$quarkusrestinvoker$create_be8456ded4b100372e114b1446e137321177ca1f.invoke(Unknown Source)                                                                                       
+        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
+        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
+        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
+        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
+        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
+        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
+        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
+        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
+        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
+        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
+Caused by: org.hibernate.PersistentObjectException: detached entity passed to persist: AssignCourse.Entity.AssignmentEntity                                                                                                         
+        at org.hibernate.event.internal.DefaultPersistEventListener.persist(DefaultPersistEventListener.java:90)                                                                                                                    
+        at org.hibernate.event.internal.DefaultPersistEventListener.onPersist(DefaultPersistEventListener.java:79)                                                                                                                  
+        at org.hibernate.event.internal.DefaultPersistEventListener.onPersist(DefaultPersistEventListener.java:55)                                                                                                                  
+        at org.hibernate.event.service.internal.EventListenerGroupImpl.fireEventOnEachListener(EventListenerGroupImpl.java:127)                                                                                                     
+        at org.hibernate.internal.SessionImpl.firePersist(SessionImpl.java:761)  
+
 package AssignCourse.Resourse;
 
 import AssignCourse.Entity.AssignmentEntity;
@@ -275,4 +344,151 @@ public class AssignmentResource {
             return Optional.empty();
         }
     }
+}
+
+package AssignCourse.Entity;
+
+import jakarta.persistence.*;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+
+@Entity
+@Table(name="assignments")
+public class AssignmentEntity {
+
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @Column(name = "creater_id", nullable = false)
+    private String createrId;
+
+    @Column(name = "creater_name")
+    private String createrName;
+
+    @Column(name = "creater_avatar")
+    private String createrAvatar;
+
+    @Column(name = "creater_email")
+    private String createrEmail;
+
+    @Column(name = "team_id", nullable = false)
+    private String teamId;
+
+    @Column(name = "priority", nullable = false)
+    private String priority;
+
+    @Column(name = "notes", columnDefinition = "TEXT",length = 200)
+    private String notes;
+
+    @Column(name = "Created_at", nullable = false)
+    private LocalDateTime createdAt = LocalDateTime.now();
+
+    @OneToMany(mappedBy = "assignment", cascade = CascadeType.ALL, orphanRemoval = true)
+    private java.util.List<AssignmentItemEntity> items = new java.util.ArrayList<>();
+
+    @Column(name = "due_date")
+    private LocalDateTime dueDate;
+
+    public UUID getId() {return id;}
+
+    public void setId(UUID id) {this.id = id;}
+
+    public String getCreaterId() {return createrId;}
+
+    public void setCreaterId(String createrId) {this.createrId = createrId;}
+
+    public String getCreaterName() {return createrName;}
+
+    public void setCreaterName(String createrName) {this.createrName = createrName;}
+
+    public String getCreaterAvatar() {return createrAvatar;}
+
+    public void setCreaterAvatar(String createrAvatar) {this.createrAvatar = createrAvatar;}
+
+    public String getCreaterEmail() {return createrEmail;}
+
+    public void setCreaterEmail(String createrEmail) {this.createrEmail = createrEmail;}
+
+    public String getTeamId() {return teamId;}
+
+    public void setTeamId(String teamId) {this.teamId = teamId;}
+
+    public String getPriority() {return priority;}
+
+    public void setPriority(String priority) {this.priority = priority;}
+
+    public String getNotes() {return notes;}
+
+    public void setNotes(String notes) {this.notes = notes;}
+
+    public LocalDateTime getCreatedAt() {return createdAt;}
+
+    public void setCreatedAt(LocalDateTime createdAt) {this.createdAt = createdAt;}
+
+    public List<AssignmentItemEntity> getItems() {return items;}
+
+    public void setItems(List<AssignmentItemEntity> items) {this.items = items;}
+
+    public LocalDateTime getDueDate() {return dueDate;}
+
+    public void setDueDate(LocalDateTime dueDate) {this.dueDate = dueDate;}
+}
+
+package AssignCourse.Entity;
+
+
+import jakarta.persistence.*;
+
+import java.util.UUID;
+
+@Entity
+@Table(name = "assignment_items")
+public class AssignmentItemEntity {
+
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @Column(name = "destination_email", nullable = false)
+    private String destinationEmail;
+
+    @Column(name="content_id", nullable = false)
+    private String contentId;
+
+    @Column(name = "content_title", nullable = false)
+    private String contentTitle;
+
+    @Column(name="status", nullable = false)
+    private String status = "not_started";
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assignment_id", referencedColumnName = "id", nullable = false)
+    private AssignmentEntity assignment;
+
+    public UUID getId() {return id;}
+
+    public void setId(UUID id) {this.id = id;}
+
+    public String getDestinationEmail() {return destinationEmail;}
+
+    public void setDestinationEmail(String destinationEmail) {this.destinationEmail = destinationEmail;}
+
+    public String getContentTitle() {return contentTitle;}
+
+    public void setContentTitle(String contentTitle) {this.contentTitle = contentTitle;}
+
+    public String getContentId() {return contentId;}
+
+    public void setContentId(String contentId) {this.contentId = contentId;}
+
+    public String getStatus() {return status;}
+
+    public void setStatus(String status) {this.status = status;}
+
+    public AssignmentEntity getAssignment() {return assignment;}
+
+    public void setAssignment(AssignmentEntity assignment) {this.assignment = assignment;}
 }
