@@ -1,0 +1,322 @@
+package Team.Resources;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.TeamEntity;
+import model.MemberEntity;
+
+import java.util.List;
+
+@Path("/api/teams")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamResource {
+
+    @Inject EntityManager em;
+
+    public static class TeamDto {
+        public String id;
+        public String name;
+        public TeamDto() {}
+        public TeamDto(String id, String name) { this.id=id; this.name=name; }
+    }
+    public static class TeamMemberDto {
+        public String userId; // = MemberEntity.memberId (อีเมลหรือ UUID)
+        public String name;   // = MemberEntity.nameMembers
+        public String role;
+        public TeamMemberDto() {}
+        public TeamMemberDto(String userId, String name, String role){
+            this.userId=userId; this.name=name; this.role=role;
+        }
+    }
+
+    // รายชื่อทีมของ supervisor (หรือ admin)
+    @GET
+    @Path("/my-teams")
+    @RolesAllowed({"supervisor","administrator","admin"})
+    public Response myTeams(@QueryParam("userId") String userId) {
+        if (userId == null || userId.isBlank()) {
+            return Response.status(Response.Status.BAD_REQUEST).entity("userId is required").build();
+        }
+        List<TeamDto> teams = em.createQuery("""
+            SELECT NEW Team.Resources.TeamResource$TeamDto(t.id, t.name)
+            FROM TeamEntity t
+            WHERE LOWER(t.supervisorId) = :uid
+            ORDER BY t.name
+        """, TeamDto.class)
+        .setParameter("uid", userId.toLowerCase())
+        .getResultList();
+        return Response.ok(teams).build();
+    }
+
+    // สมาชิกในทีม
+    @GET
+package Course.Resources;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.LearningContent;
+
+import java.util.List;
+
+@Path("/api/courses")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class CourseCatalogResource {
+
+    @Inject EntityManager em;
+
+    public static class CourseDto {
+        public String id;
+        public String title;
+        public String category;
+        public String level;
+        public Integer durationMin;
+        public String[] tags;
+    }
+
+    @GET
+    @RolesAllowed({"supervisor","administrator","admin"})
+    public Response list(@QueryParam("query") String query,
+                         @QueryParam("category") @DefaultValue("All") String category,
+                         @QueryParam("level") @DefaultValue("All") String level) {
+
+        // เลือกจาก LearningContent ทั้งหมด (คุณอาจกรองเฉพาะ type=COURSE ถ้ามี)
+        List<LearningContent> rows = em.createQuery("""
+            SELECT lc FROM LearningContent lc
+            WHERE (:q IS NULL OR LOWER(lc.title) LIKE CONCAT('%', :q, '%'))
+            ORDER BY lc.title
+        """, LearningContent.class)
+        .setParameter("q", query == null || query.isBlank() ? null : query.toLowerCase())
+        .getResultList();
+
+        // map -> DTO พร้อม fallback (ถ้า schema ยังไม่มี field)
+        var list = rows.stream().map(lc -> {
+            CourseDto d = new CourseDto();
+            d.id = lc.getId();
+            d.title = lc.getTitle() == null ? "Untitled" : lc.getTitle();
+            d.category = "General"; // TODO: map จริงถ้ามี field
+            d.level = "Beginner";   // TODO: map จริงถ้ามี field
+            Integer durSec = null;
+            try {
+                // ถ้าคุณมี field durationSeconds ใน LearningContent ให้ใช้; ไม่มีก็ตั้ง 30 นาที
+                var f = LearningContent.class.getDeclaredField("durationSeconds");
+                f.setAccessible(true);
+                Object v = f.get(lc);
+                if (v instanceof Integer iv) durSec = iv;
+            } catch (Exception ignored) {}
+            d.durationMin = durSec == null ? 30 : Math.max(1, durSec / 60);
+            d.tags = new String[0]; // TODO: map จริงถ้ามี field
+            return d;
+        }).toList();
+
+        // กรอง category/level บนหน่วยความจำ (จนกว่าจะเพิ่มใน DB)
+        var filtered = list.stream()
+                .filter(c -> "All".equalsIgnoreCase(category) || c.category.equalsIgnoreCase(category))
+                .filter(c -> "All".equalsIgnoreCase(level) || c.level.equalsIgnoreCase(level))
+                .toList();
+
+        return Response.ok(filtered).build();
+    }
+}
+---------------
+package model;
+
+import jakarta.persistence.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.*;
+
+@Entity @Table(name="assignments")
+public class AssignmentEntity {
+    @Id @GeneratedValue
+    private UUID id;
+
+    @Column(nullable=false) private String teamId;
+    @Column(nullable=false) private String creatorId; // email/uuid ของผู้มอบหมาย
+    @Column(nullable=false) private LocalDateTime createdAt = LocalDateTime.now();
+    private LocalDate dueDate;
+    @Column(nullable=false) private String priority; // Low/Normal/High
+    @Column(length=2000) private String note;
+
+    @OneToMany(mappedBy="assignment", cascade=CascadeType.ALL, orphanRemoval = true)
+    private List<AssignmentItemEntity> items = new ArrayList<>();
+
+    // getters/setters ...
+}
+
+@Entity @Table(name="assignment_items")
+public class AssignmentItemEntity {
+    @Id @GeneratedValue
+    private UUID id;
+
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="assignment_id", nullable=false)
+    private AssignmentEntity assignment;
+
+    @Column(nullable=false) private String assigneeEmail;   // email ปลายทาง
+    @Column(nullable=false) private String contentId;       // LearningContent.id
+    @Column(nullable=false) private LocalDateTime assignedAt = LocalDateTime.now();
+    @Column(nullable=false) private String status = "assigned"; // assigned/started/completed
+
+    // getters/setters ...
+}
+
+    @Path("/{teamId}/members")
+    @RolesAllowed({"supervisor","administrator","admin"})
+    public Response members(@PathParam("teamId") String teamId,
+                            @QueryParam("order") @DefaultValue("roleThenJoined") String order) {
+        TeamEntity t = em.find(TeamEntity.class, teamId);
+        if (t == null) return Response.status(Response.Status.NOT_FOUND).entity("Team not found").build();
+        t.getMemberEntities().size();
+
+        var list = t.getMemberEntities().stream()
+                .map(m -> new TeamMemberDto(m.getMemberId(), m.getNameMembers(), m.getRole()))
+                .toList();
+
+        return Response.ok(list).build();
+    }
+}
+
+
+--------------
+
+package Assignment.Resources;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import model.*;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
+import java.time.LocalDate;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Path("/api/assignments")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class AssignmentResource {
+
+    @Inject EntityManager em;
+    @Inject JsonWebToken jwt;
+
+    public static class CreateAssignmentReq {
+        public String teamId;
+        public List<String> assignees; // memberId (อีเมล/UUID) จาก frontend
+        public List<String> courseIds; // LearningContent.id
+        public String dueDate;         // YYYY-MM-DD
+        public String priority;        // Low/Normal/High
+        public String note;
+    }
+    public static class CreateAssignmentResp {
+        public String assignmentId;
+        public int assignedCount;
+        public int courseCount;
+    }
+
+    @POST
+    @Transactional
+    @RolesAllowed({"supervisor","administrator","admin"})
+    public Response create(CreateAssignmentReq req) {
+        if (req == null || req.teamId == null || req.teamId.isBlank())
+            return Response.status(Response.Status.BAD_REQUEST).entity("teamId is required").build();
+        if (req.assignees == null || req.assignees.isEmpty())
+            return Response.status(Response.Status.BAD_REQUEST).entity("assignees is empty").build();
+        if (req.courseIds == null || req.courseIds.isEmpty())
+            return Response.status(Response.Status.BAD_REQUEST).entity("courseIds is empty").build();
+
+        // 1) ตรวจว่า team มีจริง
+        TeamEntity team = em.find(TeamEntity.class, req.teamId);
+        if (team == null) return Response.status(Response.Status.NOT_FOUND).entity("Team not found").build();
+        team.getMemberEntities().size();
+
+        // 2) ทำชุด memberId (lower)
+        Set<String> memberIds = team.getMemberEntities().stream()
+                .map(MemberEntity::getMemberId)
+                .filter(Objects::nonNull).map(String::trim).filter(s->!s.isEmpty())
+                .map(String::toLowerCase).collect(Collectors.toSet());
+
+        // 3) คัด assignees ที่อยู่ในทีมเท่านั้น
+        List<String> requested = req.assignees.stream().map(s->s.toLowerCase()).toList();
+        List<String> validAssignees = requested.stream().filter(memberIds::contains).toList();
+        if (validAssignees.isEmpty())
+            return Response.status(Response.Status.BAD_REQUEST).entity("No valid assignees in team").build();
+
+        // 4) แมป memberId -> email ของ User (ลองทั้ง UUID และอีเมล)
+        List<User> users = em.createQuery("SELECT u FROM User u", User.class).getResultList();
+        Map<String,String> idLower_to_emailLower = new HashMap<>();
+        for (User u : users) {
+            String idL = u.getId()==null? null : u.getId().toString().toLowerCase();
+            String emailL = u.getEmail()==null? null : u.getEmail().toLowerCase();
+            if (idL != null && emailL != null) idLower_to_emailLower.put(idL, emailL);
+            // อนุญาตกรณี memberId เก็บเป็นอีเมลตรง ๆ
+            if (emailL != null) idLower_to_emailLower.put(emailL, emailL);
+        }
+        List<String> assigneeEmails = validAssignees.stream()
+                .map(idLower_to_emailLower::get)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (assigneeEmails.isEmpty())
+            return Response.status(Response.Status.BAD_REQUEST).entity("Cannot resolve assignees to user emails").build();
+
+        // 5) ตรวจ course id
+        List<LearningContent> contents = em.createQuery("""
+            SELECT lc FROM LearningContent lc WHERE lc.id IN :ids
+        """, LearningContent.class)
+        .setParameter("ids", req.courseIds)
+        .getResultList();
+        if (contents.isEmpty())
+            return Response.status(Response.Status.BAD_REQUEST).entity("No valid courseIds").build();
+
+        // 6) สร้าง Assignment + Items
+        AssignmentEntity header = new AssignmentEntity();
+        header.setTeamId(team.getId());
+        String creator = jwt.getClaim("email"); // หรือ jwt.getSubject()
+        header.setCreatorId(creator != null ? creator : "system");
+        header.setPriority(req.priority == null ? "Normal" : req.priority);
+        header.setNote(req.note);
+        if (req.dueDate != null && !req.dueDate.isBlank()) {
+            header.setDueDate(LocalDate.parse(req.dueDate));
+        }
+
+        em.persist(header);
+
+        int created = 0;
+        for (String email : assigneeEmails) {
+            for (LearningContent lc : contents) {
+                AssignmentItemEntity item = new AssignmentItemEntity();
+                item.setAssignment(header);
+                item.setAssigneeEmail(email);
+                item.setContentId(lc.getId());
+                em.persist(item);
+                created++;
+            }
+        }
+
+        // (ออปชัน) แจ้งเตือนผู้เรียน
+        // คุณสามารถเรียก NotificationResource.persist(...) ถ้ามี method public
+        // หรือทำผ่าน Event/Service ภายใน
+
+        CreateAssignmentResp resp = new CreateAssignmentResp();
+        resp.assignmentId = header.getId().toString();
+        resp.assignedCount = assigneeEmails.size();
+        resp.courseCount = contents.size();
+        return Response.status(Response.Status.CREATED).entity(resp).build();
+    }
+}
+
+
+-------
