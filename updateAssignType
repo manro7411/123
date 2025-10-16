@@ -1,25 +1,198 @@
 package AssignCourse.Resourse;
 
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
+
+import model.LearningContent;
+import model.MemberEntity;
+import model.TeamEntity;
+
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.*;
+
+/**
+ * Bulk-assign (force assignType="specific")
+ * - Merge รายชื่อผู้ใช้ลง LearningContent.assignedUserIds
+ * - ตั้ง dueDate ได้
+ * - รองรับหลาย courseIds ในคำขอเดียว
+ * - ถ้า createIfMissing=true และไม่พบ courseId จะสร้างคอร์สใหม่ minimal ให้
+ */
 @Path("/assignments/updateAssignTypeToSpecific")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 public class updateAssignTypeToSpecific {
 
     private static final Logger log = LoggerFactory.getLogger(updateAssignTypeToSpecific.class);
-    private static final String ROLE_SUPERVISOR = "supervisor";
 
-    @Inject
-    EntityManager entityManager;
-    @Inject
-    JsonWebToken jsonWebToken;
+    @Inject EntityManager entityManager;
+    @Inject JsonWebToken jsonWebToken;
+
+    // ---------- DTOs ----------
+    public static class BulkAssignRequest {
+        public List<String> courseIds;       // รายการคอร์สที่จะอัปเดต (optional ถ้าจะสร้างใหม่)
+        public String teamId;                // ถ้ามี -> จะขยายเป็นรายชื่อผู้ใช้จากทีม
+        public List<String> assignees;       // รายชื่อผู้ใช้เพิ่มเติม
+        public String dueDate;               // YYYY-MM-DD (optional)
+        public Boolean createIfMissing;      // true = สร้างคอร์สใหม่ถ้าไม่พบ courseId
+        public String defaultTitle;          // ใช้ตอนสร้างใหม่
+        public String defaultCategory;       // ใช้ตอนสร้างใหม่
+    }
+
+    public static class BulkAssignResponse {
+        public String requestId;
+        public int updatedCourses;
+        public int affectedUsers;
+
+        public BulkAssignResponse(String requestId, int updatedCourses, int affectedUsers) {
+            this.requestId = requestId;
+            this.updatedCourses = updatedCourses;
+            this.affectedUsers = affectedUsers;
+        }
+    }
+
+    // ---------- Helpers ----------
+    /** ดึง userId/email ของสมาชิกทีมทั้งหมดจาก teamId */
+    private Set<String> loadTeamMemberIds(String teamId) {
+        TeamEntity team = entityManager.find(TeamEntity.class, teamId);
+        if (team == null) throw new NotFoundException("Team not found: " + teamId);
+        team.getMemberEntities().size(); // ensure loaded
+
+        Set<String> ids = new LinkedHashSet<>();
+        for (MemberEntity m : team.getMemberEntities()) {
+            if (m != null && m.getMemberId() != null) ids.add(m.getMemberId());
+        }
+        return ids;
+    }
+
+    /** สร้าง LearningContent ใหม่แบบ minimal */
+    private LearningContent createMinimalContent(String title, String category) {
+        LearningContent lc = new LearningContent();
+        String id = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+        lc.setId(id);
+        lc.setTitle(title != null && !title.isBlank() ? title : "Untitled");
+        lc.setDescription(null);
+        lc.setCategory(category != null && !category.isBlank() ? category : "General");
+        lc.setAuthorName(jsonWebToken.getClaim("name"));
+        lc.setAuthorEmail(jsonWebToken.getSubject());
+        lc.setAuthorRole("supervisor");
+        lc.setCreatedAt(LocalDateTime.now());
+        lc.setClickCount(0L);
+        // contentType/thumbnailUrl อื่นๆ จะเติมภายหลังได้
+        lc.setContentType("document");
+        // บังคับโหมด specific
+        lc.setAssignType("specific");
+        lc.setAssignedUserIds(new ArrayList<>());
+        lc.setAssignedTeamIds(new ArrayList<>());
+        entityManager.persist(lc);
+        return lc;
+    }
+
+    // ---------- Endpoint ----------
+    @PUT
+    @Transactional
+    @RolesAllowed({ "supervisor", "admin", "administrator" })
+    public Response bulkAssign(BulkAssignRequest req, @Context SecurityContext securityContext) {
+        String curr = securityContext.getUserPrincipal() != null ? securityContext.getUserPrincipal().getName() : "unknown";
+        log.info("User {} -> bulkAssign(specific) called with body: {}", curr, req);
+
+        if (req == null) throw new BadRequestException("Body is required");
+
+        // 1) รวมรายชื่อเป้าหมาย (team -> userIds)
+        Set<String> targetUsers = new LinkedHashSet<>();
+        if (req.teamId != null && !req.teamId.isBlank()) {
+            targetUsers.addAll(loadTeamMemberIds(req.teamId));
+        }
+        if (req.assignees != null) {
+            for (String u : req.assignees) if (u != null && !u.isBlank()) targetUsers.add(u);
+        }
+        if (targetUsers.isEmpty()) {
+            throw new BadRequestException("No assignees provided (teamId and assignees are both empty)");
+        }
+
+        // 2) parse dueDate
+        LocalDate due = null;
+        if (req.dueDate != null && !req.dueDate.isBlank()) {
+            try {
+                due = LocalDate.parse(req.dueDate);
+            } catch (Exception e) {
+                throw new BadRequestException("Invalid dueDate (expected YYYY-MM-DD)");
+            }
+        }
+
+        // 3) เตรียมรายการคอร์สเป้าหมาย
+        List<String> targets = new ArrayList<>();
+        if (req.courseIds != null) {
+            for (String c : req.courseIds) if (c != null && !c.isBlank()) targets.add(c);
+        }
+
+        // ถ้าไม่มี courseIds แต่อนุญาตสร้างใหม่ -> สร้าง 1 ตัวให้ใช้
+        if (targets.isEmpty() && Boolean.TRUE.equals(req.createIfMissing)) {
+            LearningContent newLc = createMinimalContent(req.defaultTitle, req.defaultCategory);
+            targets.add(newLc.getId());
+            log.info("Created a new minimal content id={} for assignment", newLc.getId());
+        }
+
+        if (targets.isEmpty()) {
+            throw new BadRequestException("No courseIds provided and createIfMissing is false");
+        }
+
+        int updatedCourses = 0;
+        int approxAffectedUsers = 0;
+
+        // 4) loop อัปเดตแต่ละคอร์ส
+        for (String courseId : targets) {
+            LearningContent lc = entityManager.find(LearningContent.class, courseId);
+
+            if (lc == null) {
+                if (Boolean.TRUE.equals(req.createIfMissing)) {
+                    lc = createMinimalContent(req.defaultTitle, req.defaultCategory);
+                    log.info("Course id={} not found; created new minimal content id={} instead", courseId, lc.getId());
+                } else {
+                    log.warn("Skip: Course not found -> {}", courseId);
+                    continue;
+                }
+            }
+
+            // บังคับโหมด specific เสมอ
+            lc.setAssignType("specific");
+
+            // merge assignedUserIds
+            List<String> existing = Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new);
+            LinkedHashSet<String> merged = new LinkedHashSet<>(existing);
+            merged.addAll(targetUsers);
+            lc.setAssignedUserIds(new ArrayList<>(merged));
+
+            // เคลียร์ teamIds (กันสับสน) — ถ้าต้องการเก็บไว้ ให้ลบบรรทัดนี้
+            lc.setAssignedTeamIds(new ArrayList<>());
+
+            if (due != null) lc.setDueDate(due);
+
+            updatedCourses++;
+            approxAffectedUsers += targetUsers.size();
+        }
+
+        BulkAssignResponse resp = new BulkAssignResponse(
+                UUID.randomUUID().toString().replace("-", "").substring(0, 21),
+                updatedCourses,
+                approxAffectedUsers
+        );
+        return Response.ok(resp).build();
+    }
 }
