@@ -1,0 +1,40 @@
+@PUT
+@Path("/{id}")
+@Transactional
+@RolesAllowed({ "admin", "supervisor", "administrator" })
+public LearningContentDto update(@PathParam("id") String id, LearningContentDto dto ,@Context SecurityContext securityContext) {
+    String currentUser = securityContext.getUserPrincipal().getName();
+    String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
+    log.info("User '{}' called method '{}' to update Learning content with ID: {}", currentUser, methodName, id);
+
+    LearningContent lc = em.find(LearningContent.class, id);
+    if (lc == null) {
+        log.error("Learning content with ID: {} not found in method -> {}", id, methodName);
+        throw new NotFoundException();
+    }
+
+    if (dto.title() != null) lc.setTitle(dto.title());
+    if (dto.description() != null) lc.setDescription(dto.description());
+    if (dto.category() != null) lc.setCategory(dto.category());
+    if (dto.thumbnailUrl() != null) lc.setThumbnailUrl(dto.thumbnailUrl());
+    if (dto.authorAvatarUrl() != null) lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
+
+    if (dto.assignType() != null) lc.setAssignType(dto.assignType());  // "all" | "specific" | "team"
+
+    if (dto.assignedUserIds() != null) {
+        var merged = new java.util.LinkedHashSet<>(java.util.Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(java.util.ArrayList::new));
+        merged.addAll(dto.assignedUserIds());
+        lc.setAssignedUserIds(new java.util.ArrayList<>(merged));
+    }
+
+    if (dto.assignedTeamIds() != null) {
+        var merged = new java.util.LinkedHashSet<>(java.util.Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(java.util.ArrayList::new));
+        merged.addAll(dto.assignedTeamIds());
+        lc.setAssignedTeamIds(new java.util.ArrayList<>(merged));
+    }
+
+    if (dto.dueDate() != null) lc.setDueDate(dto.dueDate());
+
+    log.info("Learning content with ID: {} updated successfully in method -> {}", id, methodName);
+    return LearningContentDto.fromEntity(lc);
+}
