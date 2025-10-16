@@ -38,3 +38,176 @@ public LearningContentDto update(@PathParam("id") String id, LearningContentDto 
     log.info("Learning content with ID: {} updated successfully in method -> {}", id, methodName);
     return LearningContentDto.fromEntity(lc);
 }
+
+
+
+-------------------------------------------------------------------------------------------------------
+
+// ==== DTOs สำหรับ Bulk Assign ====
+public static class BulkAssignRequest {
+    public java.util.List<String> courseIds; // ต้องมีถ้าไม่สร้างใหม่
+    public String teamId;                    // ถ้าต้องการ assign ทั้งทีม
+    public java.util.List<String> assignees; // รายชื่ออีเมล/ไอดีของผู้ใช้
+    public String dueDate;                  // YYYY-MM-DD (optional)
+    public Boolean createIfMissing;         // ถ้า true และไม่พบ courseId -> สร้างใหม่
+    public String defaultTitle;             // ใช้ตอนสร้างใหม่
+    public String defaultCategory;          // ใช้ตอนสร้างใหม่
+}
+
+public static class BulkAssignResponse {
+    public String requestId;
+    public int updatedCourses;
+    public int affectedUsers;
+
+    public BulkAssignResponse(String requestId, int updatedCourses, int affectedUsers) {
+        this.requestId = requestId;
+        this.updatedCourses = updatedCourses;
+        this.affectedUsers = affectedUsers;
+    }
+}
+
+// ==== Helper: สร้างคอร์สใหม่แบบ minimal ====
+private LearningContent createMinimalContent(String title, String category) {
+    LearningContent lc = new LearningContent();
+    String id = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+    lc.setId(id);
+    lc.setTitle(title != null ? title : "Untitled");
+    lc.setDescription(null);
+    lc.setCategory(category != null ? category : "General");
+    lc.setAuthorName(jwt.getClaim("name"));
+    lc.setAuthorEmail(jwt.getSubject());
+    lc.setAuthorRole("supervisor");
+    lc.setCreatedAt(java.time.LocalDateTime.now());
+    lc.setClickCount(0L);
+    lc.setContentType("document"); // หรือ "video" / อะไรก็ได้ตามระบบคุณ
+    lc.setAssignType("specific");  // ค่าเริ่มต้น
+    em.persist(lc);
+    return lc;
+}
+
+// ==== Bulk Assign Endpoint ====
+@PUT
+@Path("/assignments")
+@Transactional
+@RolesAllowed({ "supervisor", "admin", "administrator" })
+public Response bulkAssign(BulkAssignRequest req) {
+    if (req == null) throw new BadRequestException("Body is required");
+
+    // เตรียมชุดผู้ใช้จาก team
+    java.util.Set<String> teamUserIds = new java.util.LinkedHashSet<>();
+    if (req.teamId != null && !req.teamId.isBlank()) {
+        var team = em.find(model.TeamEntity.class, req.teamId);
+        if (team == null) throw new NotFoundException("Team not found: " + req.teamId);
+        team.getMemberEntities().size();
+        for (var m : team.getMemberEntities()) {
+            if (m.getMemberId() != null) teamUserIds.add(m.getMemberId());
+        }
+    }
+
+    // เตรียมชุดผู้ใช้จาก assignees
+    java.util.Set<String> assignees = new java.util.LinkedHashSet<>();
+    if (req.assignees != null) {
+        for (var a : req.assignees) if (a != null) assignees.add(a);
+    }
+
+    // โหมดทั้งทีมถ้าไม่มี assignees แต่มี teamId
+    boolean assignWholeTeam = assignees.isEmpty() && req.teamId != null && !req.teamId.isBlank();
+
+    // parse dueDate
+    java.time.LocalDate due = null;
+    if (req.dueDate != null && !req.dueDate.isBlank()) {
+        try { due = java.time.LocalDate.parse(req.dueDate); }
+        catch (Exception e) { throw new BadRequestException("Invalid dueDate (YYYY-MM-DD)"); }
+    }
+
+    int updated = 0;
+    int affectedUsers = 0;
+
+    // ถ้ากำหนดให้สร้างเมื่อไม่พบ courseId
+    java.util.List<String> targetCourseIds = new java.util.ArrayList<>();
+    if (req.courseIds != null) targetCourseIds.addAll(req.courseIds);
+
+    if ((req.courseIds == null || req.courseIds.isEmpty()) && Boolean.TRUE.equals(req.createIfMissing)) {
+        // สร้างคอร์สใหม่ 1 รายการแล้วนำไป assign
+        var newLc = createMinimalContent(req.defaultTitle, req.defaultCategory);
+        targetCourseIds.add(newLc.getId());
+    }
+
+    for (String courseId : targetCourseIds) {
+        if (courseId == null || courseId.isBlank()) continue;
+
+        LearningContent lc = em.find(LearningContent.class, courseId);
+        if (lc == null) {
+            if (Boolean.TRUE.equals(req.createIfMissing)) {
+                lc = createMinimalContent(req.defaultTitle, req.defaultCategory);
+                // ถ้าสร้างใหม่ แต่ courseId ที่ให้มาไม่ว่างจะไม่แมพ id นี้—ข้ามไปใช้ lc ที่เพิ่งสร้างแทน
+            } else {
+                // ข้ามคอร์สที่หาไม่เจอ
+                continue;
+            }
+        }
+
+        if (assignWholeTeam) {
+            lc.setAssignType("team");
+
+            var mergedTeams = new java.util.LinkedHashSet<>(java.util.Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(java.util.ArrayList::new));
+            if (req.teamId != null && !req.teamId.isBlank()) mergedTeams.add(req.teamId);
+            lc.setAssignedTeamIds(new java.util.ArrayList<>(mergedTeams));
+
+            affectedUsers += teamUserIds.size();
+        } else {
+            lc.setAssignType("specific");
+
+            var mergedUsers = new java.util.LinkedHashSet<>(java.util.Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(java.util.ArrayList::new));
+            mergedUsers.addAll(teamUserIds);
+            mergedUsers.addAll(assignees);
+            lc.setAssignedUserIds(new java.util.ArrayList<>(mergedUsers));
+
+            affectedUsers += mergedUsers.size();
+        }
+
+        if (due != null) lc.setDueDate(due);
+
+        updated++;
+    }
+
+    return Response.ok(new BulkAssignResponse(
+            java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 21),
+            updated,
+            affectedUsers
+    )).build();
+}
+
+-------------------
+
+const doAssign = async () => {
+  if (!selectedTeamId) { setToast("กรุณาเลือกทีม"); return; }
+  if (!draft.assignees.length && !selectedTeamId) { setToast("เลือกผู้เรียนหรือทีมก่อน"); return; }
+  if (!draft.courseIds.length) { setToast("กรุณาเลือกคอร์สอย่างน้อย 1 รายการ"); return; }
+
+  setLoading(true);
+  try {
+    const payload = {
+      teamId: selectedTeamId,           // ใช้ทีม หรือส่ง assignees อย่างใดอย่างหนึ่งหรือทั้งคู่
+      assignees: draft.assignees,       // รายชื่อผู้ใช้
+      courseIds: draft.courseIds,       // คอร์สที่มีอยู่
+      dueDate: dueDate || undefined,    // YYYY-MM-DD
+      // createIfMissing: true,         // (ตัวเลือก) ถ้าจะให้ supervisor สร้างคอร์สใหม่อัตโนมัติเมื่อไม่พบ courseId
+      // defaultTitle: "New Course",    // (คู่กับ createIfMissing)
+      // defaultCategory: "General"
+    };
+
+    const res = await fetchJson<{ requestId: string; updatedCourses: number; affectedUsers: number }>(
+      ENDPOINTS.assign,                  // ตั้งค่า ENDPOINTS.assign = "/learning/assignments"
+      { method: "PUT", body: JSON.stringify(payload) }
+    );
+
+    setToast(`✅ มอบหมายแล้ว: courses=${res.updatedCourses}, users≈${res.affectedUsers}`);
+    setDraft(prev => ({ ...prev, courseIds: [] }));
+  } catch (e: any) {
+    console.error(e);
+    setToast(`❌ มอบหมายไม่สำเร็จ: ${e?.message ?? "Unknown error"}`);
+  } finally {
+    setLoading(false);
+  }
+};
