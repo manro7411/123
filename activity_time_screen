@@ -1,0 +1,213 @@
+@POST
+@Path("/activity/heartbeat")
+@RolesAllowed({"user", "employee", "admin"})
+@Transactional
+public Response logActivity(@Context SecurityContext securityContext) {
+    String email = jwt.getClaim("email");
+    if (email == null || email.isBlank()) {
+        return Response.status(Response.Status.UNAUTHORIZED).build();
+    }
+
+    User user = em.createQuery("SELECT u FROM User u WHERE u.email = :e", User.class)
+                  .setParameter("e", email)
+                  .getSingleResult();
+
+    UserActivityLog log = new UserActivityLog(user);
+    em.persist(log);
+
+    return Response.ok().build();
+}
+@GET
+@Path("/activity/total-time")
+@RolesAllowed({"user", "employee", "admin"})
+public Response getTotalScreenTime(@Context SecurityContext securityContext) {
+    String email = jwt.getClaim("email");
+    if (email == null || email.isBlank()) {
+        return Response.status(Response.Status.UNAUTHORIZED).build();
+    }
+
+    User user = em.createQuery("SELECT u FROM User u WHERE u.email = :e", User.class)
+                  .setParameter("e", email)
+                  .getSingleResult();
+
+    List<LocalDateTime> timestamps = em.createQuery("""
+        SELECT l.activityTime FROM UserActivityLog l
+        WHERE l.user = :user
+    """, LocalDateTime.class)
+    .setParameter("user", user)
+    .getResultList();
+
+    long totalMinutes = timestamps.size(); // 1 ping = 1 minute
+    return Response.ok("Total screen time: " + totalMinutes + " minutes").build();
+}
+package model;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "user_activity_log")
+public class UserActivityLog {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private String id;
+
+    @ManyToOne
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    @Column(name = "activity_time", nullable = false)
+    private LocalDateTime activityTime;
+
+    public UserActivityLog() {}
+
+    public UserActivityLog(User user) {
+        this.user = user;
+        this.activityTime = LocalDateTime.now();
+    }
+
+    // Getters and setters
+}
+import { createContext, useState, useEffect, ReactNode } from "react";
+import { jwtDecode } from "jwt-decode";
+import axios from "axios";
+
+interface User {
+  upn?: string;
+  name?: string;
+  email?: string;
+  groups?: string[];
+  role?: string;
+  exp?: number;
+  [key: string]: unknown;
+}
+
+interface AuthContextType {
+  token: string | null;
+  user: User | null;
+  login: (token: string) => void;
+  logout: () => void;
+}
+
+export const AuthContext = createContext<AuthContextType>({
+  token: null,
+  user: null,
+  login: () => {},
+  logout: () => {},
+});
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [token, setToken] = useState<string | null>(localStorage.getItem("token"));
+  const [user, setUser] = useState<User | null>(null);
+
+  const decodeAndSetUser = (jwt: string) => {
+    try {
+      const decoded = jwtDecode<User>(jwt);
+      setUser(decoded);
+    } catch (e) {
+      console.error("❌ Failed to decode token:", e);
+      logout();
+    }
+  };
+
+  useEffect(() => {
+    if (token) {
+      decodeAndSetUser(token);
+    }
+
+    let activityDetected = true;
+
+    const handleActivity = () => {
+      activityDetected = true;
+    };
+
+    window.addEventListener("mousemove", handleActivity);
+    window.addEventListener("keydown", handleActivity);
+    window.addEventListener("scroll", handleActivity);
+    window.addEventListener("click", handleActivity);
+
+    const interval = setInterval(() => {
+      if (token) {
+        try {
+          const decoded = jwtDecode<User>(token);
+          const now = Date.now() / 1000;
+          const timeLeft = decoded.exp ? decoded.exp - now : 0;
+
+          // Refresh token if it's about to expire and user is active
+          if (timeLeft <= 300 && timeLeft > 0 && activityDetected) {
+            axios
+              .post(
+                "/api/login",
+                { email: decoded.email, password: "123456789" }, // Replace with secure logic
+                { headers: { Authorization: `Bearer ${token}` } }
+              )
+              .then((response) => {
+                const { token: newToken } = response.data;
+                localStorage.setItem("token", newToken);
+                setToken(newToken);
+                decodeAndSetUser(newToken);
+                activityDetected = false;
+              })
+              .catch((error) => {
+                console.error("❌ Failed to refresh token:", error);
+                logout();
+              });
+          }
+
+          // Send heartbeat for screen time tracking
+          if (activityDetected) {
+            axios
+              .post("/api/activity/heartbeat", {}, {
+                headers: { Authorization: `Bearer ${token}` }
+              })
+              .catch((err) => {
+                console.error("❌ Failed to send heartbeat:", err);
+              });
+            activityDetected = false;
+          }
+        } catch (e) {
+          console.error("❌ Error during token refresh or heartbeat:", e);
+          logout();
+        }
+      }
+    }, 60000); // Every 60 seconds
+
+    return () => {
+      window.removeEventListener("mousemove", handleActivity);
+      window.removeEventListener("keydown", handleActivity);
+      window.removeEventListener("scroll", handleActivity);
+      window.removeEventListener("click", handleActivity);
+      clearInterval(interval);
+    };
+  }, [token]);
+
+  const login = (jwt: string) => {
+    localStorage.setItem("token", jwt);
+    setToken(jwt);
+    decodeAndSetUser(jwt);
+  };
+
+  const logout = async () => {
+    try {
+      if (token) {
+        await axios.post("/api/login/logout-of-all-sessions", {}, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        console.info("✅ Successfully logged out from backend.");
+      }
+    } catch (e) {
+      console.error("❌ Failed to logout from backend:", e);
+    } finally {
+      localStorage.removeItem("token");
+      setToken(null);
+      setUser(null);
+    }
+  };
+
+  return (
+    <AuthContext.Provider value={{ token, user, login, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
