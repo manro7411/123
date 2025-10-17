@@ -1,51 +1,161 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import React, { useEffect, useState } from "react";
+import axios from "axios";
+import { RefreshCw } from "lucide-react";
 
-function NamesSubmitted() {
-  const[row,setRows] = useState([]);
+// ใช้ Card ของคุณตามเดิม
+// function Card({ children, className = "" }: React.PropsWithChildren<{ className?: string }>) {
+//   return <div className={`bg-white shadow rounded-2xl p-6 ${className}`}>{children}</div>;
+// }
 
- useEffect(() => {
-    axios
-      .get("/course-enrollment-summary?limit=10")
-      .then((res) => setRows(res.data))
-      .catch((err) => console.error("Failed to fetch data", err));
-  }, []);
+type EnrollmentRow = {
+  teamName: string;
+  courseName: string;
+  enrollmentCount: number;
+};
 
+// --- Axios (แนบ baseURL + token อัตโนมัติ) ---
+const axiosClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "/",
+});
+axiosClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+  if (token) {
+    config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+  }
+  return config;
+});
+
+// --- Normalizer (เผื่อ API ส่ง snake_case / คอลัมน์คนละชื่อ) ---
+function normalizeRow(raw: any): EnrollmentRow {
+  return {
+    teamName:
+      raw.teamName ??
+      raw.team_name ??
+      raw.team ??
+      raw.name ?? // fallback เดิม
+      "-",
+    courseName:
+      raw.courseName ??
+      raw.course_name ??
+      raw.title ?? // fallback เดิม
+      "-",
+    enrollmentCount: Number(
+      raw.enrollmentCount ?? raw.enrollment_count ?? raw.count ?? 0
+    ),
+  };
+}
+
+const ENDPOINT_PATH = "/course-enrollment-summary"; // เปลี่ยนเป็น "/admin/reports/course-enrollments" ถ้าใช้ endpoint ใหม่
+
+export default function NamesSubmitted() {
+  const [rows, setRows] = useState<EnrollmentRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+  const [seeAll, setSeeAll] = useState(false);
+
+  const limit = seeAll ? 100 : 10;
+
+  const fetchData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data } = await axiosClient.get(ENDPOINT_PATH, { params: { limit } });
+      const list = Array.isArray(data) ? data.map(normalizeRow) : [];
+      setRows(list);
+    } catch (err: any) {
+      console.error("Failed to fetch data", err);
+      setError(err?.response?.data?.message || err?.message || "โหลดข้อมูลไม่สำเร็จ");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit]);
 
   return (
     <Card>
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg font-semibold text-gray-800">Name’s Submitted</h2>
-        <a href="#" className="text-blue-600 text-sm">
-          See All
-        </a>
+        <h2 className="text-lg font-semibold text-gray-800">Course Enrollments</h2>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="inline-flex items-center gap-2 text-blue-600 text-sm hover:underline"
+            title="Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+          <button
+            onClick={() => setSeeAll((s) => !s)}
+            className="text-blue-600 text-sm hover:underline"
+          >
+            {seeAll ? "Show Top 10" : "See All"}
+          </button>
+        </div>
       </div>
+
       <div className="overflow-x-auto">
         <table className="w-full table-auto text-left relative">
           <thead>
             <tr className="text-gray-500 text-sm border-b">
-              <th className="py-2 px-4">NAME & DATE</th>
-              <th className="py-2 px-4">COURSE TYPE</th>
+              <th className="py-2 px-4">TEAM</th>
               <th className="py-2 px-4">COURSE TITLE</th>
+              <th className="py-2 px-4">ENROLLMENTS</th>
               <th className="py-2 px-4">ACTIONS</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-b last:border-none text-sm">
-                <td className="py-3 px-4">
-                  <div className="font-medium text-gray-800">{r.name}</div>
-                  <div className="text-gray-500 text-xs">{r.date}</div>
-                </td>
-                <td className="py-3 px-4">
-                  <span className="px-3 py-1 text-xs rounded-full bg-blue-600 text-white">{r.type}</span>
-                </td>
-                <td className="py-3 px-4 text-gray-700">{r.title}</td>
-                <td className="py-3 px-4">
-                  <button className="text-xs bg-gray-100 hover:bg-gray-200 transition px-3 py-1 rounded-md">
-                    SHOW DETAILS
-                  </button>
+            {loading ? (
+              [...Array(5)].map((_, i) => (
+                <tr key={`sk-${i}`} className="border-b last:border-none text-sm">
+                  <td className="py-3 px-4">
+                    <div className="h-4 w-40 bg-gray-200 animate-pulse rounded" />
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="h-4 w-72 bg-gray-200 animate-pulse rounded" />
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="h-4 w-16 bg-gray-200 animate-pulse rounded" />
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="h-6 w-24 bg-gray-200 animate-pulse rounded" />
+                  </td>
+                </tr>
+              ))
+            ) : error ? (
+              <tr>
+                <td colSpan={4} className="py-6 px-4 text-sm text-red-700">
+                  {error}
                 </td>
               </tr>
-            ))}
+            ) : rows.length ? (
+              rows.map((r, i) => (
+                <tr key={`${r.teamName}-${r.courseName}-${i}`} className="border-b last:border-none text-sm">
+                  <td className="py-3 px-4">
+                    <div className="font-medium text-gray-800">{r.teamName}</div>
+                  </td>
+                  <td className="py-3 px-4 text-gray-700">{r.courseName}</td>
+                  <td className="py-3 px-4">{r.enrollmentCount}</td>
+                  <td className="py-3 px-4">
+                    <button className="text-xs bg-gray-100 hover:bg-gray-200 transition px-3 py-1 rounded-md">
+                      SHOW DETAILS
+                    </button>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={4} className="py-6 px-4 text-sm text-gray-500">
+                  ไม่พบข้อมูล
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
