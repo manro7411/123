@@ -1,170 +1,68 @@
+@GET
+@Path("course-enrollment-summary")
+@RolesAllowed({ROLE_SUPERVISOR, ROLE_ADMINISTRATOR})
+public List<Map<String, Object>> getCourseEnrollmentSummary(
+        @QueryParam("month") Integer month,
+        @QueryParam("year") Integer year,
+        @Context SecurityContext securityContext) {
 
-    @GET
-    @Path("course-enrollment-summary")
-    @RolesAllowed({ROLE_SUPERVISOR, ROLE_ADMINISTRATOR})
-    public List<Map<String, Object>> getCourseEnrollmentSummary(
-            @QueryParam("month") Integer month,
-            @QueryParam("year") Integer year,
-            @Context SecurityContext securityContext) {
-
-        StringBuilder sql = new StringBuilder("""
+    StringBuilder sql = new StringBuilder("""
         SELECT
             t.name AS team_name,
-            l.name AS course_name,
+            l.title AS course_name,
             COUNT(p.id) AS enrollment_count
         FROM
             user_lesson_progress p
         JOIN
             users u ON p.user_email = u.email
         JOIN
-            team_members m ON u.id = m.member_ID
+            team_members m ON u.id = m.member_id
         JOIN
             teams t ON m.team_id = t.id
         JOIN
             learning_content l ON p.lesson_id = l.id
         WHERE
             p.status = 'completed'
+          AND p.completed_at IS NOT NULL
     """);
 
-        if (month != null) {
-            sql.append(" AND EXTRACT(MONTH FROM p.completed_at) = :month");
-        }
-        if (year != null) {
-            sql.append(" AND EXTRACT(YEAR FROM p.completed_at) = :year");
-        }
-
-        sql.append("""
-        GROUP BY
-            t.name, l.name
-        ORDER BY
-            enrollment_count DESC
-    """);
-
-        var query = em.createNativeQuery(sql.toString());
-
-        if (month != null) {
-            query.setParameter("month", month);
-        }
-        if (year != null) {
-            query.setParameter("year", year);
-        }
-
-        List<Object[]> results = query.getResultList();
-        List<Map<String, Object>> response = new ArrayList<>();
-
-        for (Object[] row : results) {
-            Map<String, Object> map = new HashMap<>();
-            map.put("teamName", row[0]);
-            map.put("courseName", row[1]);
-            map.put("enrollmentCount", row[2]);
-            response.add(map);
-        }
-
-        log.info("Course-enrollment-summary Endpoint: User {} is retrieving course enrollment summary for month={}, year={}",
-                securityContext.getUserPrincipal().getName(), month, year);
-
-        return response;
+    if (month != null) {
+        sql.append(" AND EXTRACT(MONTH FROM p.completed_at) = :month");
     }
-2025-10-17 13:49:12,936 ERROR [org.hib.eng.jdb.spi.SqlExceptionHelper] (executor-thread-1) ERROR: column l.name does not exist
-  Hint: Perhaps you meant to reference the column "u.name" or the column "t.name".
-  Position: 49dit command line args (currently ''), [:] for the terminal, [h] for more options>
-                                                                                                                                                                                                                                    
-2025-10-17 13:49:12,947 ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-1) HTTP Request to /teams/course-enrollment-summary?month=4&year=2025 failed, error id: 165f382f-bb4e-4cfc-aa59-1e9510b1f599-1
+    if (year != null) {
+        sql.append(" AND EXTRACT(YEAR FROM p.completed_at) = :year");
+    }
 
-Exception in TeamResource.java:343s (currently ''), [:] for the terminal, [h] for more options>
-          341          }                                                                                                                                                                                                            
-          342                                                                                                                                                                                                                       
-        ? 343          List<Object[]> results = query.getResultList();                                                                                                                                                              
-          344          List<Map<String, Object>> response = new ArrayList<>();                                                                                                                                                      
-          345                                                                                                                                                                                                                       
+    sql.append("""
+        GROUP BY
+            t.name, l.title
+        ORDER BY
+            3 DESC
+    """);
 
-Exception in TeamResource.java:343
-          341          }                                                                                                                                                                                                            
-          342                                                                                                                                                                                                                       
-        ? 343          List<Object[]> results = query.getResultList();                                                                                                                                                              
-          344          List<Map<String, Object>> response = new ArrayList<>();                                                                                                                                                      
-          345  : org.hibernate.exception.SQLGrammarException: JDBC exception executing SQL [    SELECT                                                                                                                              
-        t.name AS team_name,                                                                                                                                                                                                        
-        l.name AS course_name,                                                                                                                                                                                                      
-        COUNT(p.id) AS enrollment_count                                                                                                                                                                                             
-    FROM                                                                                                                                                                                                                            
-        user_lesson_progress p                                                                                                                                                                                                      
-    JOIN                                                                                                                                                                                                                            
-        users u ON p.user_email = u.email                                                                                                                                                                                           
-    JOIN                                                                                                                                                                                                                            
-        team_members m ON u.id = m.member_ID                                                                                                                                                                                        
-    JOIN                                                                                                                                                                                                                            
-        teams t ON m.team_id = t.id                                                                                                                                                                                                 
-    JOIN                                                                                                                                                                                                                            
-        learning_content l ON p.lesson_id = l.id                                                                                                                                                                                    
-    WHERE                                                                                                                                                                                                                           
-        p.status = 'completed'                                                                                                                                                                                                      
- AND EXTRACT(MONTH FROM p.completed_at) = ? AND EXTRACT(YEAR FROM p.completed_at) = ?    GROUP BY                                                                                                                                   
-        t.name, l.name                                                                                                                                                                                                              
-    ORDER BY                                                                                                                                                                                                                        
-        enrollment_count DESC                                                                                                                                                                                                       
-] [ERROR: column l.name does not exist                                                                                                                                                                                              
-  Hint: Perhaps you meant to reference the column "u.name" or the column "t.name".                                                                                                                                                  
-  Position: 49] [n/a]                                                                                                                                                                                                               
-        at org.hibernate.exception.internal.SQLStateConversionDelegate.convert(SQLStateConversionDelegate.java:91)                                                                                                                  
-        at org.hibernate.exception.internal.StandardSQLExceptionConverter.convert(StandardSQLExceptionConverter.java:58)                                                                                                            
-        at org.hibernate.engine.jdbc.spi.SqlExceptionHelper.convert(SqlExceptionHelper.java:108)                                                                                                                                    
-        at org.hibernate.engine.jdbc.spi.SqlExceptionHelper.convert(SqlExceptionHelper.java:94)                                                                                                                                     
-        at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.executeQuery(DeferredResultSetAccess.java:269)                                                                                                           
-        at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.getResultSet(DeferredResultSetAccess.java:172)                                                                                                           
-        at org.hibernate.sql.results.jdbc.internal.AbstractResultSetAccess.getMetaData(AbstractResultSetAccess.java:36)                                                                                                             
-        at org.hibernate.sql.results.jdbc.internal.AbstractResultSetAccess.getColumnCount(AbstractResultSetAccess.java:52)                                                                                                          
-        at org.hibernate.query.results.ResultSetMappingImpl.resolve(ResultSetMappingImpl.java:194)                                                                                                                                  
-        at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.resolveJdbcValuesSource(JdbcSelectExecutorStandardImpl.java:340)                                                                                          
-        at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.doExecuteQuery(JdbcSelectExecutorStandardImpl.java:137)                                                                                                   
-        at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.executeQuery(JdbcSelectExecutorStandardImpl.java:102)                                                                                                     
-        at org.hibernate.sql.exec.spi.JdbcSelectExecutor.executeQuery(JdbcSelectExecutor.java:91)                                                                                                                                   
-        at org.hibernate.sql.exec.spi.JdbcSelectExecutor.list(JdbcSelectExecutor.java:165)                                                                                                                                          
-        at org.hibernate.sql.exec.spi.JdbcSelectExecutor.list(JdbcSelectExecutor.java:142)                                                                                                                                          
-        at org.hibernate.sql.exec.spi.JdbcSelectExecutor.list(JdbcSelectExecutor.java:132)                                                                                                                                          
-        at org.hibernate.query.sql.internal.NativeSelectQueryPlanImpl.performList(NativeSelectQueryPlanImpl.java:135)                                                                                                               
-        at org.hibernate.query.sql.internal.NativeQueryImpl.doList(NativeQueryImpl.java:697)                                                                                                                                        
-        at org.hibernate.query.spi.AbstractSelectionQuery.list(AbstractSelectionQuery.java:143)                                                                                                                                     
-        at org.hibernate.query.Query.getResultList(Query.java:120)                                                                                                                                                                  
-        at Testing.TeamResource.getCourseEnrollmentSummary(TeamResource.java:343)                                                                                                                                                   
-        at Testing.TeamResource_Subclass.getCourseEnrollmentSummary$$superforward(Unknown Source)                                                                                                                                   
-        at Testing.TeamResource_Subclass$$function$$7.apply(Unknown Source)                                                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
-        at io.quarkus.security.runtime.interceptor.SecurityHandler.handle(SecurityHandler.java:27)                                                                                                                                  
-        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor.intercept(RolesAllowedInterceptor.java:29)                                                                                                               
-        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                                                           
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
-        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor.intercept(StandardSecurityCheckInterceptor.java:44)                                                                                         
-        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor_RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                      
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
-        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
-        at Testing.TeamResource_Subclass.getCourseEnrollmentSummary(Unknown Source)                                                                                                                                                 
-        at Testing.TeamResource$quarkusrestinvoker$getCourseEnrollmentSummary_1d908e744249ddf3479648e0c39ef5ef346a57bb.invoke(Unknown Source)                                                                                       
-        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
-        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
-        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
-        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
-        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
-        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
-        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
-Caused by: org.postgresql.util.PSQLException: ERROR: column l.name does not exist                                                                                                                                                   
-  Hint: Perhaps you meant to reference the column "u.name" or the column "t.name".                                                                                                                                                  
-  Position: 49                                                                                                                                                                                                                      
-        at org.postgresql.core.v3.QueryExecutorImpl.receiveErrorResponse(QueryExecutorImpl.java:2736)                                                                                                                               
-        at org.postgresql.core.v3.QueryExecutorImpl.processResults(QueryExecutorImpl.java:2423)                                                                                                                                     
-        at org.postgresql.core.v3.QueryExecutorImpl.execute(QueryExecutorImpl.java:374)                                                                                                                                             
-        at org.postgresql.jdbc.PgStatement.executeInternal(PgStatement.java:518)                                                                                                                                                    
-        at org.postgresql.jdbc.PgStatement.execute(PgStatement.java:435)                                                                                                                                                            
-        at org.postgresql.jdbc.PgPreparedStatement.executeWithFlags(PgPreparedStatement.java:196)                                                                                                                                   
-        at org.postgresql.jdbc.PgPreparedStatement.executeQuery(PgPreparedStatement.java:139)                                                                                                                                       
-        at io.agroal.pool.wrapper.PreparedStatementWrapper.executeQuery(PreparedStatementWrapper.java:80)                                                                                                                           
-        at org.hiberna
+    var query = em.createNativeQuery(sql.toString());
+
+    if (month != null) {
+        query.setParameter("month", month);
+    }
+    if (year != null) {
+        query.setParameter("year", year);
+    }
+
+    @SuppressWarnings("unchecked")
+    List<Object[]> results = query.getResultList();
+    List<Map<String, Object>> response = new ArrayList<>();
+
+    for (Object[] row : results) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("teamName", row[0]);       // t.name
+        map.put("courseName", row[1]);     // l.title
+        map.put("enrollmentCount", row[2]);// COUNT(p.id)
+        response.add(map);
+    }
+
+    log.info("Course-enrollment-summary => user={} month={} year={} rows={}",
+            securityContext.getUserPrincipal().getName(), month, year, response.size());
+
+    return response;
+}
