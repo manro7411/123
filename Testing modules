@@ -1,21 +1,120 @@
-SELECT
-    t.name AS team_name,
-    lc.title AS course_name,
-    COUNT(p.id) AS enrollment_count
-FROM
-    user_lesson_progress p
-JOIN
-    users u ON p.user_email = u.email
-JOIN
-    team_members m ON u.id = m.member_ID
-JOIN
-    teams t ON m.team_id = t.id
-JOIN
-    learning_content lc ON p.lesson_id = lc.id
-WHERE
-    p.completed_at IS NOT NULL
-GROUP BY
-    t.name, lc.title
-ORDER BY
-    enrollment_count DESC
-LIMIT 10;
+package Testing;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.*;
+
+@Path("/teams")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TeamResource {
+
+    private static final Logger log = LoggerFactory.getLogger(TeamResource.class);
+
+    // ปรับให้ตรงกับระบบสิทธิ์ของคุณ
+    public static final String ROLE_SUPERVISOR     = "supervisor";
+    public static final String ROLE_ADMINISTRATOR  = "administrator";
+
+    @Inject
+    EntityManager em;
+
+    /**
+     * สรุปจำนวน “คนที่เรียนจบ (completed)” ตาม Team x Course
+     * ตัวกรอง:
+     *  - month (1..12) optional
+     *  - year  (YYYY)  optional
+     *  - limit (default 10)
+     *
+     * ตัวอย่างเรียก:
+     *   GET /teams/course-enrollment-summary?month=4&year=2025&limit=10
+     */
+    @GET
+    @Path("/course-enrollment-summary")
+    @RolesAllowed({ROLE_SUPERVISOR, ROLE_ADMINISTRATOR})
+    public Response getCourseEnrollmentSummary(
+            @QueryParam("month") Integer month,
+            @QueryParam("year")  Integer year,
+            @QueryParam("limit") @DefaultValue("10") int limit,
+            @Context SecurityContext securityContext
+    ) {
+        final String actor = (securityContext.getUserPrincipal() != null)
+                ? securityContext.getUserPrincipal().getName()
+                : "unknown";
+
+        // ป้องกันค่า limit หลุด
+        if (limit <= 0) limit = 10;
+        if (limit > 1000) limit = 1000;
+
+        log.info("[course-enrollment-summary] actor={}, month={}, year={}, limit={}", actor, month, year, limit);
+
+        // หมายเหตุ: ใช้ COUNT(*) ก็ได้ปลอดภัยกว่า COUNT(p.id) เผื่อไม่มีคอลัมน์ id
+        // เงื่อนไขเดือน/ปี ใช้รูปแบบ (:param IS NULL OR ...) เพื่อให้ส่ง null ได้
+        final String sql = """
+            SELECT
+                t.name          AS team_name,
+                lc.title        AS course_name,
+                COUNT(*)        AS enrollment_count
+            FROM
+                user_lesson_progress p
+            JOIN
+                users u          ON p.user_email = u.email
+            JOIN
+                team_members m   ON u.id = m.member_id
+            JOIN
+                teams t          ON m.team_id = t.id
+            JOIN
+                learning_content lc ON p.lesson_id = lc.id
+            WHERE
+                p.completed_at IS NOT NULL
+                AND (:month IS NULL OR EXTRACT(MONTH FROM p.completed_at) = :month)
+                AND (:year  IS NULL OR EXTRACT(YEAR  FROM p.completed_at)  = :year)
+            GROUP BY
+                t.name, lc.title
+            ORDER BY
+                enrollment_count DESC
+        """;
+
+        try {
+            Query q = em.createNativeQuery(sql)
+                    .setParameter("month", month)
+                    .setParameter("year", year);
+
+            // ใช้ setMaxResults แทน LIMIT ? เพื่อความชัวร์ทุกไดรเวอร์
+            q.setMaxResults(limit);
+
+            @SuppressWarnings("unchecked")
+            List<Object[]> rows = q.getResultList();
+
+            List<Map<String, Object>> response = new ArrayList<>(rows.size());
+            for (Object[] r : rows) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("teamName",        r[0]);                          // t.name
+                m.put("courseName",      r[1]);                          // lc.title
+                m.put("enrollmentCount", ((Number) r[2]).longValue());   // COUNT(*)
+                response.add(m);
+            }
+
+            log.info("[course-enrollment-summary] actor={} -> {} rows", actor, response.size());
+            return Response.ok(response).build();
+
+        } catch (Exception e) {
+            log.error("[course-enrollment-summary] actor={} failed: {}", actor, e.getMessage(), e);
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(Map.of(
+                            "error", "Failed to query course enrollment summary",
+                            "message", e.getMessage()
+                    ))
+                    .build();
+        }
+    }
+}
