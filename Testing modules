@@ -1,68 +1,21 @@
-@GET
-@Path("course-enrollment-summary")
-@RolesAllowed({ROLE_SUPERVISOR, ROLE_ADMINISTRATOR})
-public List<Map<String, Object>> getCourseEnrollmentSummary(
-        @QueryParam("month") Integer month,
-        @QueryParam("year") Integer year,
-        @Context SecurityContext securityContext) {
-
-    StringBuilder sql = new StringBuilder("""
-        SELECT
-            t.name AS team_name,
-            l.title AS course_name,
-            COUNT(p.id) AS enrollment_count
-        FROM
-            user_lesson_progress p
-        JOIN
-            users u ON p.user_email = u.email
-        JOIN
-            team_members m ON u.id = m.member_id
-        JOIN
-            teams t ON m.team_id = t.id
-        JOIN
-            learning_content l ON p.lesson_id = l.id
-        WHERE
-            p.status = 'completed'
-          AND p.completed_at IS NOT NULL
-    """);
-
-    if (month != null) {
-        sql.append(" AND EXTRACT(MONTH FROM p.completed_at) = :month");
-    }
-    if (year != null) {
-        sql.append(" AND EXTRACT(YEAR FROM p.completed_at) = :year");
-    }
-
-    sql.append("""
-        GROUP BY
-            t.name, l.title
-        ORDER BY
-            3 DESC
-    """);
-
-    var query = em.createNativeQuery(sql.toString());
-
-    if (month != null) {
-        query.setParameter("month", month);
-    }
-    if (year != null) {
-        query.setParameter("year", year);
-    }
-
-    @SuppressWarnings("unchecked")
-    List<Object[]> results = query.getResultList();
-    List<Map<String, Object>> response = new ArrayList<>();
-
-    for (Object[] row : results) {
-        Map<String, Object> map = new HashMap<>();
-        map.put("teamName", row[0]);       // t.name
-        map.put("courseName", row[1]);     // l.title
-        map.put("enrollmentCount", row[2]);// COUNT(p.id)
-        response.add(map);
-    }
-
-    log.info("Course-enrollment-summary => user={} month={} year={} rows={}",
-            securityContext.getUserPrincipal().getName(), month, year, response.size());
-
-    return response;
-}
+SELECT
+    t.name AS team_name,
+    lc.title AS course_name,
+    COUNT(p.id) AS enrollment_count
+FROM
+    user_lesson_progress p
+JOIN
+    users u ON p.user_email = u.email
+JOIN
+    team_members m ON u.id = m.member_ID
+JOIN
+    teams t ON m.team_id = t.id
+JOIN
+    learning_content lc ON p.lesson_id = lc.id
+WHERE
+    p.completed_at IS NOT NULL
+GROUP BY
+    t.name, lc.title
+ORDER BY
+    enrollment_count DESC
+LIMIT 10;
