@@ -1,10 +1,15 @@
-const rows = [
-  { name: "Firstname Lastname", date: "25/2/2023", type: "AGILE", title: "Agile Methodologies Overview" },
-  { name: "Firstname Lastname", date: "25/2/2023", type: "AGILE", title: "Agile Methodologies Overview" },
-  { name: "Firstname Lastname", date: "25/2/2023", type: "AGILE", title: "Agile Methodologies Overview" },
-];
 
 function NamesSubmitted() {
+  const[row,setRows] = useState([]);
+
+ useEffect(() => {
+    axios
+      .get("/course-enrollment-summary?limit=10")
+      .then((res) => setRows(res.data))
+      .catch((err) => console.error("Failed to fetch data", err));
+  }, []);
+
+
   return (
     <Card>
       <div className="flex justify-between items-center mb-4">
