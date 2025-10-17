@@ -1,104 +1,49 @@
-package Testing;
+const rows = [
+  { name: "Firstname Lastname", date: "25/2/2023", type: "AGILE", title: "Agile Methodologies Overview" },
+  { name: "Firstname Lastname", date: "25/2/2023", type: "AGILE", title: "Agile Methodologies Overview" },
+  { name: "Firstname Lastname", date: "25/2/2023", type: "AGILE", title: "Agile Methodologies Overview" },
+];
 
-import jakarta.annotation.security.RolesAllowed;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.Query;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.*;
-
-@Path("/admin/reports")
-@Consumes(MediaType.APPLICATION_JSON)
-@Produces(MediaType.APPLICATION_JSON)
-public class AdminReportResource {
-
-    private static final Logger log = LoggerFactory.getLogger(AdminReportResource.class);
-    private static final String ROLE_ADMIN = "administrator";
-
-    @Inject
-    EntityManager em;
-
-    /**
-     * GET /admin/reports/course-enrollments
-     * ดึงสรุป “จำนวนคนที่เรียนจบ (completed)” ราย team × course
-     *
-     * พารามิเตอร์:
-     *  - limit (optional, default 10, สูงสุด 1000)
-     *
-     * ตัวอย่างเรียก:
-     *  GET /admin/reports/course-enrollments
-     *  GET /admin/reports/course-enrollments?limit=20
-     */
-    @GET
-    @Path("/course-enrollments")
-    @RolesAllowed({ROLE_ADMIN})
-    public Response getCourseEnrollmentSummary(
-            @QueryParam("limit") @DefaultValue("10") int limit
-    ) {
-        if (limit <= 0) limit = 10;
-        if (limit > 1000) limit = 1000;
-
-        log.info("[course-enrollments] limit={}", limit);
-
-        // หมายเหตุ:
-        // - ใช้ชื่อคอลัมน์แบบไม่ใส่ double-quote => Postgres จะ lowercase อัตโนมัติ
-        // - team_members.member_id (ตัวพิมพ์เล็ก) ตรงกับคอลัมน์ที่ใช้จริงในกรณีทั่วไป
-        // - COUNT(*) ปลอดภัยกว่า COUNT(p.id) ในกรณีไม่มีคอลัมน์ id
-        final String sql = """
-            SELECT
-                t.name          AS team_name,
-                lc.title        AS course_name,
-                COUNT(*)        AS enrollment_count
-            FROM
-                user_lesson_progress p
-            JOIN
-                users u            ON p.user_email = u.email
-            JOIN
-                team_members m     ON u.id = m.member_id
-            JOIN
-                teams t            ON m.team_id = t.id
-            JOIN
-                learning_content lc ON p.lesson_id = lc.id
-            WHERE
-                p.completed_at IS NOT NULL
-            GROUP BY
-                t.name, lc.title
-            ORDER BY
-                enrollment_count DESC
-        """;
-
-        try {
-            Query q = em.createNativeQuery(sql);
-            q.setMaxResults(limit); // จำกัดจำนวนแถว ด้วย setMaxResults (ปลอดภัยกว่า LIMIT :limit)
-
-            @SuppressWarnings("unchecked")
-            List<Object[]> rows = q.getResultList();
-
-            List<Map<String, Object>> out = new ArrayList<>(rows.size());
-            for (Object[] r : rows) {
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("teamName",        r[0]);                           // t.name
-                row.put("courseName",      r[1]);                           // lc.title
-                row.put("enrollmentCount", ((Number) r[2]).longValue());    // COUNT(*)
-                out.add(row);
-            }
-
-            log.info("[course-enrollments] rows={}", out.size());
-            return Response.ok(out).build();
-
-        } catch (Exception e) {
-            log.error("[course-enrollments] failed: {}", e.getMessage(), e);
-            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(Map.of(
-                            "error", "Failed to query course enrollments",
-                            "message", e.getMessage()
-                    ))
-                    .build();
-        }
-    }
+function NamesSubmitted() {
+  return (
+    <Card>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg font-semibold text-gray-800">Name’s Submitted</h2>
+        <a href="#" className="text-blue-600 text-sm">
+          See All
+        </a>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full table-auto text-left relative">
+          <thead>
+            <tr className="text-gray-500 text-sm border-b">
+              <th className="py-2 px-4">NAME & DATE</th>
+              <th className="py-2 px-4">COURSE TYPE</th>
+              <th className="py-2 px-4">COURSE TITLE</th>
+              <th className="py-2 px-4">ACTIONS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className="border-b last:border-none text-sm">
+                <td className="py-3 px-4">
+                  <div className="font-medium text-gray-800">{r.name}</div>
+                  <div className="text-gray-500 text-xs">{r.date}</div>
+                </td>
+                <td className="py-3 px-4">
+                  <span className="px-3 py-1 text-xs rounded-full bg-blue-600 text-white">{r.type}</span>
+                </td>
+                <td className="py-3 px-4 text-gray-700">{r.title}</td>
+                <td className="py-3 px-4">
+                  <button className="text-xs bg-gray-100 hover:bg-gray-200 transition px-3 py-1 rounded-md">
+                    SHOW DETAILS
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
 }
