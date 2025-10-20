@@ -1,541 +1,343 @@
-package PointSystem.Resources;
+package Testing;
 
-import PointSystem.DTOs.CreatedCouponDTO;
-import PointSystem.Entity.CouponEntity;
-import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.NoResultException;
 import jakarta.transaction.Transactional;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
+import model.User;
+import LDAPServices.LDAPAuthenticationService;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.mindrot.jbcrypt.BCrypt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import jakarta.ws.rs.core.SecurityContext;
-import java.util.*;
+import util.JwtUtil;
+
+import java.time.Duration;
 import java.time.LocalDateTime;
-@Path("/CouponPipelineService")
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+@Path("/login")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
-public class CreateCouponForUserResources {
-
-    public static final Logger log = LoggerFactory.getLogger(CreateCouponForUserResources.class);
-    public static final String ROLE_ADMINISTRATOR = "administrator";
+public class LoginResource {
+    private static final Logger log = LoggerFactory.getLogger(LoginResource.class);
+    @SuppressWarnings("unused")
+    private static final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     @Inject
-    EntityManager entityManager;
+    EntityManager em;
 
-    @GET
-    @Path("Administrator-Coupon-List")
-    @RolesAllowed(ROLE_ADMINISTRATOR)
-    public Response getAllCreatedCoupons(@Context SecurityContext securityContext) {
-        String adminEmail = securityContext.getUserPrincipal().getName();
-        log.info("Admin {} is retrieving all created coupons", adminEmail);
-        var query = entityManager.createQuery("SELECT c FROM CouponEntity c ORDER BY c.createdAt DESC", CouponEntity.class);
-        var coupons = query.getResultList();
-        var responseList = coupons.stream().map(c -> {
-            var dto = new CreatedCouponDTO();
-            dto.setId(c.getId());
-            dto.setAuthorEmail(c.getAuthorEmail());
-            dto.setAuthorName(c.getAuthorName());
-            dto.setAvatarUrl(c.getAuthorAvatar());
-            dto.setCouponCode(c.getCouponCode());
-            dto.setCouponTitle(c.getCouponTitle());
-            dto.setCouponDescription(c.getCouponDescription());
-            dto.setActive(c.getActive());
-            dto.setStartDate(c.getStartDate());
-            dto.setEndDate(c.getEndDate());
-            dto.setCreatedAt(c.getCreatedAt());
-            dto.setPointsRequired(c.getPointRequirement());
-            return dto;
-        }).toList();
-        return Response.ok(responseList).build();
+    @Inject
+    JsonWebToken jwt;
+
+    @Inject
+    LDAPAuthenticationService ldapAuthenticationService;
+
+    public static class LoginRequest {
+        public String email;
+        public String password;
     }
 
-    @GET
-    @Path("Administrator-Coupon-Detail/{couponId}")
-    @RolesAllowed(ROLE_ADMINISTRATOR)
-    public Response getCouponDetail(@PathParam("couponId") UUID couponId,
-                                    @Context SecurityContext securityContext) {
-        String adminEmail = securityContext.getUserPrincipal().getName();
-        log.info("Admin {} is retrieving details for coupon ID: {}", adminEmail, couponId);
-        CouponEntity coupon = entityManager.find(CouponEntity.class, couponId);
-        if (coupon == null) {
-            log.warn("Coupon with ID {} not found", couponId);
-            return Response.status(Response.Status.NOT_FOUND)
-                    .entity("Coupon not found").build();
+    public static class LoginResponse {
+        public String token;
+        public long expiresIn;
+
+        public LoginResponse(String token, long expiresIn) {
+            this.token = token;
+            this.expiresIn = expiresIn;
         }
-        var dto = new CreatedCouponDTO();
-        dto.setId(coupon.getId());
-        dto.setAuthorEmail(coupon.getAuthorEmail());
-        dto.setAuthorName(coupon.getAuthorName());
-        dto.setAvatarUrl(coupon.getAuthorAvatar());
-        dto.setCouponCode(coupon.getCouponCode());
-        dto.setCouponTitle(coupon.getCouponTitle());
-        dto.setCouponDescription(coupon.getCouponDescription());
-        dto.setActive(coupon.getActive());
-        dto.setStartDate(coupon.getStartDate());
-        dto.setEndDate(coupon.getEndDate());
-        dto.setCreatedAt(coupon.getCreatedAt());
-        dto.setPointsRequired(coupon.getPointRequirement());
-        return Response.ok(dto).build();
+
+        public LoginResponse(long expiresIn) { this.expiresIn = expiresIn; }
     }
 
-    @PUT
-    @Path("Update-Coupon-For-User/{couponId}")
-    @Transactional
-    @RolesAllowed(ROLE_ADMINISTRATOR)
-    public Response updateCouponForUser(@PathParam("couponId") UUID couponId,
-                                        CreatedCouponDTO request,
-                                        @Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        log.info("Administrator of the system is calling {} to update coupon ID: {}", currentUser, couponId);
-        CouponEntity coupon = entityManager.find(CouponEntity.class, couponId);
-        if (coupon == null) {
-            log.warn("Coupon with ID {} not found", couponId);
-            return Response.status(Response.Status.NOT_FOUND)
-                    .entity("Coupon not found").build();
-        }
-        if (request == null) {
-            log.warn("Request body is null");
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity("Request body cannot be null").build();
-        }
-        coupon.setAuthorEmail(request.getAuthorEmail());
-        coupon.setAuthorName(request.getAuthorName());
-        coupon.setAuthorAvatar(request.getAvatarUrl());
-        coupon.setCouponCode(request.getCouponCode());
-        coupon.setCouponTitle(request.getCouponTitle());
-        coupon.setCouponDescription(request.getCouponDescription());
-        coupon.setActive(request.getActive() != null ? request.getActive() : coupon.getActive());
-        coupon.setStartDate(request.getStartDate());
-        coupon.setEndDate(request.getEndDate());
-        coupon.setPointRequirement(request.getPointsRequired() != null ? request.getPointsRequired() : coupon.getPointRequirement());
-        entityManager.merge(coupon);
-        log.info("Updated CouponEntity with ID: {}", coupon.getId());
-        return Response.ok(Map.of("message", "Coupon updated successfully", "couponId", coupon.getId()))
-                .build();
+    public static class ErrorResponse {
+        public String error;
+        public ErrorResponse(String error) { this.error = error; }
     }
 
     @POST
     @Transactional
-    @RolesAllowed(ROLE_ADMINISTRATOR)
-    @Path("Create-Coupon-For-User")
-    public Response createCouponForUser(CreatedCouponDTO request,
-                                        @Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        log.info("Administrator of the system is calling {} to create a coupon for user: {}", currentUser, request.getAuthorEmail());
-        CouponEntity coupon = new CouponEntity();
+    public Response login(LoginRequest request, @HeaderParam("Authorization") String authHeader) {
+        log.info("Attempt login: {}", request != null ? request.email : "(null)");
+        log.info("Timestamp: {}", LocalDateTime.now());
 
-        if (request == null) {
-            log.warn("Request body is null");
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity("Request body cannot be null").build();
-        }
-        coupon.setId(request.getId());
-        coupon.setAuthorEmail(request.getAuthorEmail());
-        coupon.setAuthorName(request.getAuthorName());
-        coupon.setAuthorAvatar(request.getAvatarUrl());
-        coupon.setCouponCode(request.getCouponCode());
-        coupon.setCouponTitle(request.getCouponTitle());
-        coupon.setCouponDescription(request.getCouponDescription());
-        coupon.setActive(request.getActive() != null ? request.getActive() : true);
-        coupon.setStartDate(request.getStartDate());
-        coupon.setEndDate(request.getEndDate());
-        coupon.setCreatedAt(LocalDateTime.now());
-        coupon.setPointRequirement(request.getPointsRequired());
+        // Username/password login
+        if (request != null && request.email != null && request.password != null) {
+            String email = request.email;
+            String username = email.contains("@") ? email.substring(0, email.indexOf('@')) : email;
 
-        entityManager.persist(coupon);
-        log.info("Persisted CouponEntity with ID: {}", coupon.getId());
+            // --- LDAP branch ---
+            try {
+                boolean ldapAuthenticated = ldapAuthenticationService.validateUserCredentials(email, request.password);
+                if (ldapAuthenticated) {
+                    log.info(username);
+                    User user = ldapAuthenticationService.findOrCreateLdapUser(username);
+                    String token = JwtUtil.generateToken(
+                            user.getEmail(),
+                            user.getRoles(),
+                            user.getName(),
+                            Duration.ofHours(2)
+                    );
+                    log.info("LDAP login successful for {}", email);
+                    return Response.ok(new LoginResponse(token, 7200)).build();
+                }
+            } catch (Exception e) {
+                log.warn("LDAP authentication failed for {}: {}", email, e.getMessage());
+            }
 
-        return Response.status(Response.Status.CREATED)
-                .entity(Map.of("message", "Coupon created successfully", "couponId", coupon.getId()))
-                .build();
-    }
-    @DELETE
-    @Path("Delete-Coupon-For-User/{couponId}")
-    @Transactional
-    @RolesAllowed(ROLE_ADMINISTRATOR)
-    public Response deleteCouponForUser(@PathParam("couponId") UUID couponId,
-                                        @Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        log.info("Administrator of the system is calling {} to delete coupon ID: {}", currentUser, couponId);
-        CouponEntity coupon = entityManager.find(CouponEntity.class, couponId);
-        if (coupon == null) {
-            log.warn("Coupon with ID -> {} not found", couponId);
-            return Response.status(Response.Status.NOT_FOUND)
-                    .entity("Coupon not found").build();
-        }
-        entityManager.remove(coupon);
-        log.info("Deleted CouponEntity with ID: {}", couponId);
-        return Response.ok(Map.of("message", "Coupon deleted successfully", "couponId", couponId)).build();
-    }
-}
+            // --- Local DB branch ---
+            try {
+                User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                        .setParameter("email", email)
+                        .getSingleResult();
 
-import { useContext, useState } from "react";
-import AdminsistratorBar from "../Widgets/AdministratorBar";
-import CouponCreateModal from "../Widgets/CouponCreateModal";
-import { useUserProfile } from "../../Lesson/hooks/useUserProfile";
-import { AuthContext } from "../../../Authentication/AuthContext";
+                if (user.getPassword() == null) {
+                    log.warn("User {} has no local password set (LDAP-only user)", email);
+                    return Response.status(Response.Status.UNAUTHORIZED)
+                            .entity(new ErrorResponse("User not found"))
+                            .build();
+                }
 
-const AdministratorCreaCoupon = () => {
-    const [open, setOpen] = useState(false);
-    const { token: ctxToken } = useContext(AuthContext);
-    const token = ctxToken || localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken");  
-    const { email, fullName, avatarUrl } = useUserProfile(token);
+                if (!BCrypt.checkpw(request.password, user.getPassword())) {
+                    log.info("Invalid password for: {}", email);
+                    return Response.status(Response.Status.UNAUTHORIZED)
+                            .entity(new ErrorResponse("Invalid credentials"))
+                            .build();
+                }
 
-    if (!email || !fullName) {
-    return <div>Loading profile...</div>;
-    }
-  return (
-    <div className="min-h-screen bg-gray-100 flex">
-      {/* Sidebar */}
-      <AdminsistratorBar />
+                String token = JwtUtil.generateToken(
+                        user.getEmail(),
+                        user.getRoles(),
+                        user.getName(),
+                        Duration.ofHours(2)
+                );
+                log.info("Local login successful for {}", email);
+                return Response.ok(new LoginResponse(token, 7200)).build();
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col p-8">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-800">Coupons</h1>
-          <button
-            onClick={() => setOpen(true)}
-            className="rounded-xl px-4 py-2 bg-blue-600 text-white shadow hover:bg-blue-700 transition"
-          >
-            + เพิ่มคูปอง
-          </button>
-        </div>
-
-        {/* Coupon List/Table Placeholder */}
-        <div className="bg-white rounded-xl shadow p-6 min-h-[200px] flex items-center justify-center text-gray-400">
-          {/* TODO: Add your coupon list/table here */}
-          ยังไม่มีข้อมูลคูปอง
-        </div>
-      </div>
-
-      {/* Modal */}
-      <CouponCreateModal
-        open={open}
-        onClose={() => setOpen(false)}
-        email={email ?? undefined}
-        fullName={fullName ?? undefined}
-        avatarUrl={avatarUrl ?? undefined}
-        onCreated={(couponId) => {
-          // refresh รายการคูปอง หรือแจ้งเตือน
-          alert(`สร้างคูปองสำเร็จ! ID: ${couponId}`);
-        }}
-      />
-    </div>
-  );
-};
-
-export default AdministratorCreaCoupon;
-import { useContext, useEffect, useMemo, useState } from "react";
-import axios from "axios";
-import { AuthContext } from "../../../Authentication/AuthContext";
-
-type CouponPayload = {
-    id?:string;
-    authorEmail?:string;
-    authorName?:string;
-    avatarUrl?:string;
-    couponCode:string;
-    couponTitle:string;
-    couponDescription:string;
-    active?:boolean;
-    startDate?:string;
-    endDate?:string;
-    pointsRequired?:number;
-}
-
-type Props = {
-    open: boolean;
-    onClose: () => void;
-    onCreated?: (couponId : string ) => void
-    email?:string;
-    fullName?:string;
-    avatarUrl?:string;
-}
-
-const fmtToLocalInput = (d:Date) => {
-    const pad = (n:number) => String(n).padStart(2,"0");
-    const yyyy = d.getFullYear();
-    const MM = pad(d.getMonth()+1);
-    const dd = pad(d.getDate());
-    const hh = pad(d.getHours());
-    const mm = pad(d.getMinutes());
-    return `${yyyy}-${MM}-${dd}T${hh}:${mm}`;
-
-}
-
-export default function CouponCreateModal({ open, onClose, onCreated ,email,fullName,avatarUrl}: Props){
-    const { token: ctxToken } = useContext(AuthContext);
-    const token = ctxToken || localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken");  
-    const[submitting,setSubmitting] = useState(false);
-    const[error,setError] = useState<string | null>(null);
-    console.log(`Profile: ${email}`)
-  
-
-    const[form,setForm] = useState<CouponPayload>({
-        couponTitle:"",
-        couponCode:"",
-        couponDescription:"",
-        pointsRequired:0,
-        active:true,
-        startDate:fmtToLocalInput(new Date()),
-        endDate:fmtToLocalInput(new Date(Date.now()+ 7 * 24 * 3600 * 1000)),
-        authorEmail:"",
-        authorName:"",
-        avatarUrl:"",
-    })
-     useEffect(() => {
-        setForm((prev) => ({
-            ...prev,
-            authorEmail: email || "",
-            authorName: fullName || "",
-            avatarUrl: avatarUrl || "",
-        }));
-    }, [email, fullName, avatarUrl]);
-
-
-    const canSubmit = useMemo(()=> {
-        if (!form.couponTitle?.trim()) {
-            return false;
-        }
-        if (!form.couponCode?.trim()) {
-            return false;    
-        }
-        if (form.pointsRequired !== undefined && Number(form.pointsRequired) < 0) {
-            return false
-        }
-        if (form.startDate && form.endDate) {
-            const s = new Date(form.startDate);
-            const e = new Date(form.endDate);
-            if (e.getTime() < s.getTime()) {
-                return false
+            } catch (NoResultException e) {
+                log.warn("No local user found with email: {}, trying LDAP already handled", email);
+                return Response.status(Response.Status.UNAUTHORIZED)
+                        .entity(new ErrorResponse("User not found"))
+                        .build();
+            } catch (Exception e) {
+                log.error("Local authentication error: {}", e.getMessage(), e);
+                return Response.status(Response.Status.BAD_REQUEST)
+                        .entity(new ErrorResponse("Local authentication failed"))
+                        .build();
             }
         }
-        return true
-    },[form])
 
-    const toISOStringOrNull = (v?: string) => {
-        if (!v) {
-            return undefined;
+        // Token refresh via Authorization: Bearer <token>
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            try {
+                String email = jwt.getClaim("email");
+                String name  = jwt.getClaim("name");
+                Set<String> groups = jwt.getGroups(); // roles from existing token
+
+                String newToken = JwtUtil.generateToken(email, groups, name, Duration.ofHours(2));
+                log.info("Token refreshed for {}", email);
+                return Response.ok(new LoginResponse(newToken, 7200)).build();
+            } catch (Exception e) {
+                log.error("Token refresh failed: {}", e.getMessage(), e);
+                return Response.status(Response.Status.UNAUTHORIZED)
+                        .entity(new ErrorResponse("Invalid token"))
+                        .build();
+            }
         }
-        const d = new Date(v);
-        return d.toISOString();
+
+        return Response.status(Response.Status.BAD_REQUEST)
+                .entity(new ErrorResponse("Missing login credentials"))
+                .build();
     }
 
-    const submit = async () => {
-        if (!canSubmit || submitting) {
-            return
+    @POST
+    @Path("logout-of-all-sessions")
+    public Response logoutOfAllSessions(@HeaderParam("Authorization") String authHeader,
+                                        @Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal() != null
+                ? securityContext.getUserPrincipal().getName() : "(anonymous)";
+        log.info("User {} is logging out of all sessions", currentUser);
+
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            try {
+                // With stateless JWT, global logout would require token revocation storage.
+                // Here we just acknowledge the intent.
+                String email = jwt.getClaim("email");
+                log.info("User {} requested logout-all at {}", email, LocalDateTime.now());
+                return Response.ok(new LoginResponse(0)).build();
+            } catch (Exception e) {
+                log.error("Error invalidating sessions for user {}: {}", currentUser, e.getMessage(), e);
+                return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                        .entity(new ErrorResponse("Failed to logout of all sessions"))
+                        .build();
+            }
         }
-        setSubmitting(true);
-        setError(null);
-        try{
-            const payload = {
-                id: form.id || undefined,
-                authorEmail: email || undefined,
-                authorName: fullName || undefined,
-                avatarUrl: avatarUrl || undefined,
-                couponCode: form.couponCode.trim(),
-                couponTitle: form.couponTitle.trim(),
-                couponDescription: form.couponDescription?.trim() || undefined,
-                active: form.active ?? true,
-                startDate: toISOStringOrNull(form.startDate),
-                endDate: toISOStringOrNull(form.endDate),
-                pointsRequired:
-                form.pointsRequired !== undefined && form.pointsRequired !== null
-                    ? Number(form.pointsRequired)
-                    : undefined,
-            };
-            const res = await axios.post("/api/CouponPipelineService/Create-Coupon-For-User" ,payload,{
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const couponId = res?.data?.couponId ?? "";
-        if (onCreated) {
-            onCreated(couponId);
+        return Response.status(Response.Status.BAD_REQUEST)
+                .entity(new ErrorResponse("Missing token"))
+                .build();
+    }
+}
+package LDAPServices;
+import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
+import jakarta.enterprise.context.RequestScoped;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.NoResultException;
+import model.User;
+import org.acme.security.jwt.LDAPUserInfo;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import javax.naming.NamingEnumeration;
+import javax.naming.directory.SearchResult;
+import javax.naming.directory.Attributes;
+import javax.naming.Context;
+import javax.naming.NamingException;
+import javax.naming.directory.DirContext;
+import javax.naming.directory.InitialDirContext;
+import javax.naming.directory.SearchControls;
+import java.util.HashMap;
+import java.util.Hashtable;
+import java.util.Set;
+
+@RequestScoped
+public class LDAPAuthenticationService {
+
+    @Inject
+    EntityManager em;
+    private static final Logger log = LoggerFactory.getLogger(LDAPAuthenticationService.class);
+    private final String providerUrl;
+    private final String domainName;
+    private final String searchBaseDn;
+
+    public LDAPAuthenticationService(
+            @ConfigProperty(name = "quarkus.security.ldap.dir-context.url") String providerUrl,
+            @ConfigProperty(name = "quarkus.security.ldap.identity-mapping.search-base-dn") String searchBaseDn,
+            @ConfigProperty(name = "app.ldap.domain") String domainName) {
+        this.providerUrl = providerUrl;
+        this.domainName = domainName;
+        this.searchBaseDn = searchBaseDn;
+        log.info("LDAPAuthenticationService initialized with providerUrl: {} and domainName: {}", providerUrl, domainName);
+    }
+    public boolean validateUserCredentials(String username, String password) {
+        long startTime = System.currentTimeMillis();
+        log.info("Start LDAPAuthenticationService Time: {}", startTime);
+        log.info("LDAPAuthenticationService->validateUserCredential: {}", username);
+        HashMap<String, String> environment = new HashMap<>();
+        environment.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");
+        environment.put(Context.PROVIDER_URL, providerUrl);
+        environment.put(Context.SECURITY_AUTHENTICATION, "simple");
+        environment.put(Context.SECURITY_PRINCIPAL, createBindPrincipal(username));
+        environment.put(Context.SECURITY_CREDENTIALS, password);
+        environment.put("com.sun.jndi.ldap.connect.timeout", "3000");
+        environment.put("com.sun.jndi.ldap.read.timeout", "5000");
+
+        try {
+            DirContext ctx = new InitialDirContext(new Hashtable<>(environment));
+            ctx.close();
+            log.info("LDAPAuthenticationService->validateUserCredential: {} - Success", username);
+            return true;
+        } catch (javax.naming.AuthenticationException e) {
+            log.error("Authentication failed for user {}: Invalid credentials", username, e);
+        } catch (NamingException e) {
+            log.error("Error contacting LDAP server {}: Unable to connect", providerUrl, e);
+        } catch (Exception e) {
+            log.error("Unexpected error: {}", e.getMessage(), e);
         }
-        onClose();
-        }catch(e){
-            console.error(e)
-            setError("Can't finished create Coupon")
-        }finally{
-            setSubmitting(false);
+        return false;
+    }
+
+    public String createBindPrincipal(String username) {
+        log.info("LDAPAuthenticationService->createBindPrincipal: {}", username);
+        if (username.toLowerCase().endsWith("@" + domainName.toLowerCase())) {
+            return username;
+        } else {
+            return username + "@" + domainName;
         }
-    };
-    if (!open) {
+    }
+
+    public LDAPUserInfo getUserInfo(String username, String password) {
+        log.info("LDAPAuthenticationService->getUserInfo: {}", username);
+
+        if (!validateUserCredentials(username, password)) {
+            log.warn("LDAPAuthenticationService->getUserInfo: Invalid credentials for {}", username);
+            return null;
+        }
+
+        HashMap<String, String> environment = new HashMap<>();
+        environment.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");
+        environment.put(Context.PROVIDER_URL, providerUrl);
+        environment.put(Context.SECURITY_AUTHENTICATION, "simple");
+        environment.put(Context.SECURITY_PRINCIPAL, createBindPrincipal(username));
+        environment.put(Context.SECURITY_CREDENTIALS, password);
+        environment.put("com.sun.jndi.ldap.connect.timeout", "3000");
+        environment.put("com.sun.jndi.ldap.read.timeout", "5000");
+
+        try {
+            DirContext ctx = new InitialDirContext(new Hashtable<>(environment));
+            SearchControls searchControls = new SearchControls();
+            searchControls.setSearchScope(SearchControls.SUBTREE_SCOPE);
+            searchControls.setReturningAttributes(new String[]{"givenName", "sn", "mail"});
+
+            String cleanUsername = username.split("@")[0].replaceFirst("^S_", "");
+            String searchFilter = "(uid=" + cleanUsername + ")";
+
+            log.info("Clean Username: {}", cleanUsername);
+            NamingEnumeration<SearchResult> results = ctx.search(searchBaseDn, searchFilter, searchControls);
+            if (results.hasMore()) {
+                SearchResult result = results.next();
+                Attributes attrs = result.getAttributes();
+
+                String firstName = attrs.get("givenName") != null ?
+                        attrs.get("givenName").get().toString() : "FirstName";
+                String lastName = attrs.get("sn") != null ?
+                        attrs.get("sn").get().toString() : "LastName";
+                String email = attrs.get("mail") != null ?
+                        attrs.get("mail").get().toString() : username;
+
+                ctx.close();
+                log.info("LDAPAuthenticationService->getUserInfo: Successfully retrieved info for {}", username);
+                return new LDAPUserInfo(firstName, lastName, email);
+            } else {
+                log.warn("LDAPAuthenticationService->getUserInfo: No LDAP entry found for {}", username);
+            }
+            ctx.close();
+        } catch (NamingException e) {
+            log.error("LDAP search failed for {}: {}", username, e.getMessage(), e);
+        } catch (Exception e) {
+            log.error("Unexpected error while retrieving user info for {}: {}", username, e.getMessage(), e);
+        }
         return null;
     }
 
-   return (
-    <div className="fixed inset-0 z-[60]">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-        onClick={() => !submitting && onClose()}
-      />
-      {/* Modal */}
-      <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl border">
-          <div className="px-6 py-4 border-b flex items-center justify-between">
-            <h2 className="text-lg font-semibold">เพิ่มคูปองใหม่</h2>
-            <button
-              onClick={onClose}
-              className="rounded-lg px-2 py-1 text-sm hover:bg-gray-100"
-              disabled={submitting}
-            >
-              ปิด
-            </button>
-          </div>
+    public User findOrCreateLdapUser(String ldapUsername) {
+        log.info("LDAPAuthenticationService->findOrCreateLdapUser: {}", ldapUsername);
+        User user;
+        try {
+            user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                    .setParameter("email", ldapUsername)
+                    .getSingleResult();
 
-          <div className="p-6 space-y-4 max-h-[75vh] overflow-auto">
-            {/* Title & Code */}
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm font-medium">ชื่อคูปอง *</label>
-                <input
-                  className="w-full mt-1 rounded-xl border px-3 py-2"
-                  placeholder="เช่น ส่วนลด 50 คะแนน"
-                  value={form.couponTitle}
-                  onChange={(e) => setForm((p) => ({ ...p, couponTitle: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">โค้ดคูปอง *</label>
-                <input
-                  className="w-full mt-1 rounded-xl border px-3 py-2 uppercase"
-                  placeholder="เช่น SAVE50"
-                  value={form.couponCode}
-                  onChange={(e) => setForm((p) => ({ ...p, couponCode: e.target.value.toUpperCase() }))}
-                />
-              </div>
-            </div>
+        }catch (NoResultException e){
+            log.warn("LDAPAuthenticationService->findOrCreateLdapUser: LDAP user not found : {}", ldapUsername);
 
-            {/* Description */}
-            <div>
-              <label className="text-sm font-medium">รายละเอียด</label>
-              <textarea
-                className="w-full mt-1 rounded-xl border px-3 py-2"
-                rows={3}
-                placeholder="อธิบายเงื่อนไขหรือรายละเอียดคูปองสั้นๆ"
-                value={form.couponDescription}
-                onChange={(e) => setForm((p) => ({ ...p, couponDescription: e.target.value }))}
-              />
-            </div>
-
-            {/* Points */}
-            <div className="grid md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-sm font-medium">คะแนนที่ต้องใช้</label>
-                <input
-                  type="number"
-                  min={0}
-                  className="w-full mt-1 rounded-xl border px-3 py-2"
-                  value={form.pointsRequired ?? 0}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, pointsRequired: Number(e.target.value) }))
-                  }
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">เริ่มใช้ตั้งแต่</label>
-                <input
-                  type="datetime-local"
-                  className="w-full mt-1 rounded-xl border px-3 py-2"
-                  value={form.startDate || ""}
-                  onChange={(e) => setForm((p) => ({ ...p, startDate: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">สิ้นสุด</label>
-                <input
-                  type="datetime-local"
-                  className="w-full mt-1 rounded-xl border px-3 py-2"
-                  value={form.endDate || ""}
-                  onChange={(e) => setForm((p) => ({ ...p, endDate: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            {/* Active toggle */}
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium">สถานะ</label>
-              <button
-                type="button"
-                onClick={() => setForm((p) => ({ ...p, active: !p.active }))}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                  form.active ? "bg-emerald-500" : "bg-gray-300"
-                }`}
-              >
-                <span
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
-                    form.active ? "translate-x-5" : "translate-x-1"
-                  }`}
-                />
-              </button>
-              <span className="text-sm">{form.active ? "ใช้งาน" : "ปิดใช้งาน"}</span>
-            </div>
-
-            {/* Author info (optional) */}
-            <div className="grid md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-sm font-medium">Author Email</label>
-                <input
-                  className="w-full mt-1 rounded-xl border px-3 py-2"
-                  placeholder="admin"
-                  value={email || ""}
-                  disabled
-                //   onChange={(e) => setForm((p) => ({ ...p, authorEmail: e.target.value }))}
-                readOnly
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Author Name</label>
-                <input
-                  className="w-full mt-1 rounded-xl border px-3 py-2"
-                  placeholder="ชื่อผู้สร้างคูปอง"
-                  value={fullName || ""}
-                  disabled
-                  onChange={(e) => setForm((p) => ({ ...p, authorName: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Avatar URL</label>
-                <input
-                  className="w-full mt-1 rounded-xl border px-3 py-2"
-                  placeholder="https://…"
-                  value={avatarUrl || ""}
-                  disabled
-                  onChange={(e) => setForm((p) => ({ ...p, avatarUrl: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            {error && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {String(error)}
-              </div>
-            )}
-          </div>
-
-          <div className="px-6 py-4 border-t flex items-center justify-end gap-2">
-            <button
-              onClick={onClose}
-              className="rounded-xl px-4 py-2 border hover:bg-gray-50"
-              disabled={submitting}
-            >
-              ยกเลิก
-            </button>
-            <button
-              onClick={submit}
-              disabled={!canSubmit || submitting}
-              className="rounded-xl px-4 py-2 bg-black text-white disabled:opacity-50"
-            >
-              {submitting ? "กำลังบันทึก..." : "บันทึกคูปอง"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+            user = new User();
+            user.setId(NanoIdUtils.randomNanoId());
+            user.setName(ldapUsername);
+            user.setEmail(ldapUsername);
+            user.setLdap(true);
+            user.setRoles(Set.of("user"));
+            em.persist(user);
+            log.info("LDAPAuthenticationService->findOrCreateLdapUser: New LDAP user created - id={}, email={}", user.getId(), user.getEmail());
+        }
+        log.info("LDAPAuthenticationService->findOrCreateLdapUser: End - returning user with id={}", user.getId());
+        return user;
+    }
 }
