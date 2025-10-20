@@ -1,343 +1,90 @@
-package Testing;
+2025-10-20 16:53:37,690 ERROR [LDA.LDAPAuthenticationService] (executor-thread-1) Error contacting LDAP server ldap://oa.bbl: Unable to connect
 
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.NoResultException;
-import jakarta.transaction.Transactional;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.Context;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.SecurityContext;
-import model.User;
-import LDAPServices.LDAPAuthenticationService;
-import org.eclipse.microprofile.jwt.JsonWebToken;
-import org.mindrot.jbcrypt.BCrypt;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import util.JwtUtil;
-
-import java.time.Duration;
-import java.time.LocalDateTime;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-@Path("/login")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
-public class LoginResource {
-    private static final Logger log = LoggerFactory.getLogger(LoginResource.class);
-    @SuppressWarnings("unused")
-    private static final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-
-    @Inject
-    EntityManager em;
-
-    @Inject
-    JsonWebToken jwt;
-
-    @Inject
-    LDAPAuthenticationService ldapAuthenticationService;
-
-    public static class LoginRequest {
-        public String email;
-        public String password;
-    }
-
-    public static class LoginResponse {
-        public String token;
-        public long expiresIn;
-
-        public LoginResponse(String token, long expiresIn) {
-            this.token = token;
-            this.expiresIn = expiresIn;
-        }
-
-        public LoginResponse(long expiresIn) { this.expiresIn = expiresIn; }
-    }
-
-    public static class ErrorResponse {
-        public String error;
-        public ErrorResponse(String error) { this.error = error; }
-    }
-
-    @POST
-    @Transactional
-    public Response login(LoginRequest request, @HeaderParam("Authorization") String authHeader) {
-        log.info("Attempt login: {}", request != null ? request.email : "(null)");
-        log.info("Timestamp: {}", LocalDateTime.now());
-
-        // Username/password login
-        if (request != null && request.email != null && request.password != null) {
-            String email = request.email;
-            String username = email.contains("@") ? email.substring(0, email.indexOf('@')) : email;
-
-            // --- LDAP branch ---
-            try {
-                boolean ldapAuthenticated = ldapAuthenticationService.validateUserCredentials(email, request.password);
-                if (ldapAuthenticated) {
-                    log.info(username);
-                    User user = ldapAuthenticationService.findOrCreateLdapUser(username);
-                    String token = JwtUtil.generateToken(
-                            user.getEmail(),
-                            user.getRoles(),
-                            user.getName(),
-                            Duration.ofHours(2)
-                    );
-                    log.info("LDAP login successful for {}", email);
-                    return Response.ok(new LoginResponse(token, 7200)).build();
-                }
-            } catch (Exception e) {
-                log.warn("LDAP authentication failed for {}: {}", email, e.getMessage());
-            }
-
-            // --- Local DB branch ---
-            try {
-                User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
-                        .setParameter("email", email)
-                        .getSingleResult();
-
-                if (user.getPassword() == null) {
-                    log.warn("User {} has no local password set (LDAP-only user)", email);
-                    return Response.status(Response.Status.UNAUTHORIZED)
-                            .entity(new ErrorResponse("User not found"))
-                            .build();
-                }
-
-                if (!BCrypt.checkpw(request.password, user.getPassword())) {
-                    log.info("Invalid password for: {}", email);
-                    return Response.status(Response.Status.UNAUTHORIZED)
-                            .entity(new ErrorResponse("Invalid credentials"))
-                            .build();
-                }
-
-                String token = JwtUtil.generateToken(
-                        user.getEmail(),
-                        user.getRoles(),
-                        user.getName(),
-                        Duration.ofHours(2)
-                );
-                log.info("Local login successful for {}", email);
-                return Response.ok(new LoginResponse(token, 7200)).build();
-
-            } catch (NoResultException e) {
-                log.warn("No local user found with email: {}, trying LDAP already handled", email);
-                return Response.status(Response.Status.UNAUTHORIZED)
-                        .entity(new ErrorResponse("User not found"))
-                        .build();
-            } catch (Exception e) {
-                log.error("Local authentication error: {}", e.getMessage(), e);
-                return Response.status(Response.Status.BAD_REQUEST)
-                        .entity(new ErrorResponse("Local authentication failed"))
-                        .build();
-            }
-        }
-
-        // Token refresh via Authorization: Bearer <token>
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            try {
-                String email = jwt.getClaim("email");
-                String name  = jwt.getClaim("name");
-                Set<String> groups = jwt.getGroups(); // roles from existing token
-
-                String newToken = JwtUtil.generateToken(email, groups, name, Duration.ofHours(2));
-                log.info("Token refreshed for {}", email);
-                return Response.ok(new LoginResponse(newToken, 7200)).build();
-            } catch (Exception e) {
-                log.error("Token refresh failed: {}", e.getMessage(), e);
-                return Response.status(Response.Status.UNAUTHORIZED)
-                        .entity(new ErrorResponse("Invalid token"))
-                        .build();
-            }
-        }
-
-        return Response.status(Response.Status.BAD_REQUEST)
-                .entity(new ErrorResponse("Missing login credentials"))
-                .build();
-    }
-
-    @POST
-    @Path("logout-of-all-sessions")
-    public Response logoutOfAllSessions(@HeaderParam("Authorization") String authHeader,
-                                        @Context SecurityContext securityContext) {
-        String currentUser = securityContext.getUserPrincipal() != null
-                ? securityContext.getUserPrincipal().getName() : "(anonymous)";
-        log.info("User {} is logging out of all sessions", currentUser);
-
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            try {
-                // With stateless JWT, global logout would require token revocation storage.
-                // Here we just acknowledge the intent.
-                String email = jwt.getClaim("email");
-                log.info("User {} requested logout-all at {}", email, LocalDateTime.now());
-                return Response.ok(new LoginResponse(0)).build();
-            } catch (Exception e) {
-                log.error("Error invalidating sessions for user {}: {}", currentUser, e.getMessage(), e);
-                return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                        .entity(new ErrorResponse("Failed to logout of all sessions"))
-                        .build();
-            }
-        }
-        return Response.status(Response.Status.BAD_REQUEST)
-                .entity(new ErrorResponse("Missing token"))
-                .build();
-    }
-}
-package LDAPServices;
-import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
-import jakarta.enterprise.context.RequestScoped;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.NoResultException;
-import model.User;
-import org.acme.security.jwt.LDAPUserInfo;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import javax.naming.NamingEnumeration;
-import javax.naming.directory.SearchResult;
-import javax.naming.directory.Attributes;
-import javax.naming.Context;
-import javax.naming.NamingException;
-import javax.naming.directory.DirContext;
-import javax.naming.directory.InitialDirContext;
-import javax.naming.directory.SearchControls;
-import java.util.HashMap;
-import java.util.Hashtable;
-import java.util.Set;
-
-@RequestScoped
-public class LDAPAuthenticationService {
-
-    @Inject
-    EntityManager em;
-    private static final Logger log = LoggerFactory.getLogger(LDAPAuthenticationService.class);
-    private final String providerUrl;
-    private final String domainName;
-    private final String searchBaseDn;
-
-    public LDAPAuthenticationService(
-            @ConfigProperty(name = "quarkus.security.ldap.dir-context.url") String providerUrl,
-            @ConfigProperty(name = "quarkus.security.ldap.identity-mapping.search-base-dn") String searchBaseDn,
-            @ConfigProperty(name = "app.ldap.domain") String domainName) {
-        this.providerUrl = providerUrl;
-        this.domainName = domainName;
-        this.searchBaseDn = searchBaseDn;
-        log.info("LDAPAuthenticationService initialized with providerUrl: {} and domainName: {}", providerUrl, domainName);
-    }
-    public boolean validateUserCredentials(String username, String password) {
-        long startTime = System.currentTimeMillis();
-        log.info("Start LDAPAuthenticationService Time: {}", startTime);
-        log.info("LDAPAuthenticationService->validateUserCredential: {}", username);
-        HashMap<String, String> environment = new HashMap<>();
-        environment.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");
-        environment.put(Context.PROVIDER_URL, providerUrl);
-        environment.put(Context.SECURITY_AUTHENTICATION, "simple");
-        environment.put(Context.SECURITY_PRINCIPAL, createBindPrincipal(username));
-        environment.put(Context.SECURITY_CREDENTIALS, password);
-        environment.put("com.sun.jndi.ldap.connect.timeout", "3000");
-        environment.put("com.sun.jndi.ldap.read.timeout", "5000");
-
-        try {
-            DirContext ctx = new InitialDirContext(new Hashtable<>(environment));
-            ctx.close();
-            log.info("LDAPAuthenticationService->validateUserCredential: {} - Success", username);
-            return true;
-        } catch (javax.naming.AuthenticationException e) {
-            log.error("Authentication failed for user {}: Invalid credentials", username, e);
-        } catch (NamingException e) {
-            log.error("Error contacting LDAP server {}: Unable to connect", providerUrl, e);
-        } catch (Exception e) {
-            log.error("Unexpected error: {}", e.getMessage(), e);
-        }
-        return false;
-    }
-
-    public String createBindPrincipal(String username) {
-        log.info("LDAPAuthenticationService->createBindPrincipal: {}", username);
-        if (username.toLowerCase().endsWith("@" + domainName.toLowerCase())) {
-            return username;
-        } else {
-            return username + "@" + domainName;
-        }
-    }
-
-    public LDAPUserInfo getUserInfo(String username, String password) {
-        log.info("LDAPAuthenticationService->getUserInfo: {}", username);
-
-        if (!validateUserCredentials(username, password)) {
-            log.warn("LDAPAuthenticationService->getUserInfo: Invalid credentials for {}", username);
-            return null;
-        }
-
-        HashMap<String, String> environment = new HashMap<>();
-        environment.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");
-        environment.put(Context.PROVIDER_URL, providerUrl);
-        environment.put(Context.SECURITY_AUTHENTICATION, "simple");
-        environment.put(Context.SECURITY_PRINCIPAL, createBindPrincipal(username));
-        environment.put(Context.SECURITY_CREDENTIALS, password);
-        environment.put("com.sun.jndi.ldap.connect.timeout", "3000");
-        environment.put("com.sun.jndi.ldap.read.timeout", "5000");
-
-        try {
-            DirContext ctx = new InitialDirContext(new Hashtable<>(environment));
-            SearchControls searchControls = new SearchControls();
-            searchControls.setSearchScope(SearchControls.SUBTREE_SCOPE);
-            searchControls.setReturningAttributes(new String[]{"givenName", "sn", "mail"});
-
-            String cleanUsername = username.split("@")[0].replaceFirst("^S_", "");
-            String searchFilter = "(uid=" + cleanUsername + ")";
-
-            log.info("Clean Username: {}", cleanUsername);
-            NamingEnumeration<SearchResult> results = ctx.search(searchBaseDn, searchFilter, searchControls);
-            if (results.hasMore()) {
-                SearchResult result = results.next();
-                Attributes attrs = result.getAttributes();
-
-                String firstName = attrs.get("givenName") != null ?
-                        attrs.get("givenName").get().toString() : "FirstName";
-                String lastName = attrs.get("sn") != null ?
-                        attrs.get("sn").get().toString() : "LastName";
-                String email = attrs.get("mail") != null ?
-                        attrs.get("mail").get().toString() : username;
-
-                ctx.close();
-                log.info("LDAPAuthenticationService->getUserInfo: Successfully retrieved info for {}", username);
-                return new LDAPUserInfo(firstName, lastName, email);
-            } else {
-                log.warn("LDAPAuthenticationService->getUserInfo: No LDAP entry found for {}", username);
-            }
-            ctx.close();
-        } catch (NamingException e) {
-            log.error("LDAP search failed for {}: {}", username, e.getMessage(), e);
-        } catch (Exception e) {
-            log.error("Unexpected error while retrieving user info for {}: {}", username, e.getMessage(), e);
-        }
-        return null;
-    }
-
-    public User findOrCreateLdapUser(String ldapUsername) {
-        log.info("LDAPAuthenticationService->findOrCreateLdapUser: {}", ldapUsername);
-        User user;
-        try {
-            user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
-                    .setParameter("email", ldapUsername)
-                    .getSingleResult();
-
-        }catch (NoResultException e){
-            log.warn("LDAPAuthenticationService->findOrCreateLdapUser: LDAP user not found : {}", ldapUsername);
-
-            user = new User();
-            user.setId(NanoIdUtils.randomNanoId());
-            user.setName(ldapUsername);
-            user.setEmail(ldapUsername);
-            user.setLdap(true);
-            user.setRoles(Set.of("user"));
-            em.persist(user);
-            log.info("LDAPAuthenticationService->findOrCreateLdapUser: New LDAP user created - id={}, email={}", user.getId(), user.getEmail());
-        }
-        log.info("LDAPAuthenticationService->findOrCreateLdapUser: End - returning user with id={}", user.getId());
-        return user;
-    }
-}
+Exception in LDAPAuthenticationService.java:57 ''), [:] for the terminal, [h] for more options>
+          55                                                                                                                                                                                                                        
+          56          try {                                                                                                                                                                                                         
+        ? 57              DirContext ctx = new InitialDirContext(new Hashtable<>(environment));                                                                                                                                     
+          58              ctx.close();                                                                                                                                                                                              
+          59              log.info("LDAPAuthenticationService->validateUserCredential: {} - Success", username);                                                                                                                    
+                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                    
+Exception in LoginResource.java:75                                                                                                                                                                                                  
+          73                                                                                                                                                                                                                        
+          74              try {                                                                                                                                                                                                     
+        ? 75                  boolean ldapAuthenticated = ldapAuthenticationService.validateUserCredentials(request.email, request.password);                                                                                       
+          76                  if (ldapAuthenticated) {                                                                                                                                                                              
+          77                      log.info(username);                                                                                                                                                                               
+                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                    
+Exception in LDAPAuthenticationService.java:57                                                                                                                                                                                      
+          55                                                                                                                                                                                                                        
+          56          try {                                                                                                                                                                                                         
+        ? 57              DirContext ctx = new InitialDirContext(new Hashtable<>(environment));                                                                                                                                     
+          58              ctx.close();                                                                                                                                                                                              
+          59              log.info("LDAPAuthenticationService->validateUserCredential: {} - Success", username);                                                                                                                    
+                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                    
+Exception in LoginResource.java:75                                                                                                                                                                                                  
+          73                                                                                                                                                                                                                        
+          74              try {                                                                                                                                                                                                     
+        ? 75                  boolean ldapAuthenticated = ldapAuthenticationService.validateUserCredentials(request.email, request.password);                                                                                       
+          76                  if (ldapAuthenticated) {                                                                                                                                                                              
+          77                      log.info(username);                                                                                                                                                                               
+                                                                                                                                                                                                                                    
+: javax.naming.CommunicationException: oa.bbl:389 [Root exception is java.net.SocketTimeoutException: Connect timed out]                                                                                                            
+        at java.naming/com.sun.jndi.ldap.Connection.<init>(Connection.java:253)                                                                                                                                                     
+        at java.naming/com.sun.jndi.ldap.LdapClient.<init>(LdapClient.java:141)                                                                                                                                                     
+        at java.naming/com.sun.jndi.ldap.LdapClient.getInstance(LdapClient.java:1620)                                                                                                                                               
+        at java.naming/com.sun.jndi.ldap.LdapCtx.connect(LdapCtx.java:2848)                                                                                                                                                         
+        at java.naming/com.sun.jndi.ldap.LdapCtx.<init>(LdapCtx.java:349)                                                                                                                                                           
+        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getLdapCtxFromUrl(LdapCtxFactory.java:229)                                                                                                                                  
+        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getUsingURL(LdapCtxFactory.java:189)                                                                                                                                        
+        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getUsingURLs(LdapCtxFactory.java:247)                                                                                                                                       
+        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getLdapCtxInstance(LdapCtxFactory.java:154)                                                                                                                                 
+        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getInitialContext(LdapCtxFactory.java:84)                                                                                                                                   
+        at java.naming/javax.naming.spi.NamingManager.getInitialContext(NamingManager.java:520)                                                                                                                                     
+        at java.naming/javax.naming.InitialContext.getDefaultInitCtx(InitialContext.java:305)                                                                                                                                       
+        at java.naming/javax.naming.InitialContext.init(InitialContext.java:236)                                                                                                                                                    
+        at java.naming/javax.naming.InitialContext.<init>(InitialContext.java:208)                                                                                                                                                  
+        at java.naming/javax.naming.directory.InitialDirContext.<init>(InitialDirContext.java:130)                                                                                                                                  
+        at LDAPServices.LDAPAuthenticationService.validateUserCredentials(LDAPAuthenticationService.java:57)                                                                                                                        
+        at LDAPServices.LDAPAuthenticationService_ClientProxy.validateUserCredentials(Unknown Source)                                                                                                                               
+        at Testing.LoginResource.login(LoginResource.java:75)                                                                                                                                                                       
+        at Testing.LoginResource_Subclass.login$$superforward(Unknown Source)                                                                                                                                                       
+        at Testing.LoginResource_Subclass$$function$$1.apply(Unknown Source)                                                                                                                                                        
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:136)                                                                                            
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:107)                                                                                            
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.doIntercept(TransactionalInterceptorRequired.java:38)                                                                                       
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.intercept(TransactionalInterceptorBase.java:61)                                                                                                 
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.intercept(TransactionalInterceptorRequired.java:32)                                                                                         
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired_Bean.intercept(Unknown Source)                                                                                                              
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
+        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
+        at Testing.LoginResource_Subclass.login(Unknown Source)                                                                                                                                                                     
+        at Testing.LoginResource$quarkusrestinvoker$login_ac7b04d13117f22f5c6217598ed82eb24eb329f4.invoke(Unknown Source)                                                                                                           
+        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
+        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
+        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
+        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
+        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
+        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
+        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
+        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
+        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
+        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
+Caused by: java.net.SocketTimeoutException: Connect timed out                                                                                                                                                                       
+        at java.base/sun.nio.ch.NioSocketImpl.timedFinishConnect(NioSocketImpl.java:546)                                                                                                                                            
+        at java.base/sun.nio.ch.NioSocketImpl.connect(NioSocketImpl.java:592)                                                                                                                                                       
+        at java.base/java.net.SocksSocketImpl.connect(SocksSocketImpl.java:327)                                                                                                                                                     
+        at java.base/java.net.Socket.connect(Socket.java:751)                                                                                                                                                                       
+        at java.naming/com.sun.jndi.ldap.Connection.createConnectionSocket(Connection.java:333)                                                                                                                                     
+        at java.naming/com.sun.jndi.ldap.Connection.createSocket(Connection.java:285)                                                                                                                                               
+        at java.naming/com.sun.jndi.ldap.Connection.<init>(Connection.java:232)        
