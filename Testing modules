@@ -1,16 +1,114 @@
-package QuizService.DTOs;
+@POST
+@Path("/{lessonId}/submit")
+@Transactional
+@RolesAllowed({Roles.ROLE_USER, Roles.ROLE_TRAINER, Roles.ROLE_ADMINISTRATOR})
+@Consumes(MediaType.APPLICATION_JSON)
+@Produces(MediaType.APPLICATION_JSON)
+public Response submitQuiz(@PathParam("lessonId") String lessonId,
+                           QuizSubmissionDTO submission,
+                           @Context SecurityContext securityContext) {
+    String currentUser = securityContext.getUserPrincipal().getName();
+    log.info("User {} submit quiz for lessonId={}", currentUser, lessonId);
 
-public class AnswerDTO {
-    public String questionId;
-    public String selectedChoiceId;
-}
-package QuizService.DTOs;
+    // 1) validate payload
+    if (submission == null || submission.answers == null || submission.answers.isEmpty()) {
+        throw new BadRequestException("Answers are required.");
+    }
 
-import QuizService.Resources.QuestionResources;
+    // 2) progress must exist & 100%
+    var progress = em.createQuery("""
+        SELECT p FROM UserLessonProgress p
+        WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
+    """, UserLessonProgress.class)
+        .setParameter("lessonId", lessonId)
+        .setParameter("userEmail", currentUser)
+        .getResultStream()
+        .findFirst()
+        .orElseThrow(() -> new NotFoundException("No progress found. Please watch the lesson first."));
 
-import java.util.List;
+    if (progress.getPercent() < 100) {
+        throw new BadRequestException("You must complete the lesson before submitting the quiz.");
+    }
 
-public class QuizSubmissionDTO {
-    public String lessonId;
-    public List<AnswerDTO> answers;
+    // 3) load lesson & check attempts
+    LearningContent lesson = em.find(LearningContent.class, lessonId);
+    if (lesson == null) throw new NotFoundException("Lesson not found.");
+
+    int maxAttempts = java.util.Optional.ofNullable(lesson.getMaxAttempts()).orElse(1);
+    int currentAttempts = java.util.Optional.ofNullable(progress.getAttempts()).orElse(0);
+    if (currentAttempts >= maxAttempts) {
+        throw new BadRequestException("You have reached the maximum number of attempts.");
+    }
+
+    // 4) create attempt
+    User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                  .setParameter("email", currentUser)
+                  .getSingleResult();
+
+    QuizAttemptEntity attempt = new QuizAttemptEntity();
+    attempt.setUser(user);
+    attempt.setLessonProgress(progress);
+    attempt.setAttemptedAt(java.time.LocalDateTime.now());
+    em.persist(attempt);
+
+    // 5) grade from submitted answers (server-side source of truth)
+    int score = 0;
+    int maxScore = 0;
+
+    for (QuizService.DTOs.AnswerDTO a : submission.answers) {
+        QuestionEntity q = em.find(QuestionEntity.class, a.questionId);
+        if (q == null || !lessonId.equals(q.getLearningContent().getId())) {
+            throw new BadRequestException("Invalid question or mismatched lesson.");
+        }
+
+        QuestionChoiceEntity selected = em.find(QuestionChoiceEntity.class, a.selectedChoiceId);
+        boolean isCorrect = (selected != null && selected.isCorrect());
+
+        // keep history per question
+        QuizAnswerEntity qa = new QuizAnswerEntity();
+        qa.setAttempt(attempt);
+        qa.setQuestion(q);
+        qa.setSelectedChoiceId(a.selectedChoiceId);
+        qa.setCorrect(isCorrect);
+        em.persist(qa);
+
+        maxScore += q.getPoints();
+        if (isCorrect) score += q.getPoints();
+    }
+
+    attempt.setScore(score);
+    attempt.setMaxScore(maxScore);
+
+    int percentScore = (int) Math.round((score * 100.0) / Math.max(maxScore, 1));
+
+    // 6) update progress
+    progress.setAttempts(currentAttempts + 1);
+    progress.setScore(score);
+    progress.setTotalQuestions(submission.answers.size());
+    progress.setUpdatedAt(java.time.LocalDateTime.now());
+
+    // 7) write normalized level score (ถ้ายังต้องมี)
+    int levelScore =
+        percentScore >= 100 ? 5 :
+        percentScore >= 80  ? 4 :
+        percentScore >= 70  ? 3 :
+        percentScore >= 60  ? 2 :
+        percentScore >= 50  ? 1 : 0;
+
+    LearningScoreEntity learningScore = new LearningScoreEntity();
+    learningScore.setLessonId(lessonId);
+    learningScore.setUserEmail(currentUser);
+    learningScore.setOverallScore(levelScore);
+    learningScore.setUpdatedAt(java.time.LocalDateTime.now());
+    em.persist(learningScore);
+
+    log.info("Quiz submitted: score={}/{} ({}%), levelScore={}, attemptId={}",
+            score, maxScore, percentScore, levelScore, attempt.getId());
+
+    return Response.ok(java.util.Map.of(
+        "score", score,
+        "maxScore", maxScore,
+        "percentScore", percentScore,
+        "attemptId", attempt.getId()
+    )).build();
 }
