@@ -1,772 +1,489 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useContext, useEffect, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
-import { AuthContext } from "../../../Authentication/AuthContext";
-import AdminSidebarWidget from "../Widgets/AdminSideBar";
-import AdminCalendar from "../Widgets/AdminCalendar";
-import AdminAvatarWidget from "../Widgets/AdminAvatarWidget";
-import ScoreboardChart from "../../../components/ScoreboardChart";
+package TrainerAnalytic.Resources;
 
-import { FaFilter } from "react-icons/fa";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-} from "recharts";
-import axios from "axios";
-import RoleSwitcher from "../../../components/RoleSwitcher";
-import { EventSourcePolyfill } from "event-source-polyfill";
-import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
-import {
-  COLORS,
-  type ContentPerfItem,
-  type ContentPerformanceResponse,
-  type OverviewResponse,
-} from "../../../types/trainer/types";
-import { ENDPOINTS } from "../../../config/endpoints";
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
+import model.TeamEntity;
+import model.User;
+import org.acme.security.jwt.Roles;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-function toDateInput(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
-const isDocVisible = () =>
-  typeof document !== "undefined" ? document.visibilityState === "visible" : true;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
 
-// helpers for localStorage (per trainer)
-const dismissedKey = (email: string) => `QA_DISMISSED_${email}`;
-const lastSeenKey = (email: string) => `QA_LAST_SEEN_${email}`;
-function loadDismissed(email: string): Set<string> {
-  try {
-    const raw = localStorage.getItem(dismissedKey(email));
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw) as string[];
-    return new Set(arr);
-  } catch {
-    return new Set();
-  }
-}
-function saveDismissed(email: string, set: Set<string>) {
-  try {
-    localStorage.setItem(dismissedKey(email), JSON.stringify([...set]));
-  } catch {}
-}
-function loadLastSeen(email: string): string {
-  try {
-    return localStorage.getItem(lastSeenKey(email)) || "";
-  } catch {
-    return "";
-  }
-}
-function saveLastSeen(email: string, iso: string) {
-  try {
-    localStorage.setItem(lastSeenKey(email), iso);
-  } catch {}
-}
+/**
+ * Trainer Analytics endpoints (fixed to use author_email and no 'status' column)
+ *
+ * Base path: /trainer
+ */
+@Path("/trainer")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TrainerAnalyticResources {
 
-// ---------------------------------------------------------------------------
-// Toast (popup) มุมขวาล่าง
-// ---------------------------------------------------------------------------
-type QuestionAlert = {
-  id: string;
-  userEmail: string;
-  lessonId?: string | number;
-  lessonTitle?: string;
-  question: string;
-  createdAt?: string;
-};
-type ToastItem = QuestionAlert & { _ts: number };
+    private static final Logger log = LoggerFactory.getLogger(TrainerAnalyticResources.class);
 
-function ToastCard({
-  toast,
-  onClose,
-  onClick,
-}: {
-  toast: ToastItem;
-  onClose: (id: string) => void;
-  onClick?: (toast: ToastItem) => void;
-}) {
-  const [hover, setHover] = useState(false);
+    @Inject EntityManager em;
 
-  useEffect(() => {
-    if (hover) return;
-    const t = setTimeout(() => onClose(toast.id), 8000);
-    return () => clearTimeout(t);
-  }, [hover, toast.id, onClose]);
+    @Inject
+    TrainerUtilities trainerUtilities;
 
-  return (
-    <div
-      className="w-80 max-w-[88vw] bg-white shadow-xl rounded-xl border p-3 cursor-pointer transition hover:shadow-2xl"
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onClick={() => onClick?.(toast)}
-      role="alert"
-      aria-live="polite"
-    >
-      <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-sm">
-          Q
-        </div>
-        <div className="flex-1">
-          <div className="text-xs text-gray-500 mb-0.5">
-            {toast.lessonTitle ? toast.lessonTitle : "New Question"} • {toast.userEmail}
-          </div>
-          <div className="text-sm text-gray-800 line-clamp-3 whitespace-pre-wrap">
-            {toast.question}
-          </div>
-          {toast.createdAt && (
-            <div className="text-[10px] text-gray-400 mt-1">
-              {new Date(toast.createdAt).toLocaleString()}
-            </div>
-          )}
-        </div>
-        <button
-          aria-label="Close notification"
-          className="text-gray-400 hover:text-gray-600 ml-1"
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose(toast.id);
-          }}
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-  );
-}
 
-function ToastStack({
-  toasts,
-  onClose,
-  onItemClick,
-  onMarkAllRead,
-}: {
-  toasts: ToastItem[];
-  onClose: (id: string) => void;
-  onItemClick?: (toast: ToastItem) => void;
-  onMarkAllRead?: () => void;
-}) {
-  if (toasts.length === 0) return null;
-  return (
-    <div className="fixed bottom-4 right-4 z-[60] flex flex-col gap-3">
-      <div className="flex justify-end">
-        <button
-          className="text-xs px-2 py-1 rounded-full bg-gray-100 border hover:bg-gray-200"
-          onClick={onMarkAllRead}
-        >
-          Mark all as read
-        </button>
-      </div>
-      {toasts.map((t) => (
-        <ToastCard key={t.id} toast={t} onClose={onClose} onClick={onItemClick} />
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Hook: รับ “คำถามใหม่สำหรับเทรนเนอร์” (SSE → fallback polling)
-// ---------------------------------------------------------------------------
-function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | null) {
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const dismissedRef = useRef<Set<string>>(new Set());
-  const seenIds = useRef<Set<string>>(new Set());
-  const lastSeenAt = useRef<string>(""); // ISO string
-  const sseRef = useRef<EventSourcePolyfill | null>(null);
-  const pollTimer = useRef<number | null>(null);
-
-  const SSE_URL = "/api/user-question-answer/stream";
-  const POLL_URL = "/api/user-question-answer/pending";
-
-  useEffect(() => {
-    if (!trainerEmail) return;
-    dismissedRef.current = loadDismissed(trainerEmail);
-    lastSeenAt.current = loadLastSeen(trainerEmail);
-  }, [trainerEmail]);
-
-  const persistLastSeen = (iso: string | undefined) => {
-    if (!trainerEmail || !iso) return;
-    lastSeenAt.current = iso;
-    saveLastSeen(trainerEmail, iso);
-  };
-
-  const pushToasts = (items: QuestionAlert[]) => {
-    if (!items?.length) return;
-    const newOnes: ToastItem[] = [];
-    for (const it of items) {
-      if (!it?.id) continue;
-      if (trainerEmail && dismissedRef.current.has(it.id)) continue;
-      if (seenIds.current.has(it.id)) continue;
-
-      seenIds.current.add(it.id);
-      newOnes.push({ ...it, _ts: Date.now() });
-
-      if (it.createdAt && it.createdAt > (lastSeenAt.current || "")) {
-        persistLastSeen(it.createdAt);
-      }
+    // ===== Helpers =====
+    private static LocalDate parseDateOr(String s, LocalDate fallback) {
+        if (s == null || s.isBlank()) return fallback;
+        return LocalDate.parse(s);
     }
-    if (newOnes.length) setToasts((prev) => [...prev, ...newOnes].slice(-6));
-  };
+    private static LocalDateTime startOfDay(LocalDate d) { return d.atStartOfDay(); }
+    private static LocalDateTime dayAfter(LocalDate d) { return d.plusDays(1).atStartOfDay(); }
 
-  useEffect(() => {
-    if (!token || !trainerEmail) return;
-
-    sseRef.current?.close();
-    sseRef.current = null;
-
-    const params = new URLSearchParams();
-    params.set("trainer", trainerEmail.trim().toLowerCase());
-    if (lastSeenAt.current) params.set("since", lastSeenAt.current);
-
-    const url = `${SSE_URL}?${params.toString()}`;
-    const es = new EventSourcePolyfill(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      withCredentials: false,
-    });
-
-    const onQuestion = (ev: MessageEvent) => {
-      try {
-        const raw = typeof ev.data === "string" ? ev.data : String(ev.data);
-        const payload = JSON.parse(raw) as QuestionAlert | QuestionAlert[];
-        const arr = Array.isArray(payload) ? payload : [payload];
-        const sortedDates = arr.map((a) => a.createdAt).filter(Boolean).sort();
-        const latest =
-          sortedDates.length > 0 ? (sortedDates[sortedDates.length - 1] as string) : undefined;
-        if (latest) persistLastSeen(latest);
-        pushToasts(arr);
-      } catch {}
-    };
-
-    (es as any).addEventListener("question", onQuestion as any);
-    es.onerror = () => {
-      es.close();
-      sseRef.current = null;
-    };
-    sseRef.current = es;
-
-    return () => {
-      try {
-        (es as any).removeEventListener("question", onQuestion as any);
-      } finally {
-        es.close();
-        sseRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, trainerEmail]);
-
-  useEffect(() => {
-    if (!token || !trainerEmail) return;
-
-    const tick = async () => {
-      if (!isDocVisible()) {
-        schedule();
-        return;
-      }
-      try {
-        const res = await axios.get<QuestionAlert[]>(POLL_URL, {
-          params: {
-            trainer: trainerEmail.trim().toLowerCase(),
-            since: lastSeenAt.current || undefined,
-            limit: 20,
-          },
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
-        pushToasts(Array.isArray(res.data) ? res.data : []);
-      } catch {
-      } finally {
-        schedule();
-      }
-    };
-
-    const schedule = () => {
-      if (pollTimer.current) window.clearTimeout(pollTimer.current);
-      pollTimer.current = window.setTimeout(tick, 15000) as unknown as number;
-    };
-
-    pollTimer.current = window.setTimeout(tick, 3000) as unknown as number;
-
-    const onVisibility = () => {
-      if (isDocVisible()) {
-        if (pollTimer.current) window.clearTimeout(pollTimer.current);
-        pollTimer.current = window.setTimeout(tick, 1000) as unknown as number;
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      if (pollTimer.current) window.clearTimeout(pollTimer.current);
-      pollTimer.current = null;
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [token, trainerEmail]);
-
-  const closeToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-    if (trainerEmail) {
-      dismissedRef.current.add(id);
-      saveDismissed(trainerEmail, dismissedRef.current);
-    }
-  };
-  const markAllRead = () => {
-    setToasts((prev) => {
-      if (trainerEmail) {
-        for (const t of prev) dismissedRef.current.add(t.id);
-        saveDismissed(trainerEmail, dismissedRef.current);
-      }
-      return [];
-    });
-  };
-
-  return { toasts, closeToast, markAllRead };
-}
-
-// ---------------------------------------------------------------------------
-// NEW: minimal profile type for /api/profile
-// ---------------------------------------------------------------------------
-type MyProfile = {
-  id: string;
-  name?: string;
-  email: string;
-  avatarUrl?: string;
-};
-
-// assignment type (NEW multiple teams)
-type AssignmentTeam = {
-  supervisor: string;
-  teamName: string;
-  teamId: string;
-};
-type AssignmentResponse = {
-  trainerId: string;
-  teams: AssignmentTeam[];
-  message?: string;
-};
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-const AdminDashboard = () => {
-  const { token: ctxToken } = useContext(AuthContext);
-  const token =
-    ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
-  const navigate = useNavigate();
-
-  // block unauthenticated
-  useEffect(() => {
-    if (!token) navigate("/");
-  }, [token, navigate]);
-
-  const { fullName, email: trainerEmail } = useUserProfile(token || null);
-  const displayName = fullName || "Administrator";
-
-  // ---------- popup คำถามใหม่ ----------
-  const { toasts, closeToast, markAllRead } = useTrainerQuestionAlerts(
-    token || null,
-    trainerEmail || null
-  );
-
-  // ---------------- Trainer Assignment Info (NEW) ----------------
-  const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
-  const [assignment, setAssignment] = useState<AssignmentResponse | null>(null);
-
-  useEffect(() => {
-    const loadProfileAndAssignment = async () => {
-      if (!token) return;
-      try {
-        // 1) profile เพื่อหา trainerId
-        const prof = await axios.get<MyProfile>("/api/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setMyProfile(prof.data);
-
-        // 2) assignment (หลายทีม)
-        if (prof.data?.id) {
-          const res = await axios.get<AssignmentResponse>(
-            `/api/trainer-information/assignment/${prof.data.id}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          const payload = res.data || { trainerId: prof.data.id, teams: [] };
-          // ทำให้มั่นใจว่าเป็น array เสมอ
-          payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
-          setAssignment(payload);
-        } else {
-          setAssignment({ trainerId: "", teams: [] });
+    /** Resolve trainer email from token principal */
+    private String resolveTrainerEmail(SecurityContext sc) {
+        String email = (sc.getUserPrincipal() != null) ? sc.getUserPrincipal().getName() : null;
+        if (email == null || email.isBlank()) {
+            throw new WebApplicationException("Missing principal", Response.Status.UNAUTHORIZED);
         }
-      } catch {
-        setAssignment({ trainerId: "", teams: [] });
-      }
-    };
-    loadProfileAndAssignment();
-  }, [token]);
-
-  // ---------------- Filters ----------------
-  const [showFilter, setShowFilter] = useState(false);
-  const [filterText, setFilterText] = useState({ course: "" });
-  const today = useMemo(() => new Date(), []);
-  const weekAgo = useMemo(
-    () => new Date(Date.now() - 6 * 24 * 3600 * 1000),
-    []
-  );
-
-  const [start, setStart] = useState(toDateInput(weekAgo));
-  const [end, setEnd] = useState(toDateInput(today));
-
-  // ---------------- Data ----------------
-  const [loading, setLoading] = useState(false);
-  const [overview, setOverview] = useState<OverviewResponse | null>(null);
-  const [contentPerf, setContentPerf] = useState<ContentPerfItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchAll = async () => {
-    if (!token) return;
-    setLoading(true);
-    setError(null);
-    const auth = { headers: { Authorization: `Bearer ${token}` } };
-
-    try {
-      const [ovRes, cpRes] = await Promise.all([
-        axios.get<OverviewResponse>(ENDPOINTS.TrainerOverview, {
-          params: { start, end },
-          ...auth,
-        }),
-        axios.get<ContentPerformanceResponse>(ENDPOINTS.TrainerPerformance, {
-          params: { start, end, order: "learners:desc", limit: 20, offset: 0 },
-          ...auth,
-        }),
-      ]);
-      setOverview(ovRes.data);
-      setContentPerf(cpRes.data.items || []);
-    } catch (e: any) {
-      console.error("Failed to load trainer analytics:", e);
-      setError(
-        e?.response?.data?.error || e?.message || "Failed to load analytics"
-      );
-    } finally {
-      setLoading(false);
+        return email.toLowerCase();
     }
-  };
 
-  useEffect(() => {
-    fetchAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    private static LocalDate toLocalDate(Object raw) {
+        if (raw == null) return null;
+        if (raw instanceof LocalDate d) return d;
+        if (raw instanceof java.sql.Date d) return d.toLocalDate();
+        if (raw instanceof java.time.LocalDateTime dt) return dt.toLocalDate();
+        if (raw instanceof java.util.Date ud)
+            return ud.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+        return LocalDate.parse(raw.toString());
+    }
 
-  // ---------- Derived (Chart) Data ----------
-  const dailyActivity = useMemo(() => {
-    if (!overview?.trend?.length) return [];
-    return overview.trend.map((t) => ({
-      date: (t as any).date,
-      enroll: (t as any).enrollCount ?? (t as any).enroll ?? 0,
-      complete: (t as any).completeCount ?? (t as any).complete ?? 0,
-    }));
-  }, [overview]);
+    // =========================================================================
+    // 1) OVERVIEW
+    // =========================================================================
+    @GET
+    @Path("/overview")
+    @RolesAllowed({Roles.ROLE_TRAINER, Roles.ROLE_ADMINISTRATOR})
+    public Response overview(
+            @Context SecurityContext securityContext,
+            @QueryParam("start") String start,
+            @QueryParam("end") String end,
+            @QueryParam("view") @DefaultValue("individual") String view,
+            @QueryParam("teamId") String teamId
+    ) {
+        final String trainerEmail = resolveTrainerEmail(securityContext);
+        final LocalDate endDate = parseDateOr(end, LocalDate.now());
+        final LocalDate startDate = parseDateOr(start, endDate.minusDays(6));
+        final LocalDateTime startDT = startOfDay(startDate);
+        final LocalDateTime endDT = dayAfter(endDate);
 
-  const pieData = useMemo(() => {
-    const rows = contentPerf
-      .filter((it) =>
-        filterText.course
-          ? it.title.toLowerCase().includes(filterText.course.toLowerCase())
-          : true
-      )
-      .map((it) => ({
-        name: it.title,
-        value: it.learners,
-      }));
-    const total = rows.reduce((acc, r) => acc + r.value, 0);
-    return total > 0 ? rows : [];
-  }, [contentPerf, filterText.course]);
+        boolean isTeamView = "team".equalsIgnoreCase(view);
+        log.info("[trainer/overview] email={} view={} teamId={} window {}..(exclusive {})",
+                trainerEmail, view, teamId, startDT, endDT);
 
-  const handleClear = () => setFilterText({ course: "" });
+        String contentFilter = isTeamView ? "lc.team_id = :teamId" : "lc.author_email = :email";
 
-  const handleToastClick = (t: ToastItem) => {
-    closeToast(t.id);
-    navigate("/administrator/administrator/task-management", {
-      state: {
-        focusUserEmail: t.userEmail,
-        focusLessonId: t.lessonId,
-      },
-    });
-  };
+        // KPI: total contents
+        String totalContentSql = "SELECT COUNT(*) FROM learning_content lc WHERE " + contentFilter;
+        Query totalContentQuery = em.createNativeQuery(totalContentSql);
+        if (isTeamView) totalContentQuery.setParameter("teamId", teamId);
+        else totalContentQuery.setParameter("email", trainerEmail);
+        long totalContents = ((Number) totalContentQuery.getSingleResult()).longValue();
 
-  // --------- Small UI helpers for assignment ----------
-  const hasTeams = (assignment?.teams?.length || 0) > 0;
+        // KPI: active learners
+        String activeLearnersSql = String.format("""
+        SELECT COUNT(DISTINCT p.user_email)
+        FROM user_lesson_progress p
+        JOIN learning_content lc ON p.lesson_id = lc.id
+        WHERE %s
+          AND (
+              (p.started_at IS NOT NULL AND p.started_at >= :start AND p.started_at < :end)
+           OR (p.completed_at IS NOT NULL AND p.completed_at >= :start AND p.completed_at < :end)
+          )
+    """, contentFilter);
+        Query activeLearnersQuery = em.createNativeQuery(activeLearnersSql)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (isTeamView) activeLearnersQuery.setParameter("teamId", teamId);
+        else activeLearnersQuery.setParameter("email", trainerEmail);
+        long activeLearners = ((Number) activeLearnersQuery.getSingleResult()).longValue();
 
-  return (
-    <div className="min-h-screen bg-gray-50 flex">
-      {/* sidebar */}
-      <AdminSidebarWidget />
+        // KPI: new enrollments
+        String newEnrollmentsSql = String.format("""
+        SELECT COUNT(*)
+        FROM user_lesson_progress p
+        JOIN learning_content lc ON p.lesson_id = lc.id
+        WHERE %s
+          AND p.started_at IS NOT NULL
+          AND p.started_at >= :start AND p.started_at < :end
+    """, contentFilter);
+        Query newEnrollmentsQuery = em.createNativeQuery(newEnrollmentsSql)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (isTeamView) newEnrollmentsQuery.setParameter("teamId", teamId);
+        else newEnrollmentsQuery.setParameter("email", trainerEmail);
+        long newEnrollments = ((Number) newEnrollmentsQuery.getSingleResult()).longValue();
 
-      {/* main */}
-      <main className="flex-1 p-6 flex flex-col">
-        {/* header + filter */}
-        <div className="flex justify-between items-start">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-1">
-              👋 Welcome, {displayName}
-            </h1>
-            <p className="text-gray-600 mb-2 ml-10">Have a good day!</p>
+        // KPI: completion rate & avg score
+        String rateSql = String.format("""
+        SELECT
+          AVG(CASE WHEN p.percent = 100 THEN 1.0 ELSE 0.0 END),
+          AVG(p.score)
+        FROM user_lesson_progress p
+        JOIN learning_content lc ON p.lesson_id = lc.id
+        WHERE %s
+          AND (
+              (p.started_at IS NOT NULL AND p.started_at >= :start AND p.started_at < :end)
+           OR (p.completed_at IS NOT NULL AND p.completed_at >= :start AND p.completed_at < :end)
+          )
+    """, contentFilter);
+        Query rateQuery = em.createNativeQuery(rateSql)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (isTeamView) rateQuery.setParameter("teamId", teamId);
+        else rateQuery.setParameter("email", trainerEmail);
+        Object[] rateRow = (Object[]) rateQuery.getSingleResult();
+        double completionRate = rateRow[0] == null ? 0d : ((Number) rateRow[0]).doubleValue();
+        Double avgScore = rateRow[1] == null ? null : ((Number) rateRow[1]).doubleValue();
 
-            {/* --- NEW: Assignment Section (multi-team) --- */}
-            <div className="ml-10 mb-4">
-              <div className="bg-white border rounded-xl shadow-sm px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-gray-700">
-                    Assignment
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    Trainer ID: {myProfile?.id || "-"}
-                  </div>
-                </div>
+        // Trend: enroll detail per day
+        String enrollDetailSql = String.format("""
+        SELECT DATE(p.started_at), u.name, p.user_email, lc.title , p.started_at
+        FROM user_lesson_progress p
+        JOIN users u ON u.email = p.user_email
+        JOIN learning_content lc ON p.lesson_id = lc.id
+        WHERE %s
+          AND p.started_at IS NOT NULL
+          AND p.started_at >= :start AND p.started_at < :end
+    """, contentFilter);
+        Query enrollDetailQuery = em.createNativeQuery(enrollDetailSql)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (isTeamView) enrollDetailQuery.setParameter("teamId", teamId);
+        else enrollDetailQuery.setParameter("email", trainerEmail);
+        List<Object[]> enrollDetails = enrollDetailQuery.getResultList();
 
-                {!assignment ? (
-                  <div className="text-sm text-gray-500 mt-2">Loading assignment...</div>
-                ) : !hasTeams ? (
-                  <div className="text-sm text-gray-500 mt-2">
-                    {assignment.message || "Not Assigned"}
-                  </div>
-                ) : (
-                  <div className="mt-3">
-                    <div className="text-xs text-gray-500 mb-2">
-                      Teams ({assignment.teams.length})
-                    </div>
-                    <div className="flex flex-wrap gap-3">
-                      {assignment.teams.map((t) => (
-                        <div
-                          key={t.teamId}
-                          className="flex items-center gap-3 px-3 py-2 bg-gray-50 border rounded-lg"
-                          title={`Team ID: ${t.teamId}`}
-                        >
-                          <div className="flex flex-col">
-                            <span className="text-[11px] text-gray-500">Team</span>
-                            <span className="text-sm font-medium text-gray-800">
-                              {t.teamName || "N/A"}
-                            </span>
-                          </div>
-                          <div className="w-px h-8 bg-gray-200 mx-1" />
-                          <div className="flex flex-col">
-                            <span className="text-[11px] text-gray-500">Supervisor</span>
-                            <span className="text-sm text-gray-800">
-                              {t.supervisor || "N/A"}
-                            </span>
-                          </div>
-                          <div className="w-px h-8 bg-gray-200 mx-1" />
-                          <div className="flex flex-col">
-                            <span className="text-[11px] text-gray-500">Team ID</span>
-                            <span className="text-[12px] font-mono text-gray-700">
-                              {t.teamId || "-"}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            {/* --- /Assignment Section --- */}
-          </div>
+        // Trend: complete detail per day
+        String completeDetailSql = String.format("""
+            SELECT DATE(p.completed_at), u.name, p.user_email, lc.title, p.score , p.total_questions , p.completed_at
+            FROM user_lesson_progress p
+            JOIN users u ON u.email = p.user_email
+            JOIN learning_content lc ON p.lesson_id = lc.id
+            WHERE %s
+              AND p.completed_at IS NOT NULL
+              AND p.completed_at >= :start AND p.completed_at < :end
+        """, contentFilter);
+        Query completeDetailQuery = em.createNativeQuery(completeDetailSql)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (isTeamView) completeDetailQuery.setParameter("teamId", teamId);
+        else completeDetailQuery.setParameter("email", trainerEmail);
+        List<Object[]> completeDetails = completeDetailQuery.getResultList();
 
-          <div className="flex items-center justify-end space-x-4">
-            <RoleSwitcher />
-            <div className="relative flex items-center space-x-3">
-              <button
-                className="flex items-center gap-2 px-4 py-2 bg-white border shadow rounded-full hover:bg-gray-100"
-                onClick={() => setShowFilter(!showFilter)}
-              >
-                <FaFilter /> Filter
-              </button>
+        // Merge trend with user details
+        Map<LocalDate, Map<String, List<Map<String, Object>>>> trendMap = new LinkedHashMap<>();
+        for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
+            Map<String, List<Map<String, Object>>> daily = new HashMap<>();
+            daily.put("enroll", new ArrayList<>());
+            daily.put("complete", new ArrayList<>());
+            trendMap.put(d, daily);
+        }
 
-              <AdminAvatarWidget />
+        for (Object[] r : enrollDetails) {
+            LocalDate d = ((java.sql.Date) r[0]).toLocalDate();
+            if (trendMap.containsKey(d)) {
+                Map<String, Object> user = Map.of(
+                        "name", r[1],
+                        "email", r[2],
+                        "course", r[3],
+                        "startedAt", r[4]
+                );
+                trendMap.get(d).get("enroll").add(user);
+            }
+        }
 
-              {showFilter && (
-                <div className="absolute right-0 mt-2 w-72 bg-white border shadow-lg rounded-xl z-10 p-4 space-y-3">
-                  <p className="font-semibold text-gray-700">Filter & Range</p>
+        for (Object[] r : completeDetails) {
+            LocalDate d = ((java.sql.Date) r[0]).toLocalDate();
+            if (trendMap.containsKey(d)) {
+                Map<String, Object> user = Map.of(
+                        "name", r[1],
+                        "email", r[2],
+                        "course", r[3],
+                        "score", r[4],
+                        "totalQuestions", r[5],
+                        "CompletedAt", r[6]
+                );
+                trendMap.get(d).get("complete").add(user);
+            }
+        }
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">Start</div>
-                      <input
-                        type="date"
-                        className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
-                        value={start}
-                        onChange={(e) => setStart(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">End</div>
-                      <input
-                        type="date"
-                        className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
-                        value={end}
-                        onChange={(e) => setEnd(e.target.value)}
-                      />
-                    </div>
-                  </div>
+        List<Map<String, Object>> trend = new ArrayList<>();
+        trendMap.forEach((date, data) -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("date", date.toString());
+            row.put("enrollCount", data.get("enroll").size());
+            row.put("completeCount", data.get("complete").size());
+            row.put("enroll", data.get("enroll"));
+            row.put("complete", data.get("complete"));
+            trend.add(row);
+        });
 
-                  <input
-                    type="text"
-                    placeholder="Filter course title"
-                    className="w-full px-4 py-2 bg-gray-100 rounded-full text-sm"
-                    value={filterText.course}
-                    onChange={(e) => setFilterText({ course: e.target.value })}
-                  />
+        // Final response
+        Map<String, Object> kpi = new LinkedHashMap<>();
+        kpi.put("totalContents", totalContents);
+        kpi.put("newEnrollments", newEnrollments);
+        kpi.put("completionRate", completionRate);
+        kpi.put("avgScore", avgScore);
 
-                  <div className="flex justify-between pt-1">
-                    <button
-                      onClick={handleClear}
-                      className="text-sm text-red-500 hover:underline"
-                    >
-                      Clear
-                    </button>
-                    <button
-                      onClick={fetchAll}
-                      className="px-3 py-1 text-sm bg-blue-600 text-white rounded-full hover:bg-blue-700"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("kpi", kpi);
+        out.put("trend", trend);
 
-        {/* KPI */}
-        {overview && (
-          <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
-              <div className="text-xs text-gray-500">Total Contents</div>
-              <div className="text-2xl font-bold">{overview.kpi.totalContents}</div>
-            </div>
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-indigo-500">
-              <div className="text-xs text-gray-500">New Enrollments</div>
-              <div className="text-2xl font-bold">{overview.kpi.newEnrollments}</div>
-            </div>
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-fuchsia-500">
-              <div className="text-xs text-gray-500">Completion Rate</div>
-              <div className="text-2xl font-bold">
-                {Math.round((overview.kpi.completionRate || 0) * 100)}%
-              </div>
-            </div>
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-rose-500">
-              <div className="text-xs text-gray-500">Avg Score</div>
-              <div className="text-2xl font-bold">
-                {overview.kpi.avgScore == null ? "-" : Math.round(overview.kpi.avgScore)}
-              </div>
-            </div>
-          </div>
-        )}
+        return Response.ok(out).build();
+    }
 
-        {/* Error */}
-        {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
-            {String(error)}
-          </div>
-        )}
+    // =========================================================================
+    // 2) CONTENT PERFORMANCE (table)
+    // =========================================================================
+    @GET
+    @Path("/content-performance")
+    @RolesAllowed({Roles.ROLE_TRAINER, Roles.ROLE_ADMINISTRATOR})
+    public Response contentPerformance(
+            @Context SecurityContext securityContext,
+            @QueryParam("start") String start,
+            @QueryParam("end") String end,
+            @QueryParam("order") @DefaultValue("completionRate:desc") String order,
+            @QueryParam("limit") @DefaultValue("20") int limit,
+            @QueryParam("offset") @DefaultValue("0") int offset
+    ) {
+        final String trainerEmail = resolveTrainerEmail(securityContext);
+        final LocalDate endDate = parseDateOr(end, LocalDate.now());
+        final LocalDate startDate = parseDateOr(start, endDate.minusDays(6));
+        final LocalDateTime startDT = startOfDay(startDate);
+        final LocalDateTime endDT = dayAfter(endDate);
 
-        {/* summary section */}
-        <h2 className="text-xl font-semibold text-gray-700 mb-2 ml-2">Summary</h2>
+        if (limit < 1) limit = 20;
+        if (limit > 200) limit = 200;
+        if (offset < 0) offset = 0;
 
-        <div className="flex flex-col xl:flex-row gap-6">
-          {/* Left column */}
-          <div className="flex-1 space-y-6">
-            {/* Bar chart: Daily Activity */}
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-gray-700">
-                  Daily Activity (Enroll / Complete)
-                </h2>
-                <div className="text-xs text-gray-500">
-                  Range {start} → {end}
-                </div>
-              </div>
+        String orderSql = "completion_rate DESC";
+        if (order != null && !order.isBlank()) {
+            String[] parts = order.split(":");
+            String field = parts[0];
+            String dir = parts.length > 1 ? parts[1] : "asc";
+            String sortDir = "desc".equalsIgnoreCase(dir) ? "DESC" : "ASC";
+            switch (field) {
+                case "title" -> orderSql = "lc.title " + sortDir;
+                case "learners" -> orderSql = "learners " + sortDir;
+                case "avgScore" -> orderSql = "avg_score " + sortDir;
+                case "completionRate" -> orderSql = "completion_rate " + sortDir;
+            }
+        }
 
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={dailyActivity}>
-                  <XAxis dataKey="date" />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="enroll" name="Enroll" fill="#0575E6" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="complete" name="Complete" fill="#22C55E" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+        // Main content performance query
+        String sql = """
+        SELECT
+          lc.id AS content_id,
+          lc.title AS title,
+          COUNT(DISTINCT p.user_email) AS learners,
+          AVG(CASE WHEN p.percent = 100 THEN 1.0 ELSE 0.0 END) AS completion_rate,
+          AVG(p.score) AS avg_score
+        FROM learning_content lc
+        LEFT JOIN user_lesson_progress p ON p.lesson_id = lc.id
+          AND (
+               (p.started_at IS NOT NULL AND p.started_at >= :start AND p.started_at < :end)
+            OR (p.completed_at IS NOT NULL AND p.completed_at >= :start AND p.completed_at < :end)
+          )
+        WHERE lc.author_email = :email
+        GROUP BY lc.id, lc.title
+        ORDER BY %s
+    """.formatted(orderSql);
 
-            {/* Donut charts by Course */}
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
-              <h2 className="text-lg font-semibold text-gray-700 mb-4">
-                Learners by Content
-              </h2>
+        Query q = em.createNativeQuery(sql)
+                .setParameter("email", trainerEmail)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        q.setFirstResult(offset);
+        q.setMaxResults(limit);
 
-              {pieData.length === 0 ? (
-                <div className="text-sm text-gray-500">No data in range.</div>
-              ) : (
-                <div className="flex flex-wrap justify-center gap-6">
-                  <div className="flex flex-col items-center w-[320px] max-w-full">
-                    <h3 className="text-sm font-semibold mb-2 text-center">
-                      {filterText.course ? `Filtered: ${filterText.course}` : "All Contents"}
-                    </h3>
-                    <ResponsiveContainer width="100%" height={240}>
-                      <PieChart>
-                        <Pie
-                          data={pieData}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={90}
-                          label
-                          isAnimationActive
-                        >
-                          {pieData.map((_, i) => (
-                            <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = q.getResultList();
 
-          {/* Right column */}
-          <div className="flex flex-col xl:flex-row justify-end gap-6 mb-6">
-            <div className="space-y-6">
-              <AdminCalendar />
-              <ScoreboardChart token={token || ""} />
-            </div>
-          </div>
-        </div>
+        // Collect content IDs for learner query
+        List<String> contentIds = rows.stream()
+                .map(r -> String.valueOf(r[0]))
+                .collect(Collectors.toList());
 
-        {loading && (
-          <div className="fixed inset-0 flex items-center justify-center bg-black/20">
-            <div className="animate-spin rounded-full h-10 w-10 border-t-4 border-blue-500" />
-          </div>
-        )}
-      </main>
+        // Learner details query
+        String learnerSql = """
+        SELECT
+          p.lesson_id AS content_id,
+          u.name AS learner_name,
+          p.user_email,
+          p.percent,
+          p.score
+        FROM user_lesson_progress p
+        JOIN users u ON u.email = p.user_email
+        WHERE p.lesson_id IN :contentIds
+          AND (
+               (p.started_at IS NOT NULL AND p.started_at >= :start AND p.started_at < :end)
+            OR (p.completed_at IS NOT NULL AND p.completed_at >= :start AND p.completed_at < :end)
+          )
+    """;
 
-      {/* 🔔 Toast stack (มุมขวาล่าง) */}
-      <ToastStack
-        toasts={toasts}
-        onClose={closeToast}
-        onItemClick={handleToastClick}
-        onMarkAllRead={markAllRead}
-      />
-    </div>
-  );
-};
+        Query learnerQuery = em.createNativeQuery(learnerSql)
+                .setParameter("contentIds", contentIds)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
 
-export default AdminDashboard;
+        @SuppressWarnings("unchecked")
+        List<Object[]> learnerRows = learnerQuery.getResultList();
+
+        // Map learners by content ID
+        Map<String, List<Map<String, Object>>> learnersByContent = new HashMap<>();
+        for (Object[] r : learnerRows) {
+            String contentId = String.valueOf(r[0]);
+            Map<String, Object> learner = new LinkedHashMap<>();
+            learner.put("name", r[1]);
+            learner.put("email", r[2]);
+            learner.put("percent", r[3]);
+            learner.put("score", r[4]);
+            learnersByContent.computeIfAbsent(contentId, k -> new ArrayList<>()).add(learner);
+        }
+
+        // Build final response
+        List<Map<String, Object>> items = new ArrayList<>(rows.size());
+        for (Object[] r : rows) {
+            String contentId = String.valueOf(r[0]);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("contentId", contentId);
+            m.put("title", r[1]);
+            m.put("learnersCount", ((Number) (r[2] == null ? 0 : r[2])).longValue());
+            m.put("completionRate", r[3] == null ? 0d : ((Number) r[3]).doubleValue());
+            m.put("avgScore", r[4] == null ? null : ((Number) r[4]).doubleValue());
+            m.put("learners", learnersByContent.getOrDefault(contentId, List.of()));
+            items.add(m);
+        }
+
+        Number total = (Number) em.createNativeQuery("""
+        SELECT COUNT(*) FROM learning_content lc WHERE lc.author_email = :email
+    """).setParameter("email", trainerEmail).getSingleResult();
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", items);
+        out.put("total", total.longValue());
+        out.put("limit", limit);
+        out.put("offset", offset);
+        return Response.ok(out).build();
+    }
+
+    // =========================================================================
+    // 3) CONTENT FUNNEL
+    // =========================================================================
+    @GET
+    @Path("/content-funnel")
+    @RolesAllowed({Roles.ROLE_TRAINER,Roles.ROLE_ADMINISTRATOR})
+    public Response contentFunnel(
+            @Context SecurityContext securityContext,
+            @QueryParam("contentId") String contentId,
+            @QueryParam("start") String start,
+            @QueryParam("end")   String end
+    ) {
+        if (contentId == null || contentId.isBlank()) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(Map.of("error", "Missing contentId")).build();
+        }
+        final String trainerEmail = resolveTrainerEmail(securityContext);
+        final LocalDate endDate   = parseDateOr(end, LocalDate.now());
+        final LocalDate startDate = parseDateOr(start, endDate.minusDays(6));
+        final LocalDateTime startDT = startOfDay(startDate);
+        final LocalDateTime endDT   = dayAfter(endDate);
+
+        // confirm ownership by email
+        Number owned = (Number) em.createNativeQuery("""
+            SELECT COUNT(*) FROM learning_content lc WHERE lc.id = :cid AND lc.author_email = :email
+        """).setParameter("cid", contentId)
+                .setParameter("email", trainerEmail)
+                .getSingleResult();
+        if (owned.intValue() == 0) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity(Map.of("error","Content not owned by trainer")).build();
+        }
+
+        Number enrolled = (Number) em.createNativeQuery("""
+            SELECT COUNT(DISTINCT p.user_email)
+            FROM user_lesson_progress p
+            WHERE p.lesson_id = :cid
+              AND p.started_at IS NOT NULL
+              AND p.started_at >= :start AND p.started_at < :end
+        """).setParameter("cid", contentId)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT)
+                .getSingleResult();
+
+        Number half = (Number) em.createNativeQuery("""
+            SELECT COUNT(DISTINCT p.user_email)
+            FROM user_lesson_progress p
+            WHERE p.lesson_id = :cid
+              AND p.percent >= 50
+              AND (
+                   (p.started_at  IS NOT NULL AND p.started_at  >= :start AND p.started_at  < :end)
+                OR (p.completed_at IS NOT NULL AND p.completed_at >= :start AND p.completed_at < :end)
+              )
+        """).setParameter("cid", contentId)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT)
+                .getSingleResult();
+
+        Number completed = (Number) em.createNativeQuery("""
+            SELECT COUNT(DISTINCT p.user_email)
+            FROM user_lesson_progress p
+            WHERE p.lesson_id = :cid
+              AND p.completed_at IS NOT NULL
+              AND p.completed_at >= :start AND p.completed_at < :end
+        """).setParameter("cid", contentId)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT)
+                .getSingleResult();
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("contentId", contentId);
+        out.put("funnel", Map.of(
+                "enrolled",  enrolled.longValue(),
+                "started",   enrolled.longValue(),
+                "half",      half.longValue(),
+                "completed", completed.longValue()
+        ));
+        return Response.ok(out).build();
+    }
+
+    @GET
+    @Path("/assignable-teams")
+    @RolesAllowed({Roles.ROLE_TRAINER})
+    public Response getAssignableTeams(@Context SecurityContext sc) {
+        String trainerEmail = sc.getUserPrincipal().getName();
+        log.info("Incoming Info: get assignable teams for trainer {}", trainerEmail);
+        User trainer = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                .setParameter("email", trainerEmail)
+                .getSingleResult();
+
+        List<TeamEntity> teams = trainerUtilities.getTeamsAssignedToTrainer(trainer.getEmail());
+
+        List<Map<String, String>> result = teams.stream()
+                .map(team -> Map.of(
+                        "id", team.getId(),
+                        "name", team.getName(),
+                        "description", team.getDescription()
+                ))
+                .collect(Collectors.toList());
+
+        return Response.ok(result).build();
+    }
+}
