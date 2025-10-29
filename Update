@@ -1,90 +1,749 @@
-2025-10-20 16:53:37,690 ERROR [LDA.LDAPAuthenticationService] (executor-thread-1) Error contacting LDAP server ldap://oa.bbl: Unable to connect
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useState, useContext, useEffect, useMemo, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import AdminSidebarWidget from "../Widgets/AdminSideBar";
+import AdminCalendar from "../Widgets/AdminCalendar";
+import AdminAvatarWidget from "../Widgets/AdminAvatarWidget";
+import ScoreboardChart from "../../../components/ScoreboardChart";
 
-Exception in LDAPAuthenticationService.java:57 ''), [:] for the terminal, [h] for more options>
-          55                                                                                                                                                                                                                        
-          56          try {                                                                                                                                                                                                         
-        ? 57              DirContext ctx = new InitialDirContext(new Hashtable<>(environment));                                                                                                                                     
-          58              ctx.close();                                                                                                                                                                                              
-          59              log.info("LDAPAuthenticationService->validateUserCredential: {} - Success", username);                                                                                                                    
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-Exception in LoginResource.java:75                                                                                                                                                                                                  
-          73                                                                                                                                                                                                                        
-          74              try {                                                                                                                                                                                                     
-        ? 75                  boolean ldapAuthenticated = ldapAuthenticationService.validateUserCredentials(request.email, request.password);                                                                                       
-          76                  if (ldapAuthenticated) {                                                                                                                                                                              
-          77                      log.info(username);                                                                                                                                                                               
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-Exception in LDAPAuthenticationService.java:57                                                                                                                                                                                      
-          55                                                                                                                                                                                                                        
-          56          try {                                                                                                                                                                                                         
-        ? 57              DirContext ctx = new InitialDirContext(new Hashtable<>(environment));                                                                                                                                     
-          58              ctx.close();                                                                                                                                                                                              
-          59              log.info("LDAPAuthenticationService->validateUserCredential: {} - Success", username);                                                                                                                    
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-Exception in LoginResource.java:75                                                                                                                                                                                                  
-          73                                                                                                                                                                                                                        
-          74              try {                                                                                                                                                                                                     
-        ? 75                  boolean ldapAuthenticated = ldapAuthenticationService.validateUserCredentials(request.email, request.password);                                                                                       
-          76                  if (ldapAuthenticated) {                                                                                                                                                                              
-          77                      log.info(username);                                                                                                                                                                               
-                                                                                                                                                                                                                                    
-: javax.naming.CommunicationException: oa.bbl:389 [Root exception is java.net.SocketTimeoutException: Connect timed out]                                                                                                            
-        at java.naming/com.sun.jndi.ldap.Connection.<init>(Connection.java:253)                                                                                                                                                     
-        at java.naming/com.sun.jndi.ldap.LdapClient.<init>(LdapClient.java:141)                                                                                                                                                     
-        at java.naming/com.sun.jndi.ldap.LdapClient.getInstance(LdapClient.java:1620)                                                                                                                                               
-        at java.naming/com.sun.jndi.ldap.LdapCtx.connect(LdapCtx.java:2848)                                                                                                                                                         
-        at java.naming/com.sun.jndi.ldap.LdapCtx.<init>(LdapCtx.java:349)                                                                                                                                                           
-        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getLdapCtxFromUrl(LdapCtxFactory.java:229)                                                                                                                                  
-        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getUsingURL(LdapCtxFactory.java:189)                                                                                                                                        
-        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getUsingURLs(LdapCtxFactory.java:247)                                                                                                                                       
-        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getLdapCtxInstance(LdapCtxFactory.java:154)                                                                                                                                 
-        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getInitialContext(LdapCtxFactory.java:84)                                                                                                                                   
-        at java.naming/javax.naming.spi.NamingManager.getInitialContext(NamingManager.java:520)                                                                                                                                     
-        at java.naming/javax.naming.InitialContext.getDefaultInitCtx(InitialContext.java:305)                                                                                                                                       
-        at java.naming/javax.naming.InitialContext.init(InitialContext.java:236)                                                                                                                                                    
-        at java.naming/javax.naming.InitialContext.<init>(InitialContext.java:208)                                                                                                                                                  
-        at java.naming/javax.naming.directory.InitialDirContext.<init>(InitialDirContext.java:130)                                                                                                                                  
-        at LDAPServices.LDAPAuthenticationService.validateUserCredentials(LDAPAuthenticationService.java:57)                                                                                                                        
-        at LDAPServices.LDAPAuthenticationService_ClientProxy.validateUserCredentials(Unknown Source)                                                                                                                               
-        at Testing.LoginResource.login(LoginResource.java:75)                                                                                                                                                                       
-        at Testing.LoginResource_Subclass.login$$superforward(Unknown Source)                                                                                                                                                       
-        at Testing.LoginResource_Subclass$$function$$1.apply(Unknown Source)                                                                                                                                                        
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:136)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:107)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.doIntercept(TransactionalInterceptorRequired.java:38)                                                                                       
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.intercept(TransactionalInterceptorBase.java:61)                                                                                                 
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.intercept(TransactionalInterceptorRequired.java:32)                                                                                         
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired_Bean.intercept(Unknown Source)                                                                                                              
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
-        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
-        at Testing.LoginResource_Subclass.login(Unknown Source)                                                                                                                                                                     
-        at Testing.LoginResource$quarkusrestinvoker$login_ac7b04d13117f22f5c6217598ed82eb24eb329f4.invoke(Unknown Source)                                                                                                           
-        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
-        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
-        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
-        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
-        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
-        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
-        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
-Caused by: java.net.SocketTimeoutException: Connect timed out                                                                                                                                                                       
-        at java.base/sun.nio.ch.NioSocketImpl.timedFinishConnect(NioSocketImpl.java:546)                                                                                                                                            
-        at java.base/sun.nio.ch.NioSocketImpl.connect(NioSocketImpl.java:592)                                                                                                                                                       
-        at java.base/java.net.SocksSocketImpl.connect(SocksSocketImpl.java:327)                                                                                                                                                     
-        at java.base/java.net.Socket.connect(Socket.java:751)                                                                                                                                                                       
-        at java.naming/com.sun.jndi.ldap.Connection.createConnectionSocket(Connection.java:333)                                                                                                                                     
-        at java.naming/com.sun.jndi.ldap.Connection.createSocket(Connection.java:285)                                                                                                                                               
-        at java.naming/com.sun.jndi.ldap.Connection.<init>(Connection.java:232)        
+import { FaFilter } from "react-icons/fa";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+} from "recharts";
+import axios from "axios";
+import RoleSwitcher from "../../../components/RoleSwitcher";
+import { EventSourcePolyfill } from "event-source-polyfill";
+import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
+import {
+  COLORS,
+  type ContentPerfItem,
+  type ContentPerformanceResponse,
+  type OverviewResponse,
+} from "../../../types/trainer/types";
+import { ENDPOINTS } from "../../../config/endpoints";
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+function toDateInput(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+const isDocVisible = () =>
+  typeof document !== "undefined" ? document.visibilityState === "visible" : true;
+
+// helpers for localStorage (per trainer)
+const dismissedKey = (email: string) => `QA_DISMISSED_${email}`;
+const lastSeenKey = (email: string) => `QA_LAST_SEEN_${email}`;
+function loadDismissed(email: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(dismissedKey(email));
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as string[];
+    return new Set(arr);
+  } catch {
+    return new Set();
+  }
+}
+function saveDismissed(email: string, set: Set<string>) {
+  try {
+    localStorage.setItem(dismissedKey(email), JSON.stringify([...set]));
+  } catch {}
+}
+function loadLastSeen(email: string): string {
+  try {
+    return localStorage.getItem(lastSeenKey(email)) || "";
+  } catch {
+    return "";
+  }
+}
+function saveLastSeen(email: string, iso: string) {
+  try {
+    localStorage.setItem(lastSeenKey(email), iso);
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Toast (popup) มุมขวาล่าง
+// ---------------------------------------------------------------------------
+type QuestionAlert = {
+  id: string; // questionAnswerId หรือ message id
+  userEmail: string;
+  lessonId?: string | number;
+  lessonTitle?: string;
+  question: string;
+  createdAt?: string; // ISO string
+};
+type ToastItem = QuestionAlert & { _ts: number };
+
+function ToastCard({
+  toast,
+  onClose,
+  onClick,
+}: {
+  toast: ToastItem;
+  onClose: (id: string) => void;
+  onClick?: (toast: ToastItem) => void;
+}) {
+  const [hover, setHover] = useState(false);
+
+  useEffect(() => {
+    if (hover) return;
+    const t = setTimeout(() => onClose(toast.id), 8000);
+    return () => clearTimeout(t);
+  }, [hover, toast.id, onClose]);
+
+  return (
+    <div
+      className="w-80 max-w-[88vw] bg-white shadow-xl rounded-xl border p-3 cursor-pointer transition hover:shadow-2xl"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={() => onClick?.(toast)}
+      role="alert"
+      aria-live="polite"
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-sm">
+          Q
+        </div>
+        <div className="flex-1">
+          <div className="text-xs text-gray-500 mb-0.5">
+            {toast.lessonTitle ? toast.lessonTitle : "New Question"} • {toast.userEmail}
+          </div>
+          <div className="text-sm text-gray-800 line-clamp-3 whitespace-pre-wrap">
+            {toast.question}
+          </div>
+          {toast.createdAt && (
+            <div className="text-[10px] text-gray-400 mt-1">
+              {new Date(toast.createdAt).toLocaleString()}
+            </div>
+          )}
+        </div>
+        <button
+          aria-label="Close notification"
+          className="text-gray-400 hover:text-gray-600 ml-1"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose(toast.id);
+          }}
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ToastStack({
+  toasts,
+  onClose,
+  onItemClick,
+  onMarkAllRead,
+}: {
+  toasts: ToastItem[];
+  onClose: (id: string) => void;
+  onItemClick?: (toast: ToastItem) => void;
+  onMarkAllRead?: () => void;
+}) {
+  if (toasts.length === 0) return null;
+  return (
+    <div className="fixed bottom-4 right-4 z-[60] flex flex-col gap-3">
+      <div className="flex justify-end">
+        <button
+          className="text-xs px-2 py-1 rounded-full bg-gray-100 border hover:bg-gray-200"
+          onClick={onMarkAllRead}
+        >
+          Mark all as read
+        </button>
+      </div>
+      {toasts.map((t) => (
+        <ToastCard key={t.id} toast={t} onClose={onClose} onClick={onItemClick} />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Hook: รับ “คำถามใหม่สำหรับเทรนเนอร์” (SSE → fallback polling)
+// ---------------------------------------------------------------------------
+function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | null) {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const dismissedRef = useRef<Set<string>>(new Set());
+  const seenIds = useRef<Set<string>>(new Set());
+  const lastSeenAt = useRef<string>(""); // ISO string
+  const sseRef = useRef<EventSourcePolyfill | null>(null);
+  const pollTimer = useRef<number | null>(null);
+
+  const SSE_URL = "/api/user-question-answer/stream";
+  const POLL_URL = "/api/user-question-answer/pending";
+
+  // โหลด dismissed & lastSeen เมื่อรู้ email
+  useEffect(() => {
+    if (!trainerEmail) return;
+    dismissedRef.current = loadDismissed(trainerEmail);
+    lastSeenAt.current = loadLastSeen(trainerEmail);
+  }, [trainerEmail]);
+
+  const persistLastSeen = (iso: string | undefined) => {
+    if (!trainerEmail || !iso) return;
+    lastSeenAt.current = iso;
+    saveLastSeen(trainerEmail, iso);
+  };
+
+  const pushToasts = (items: QuestionAlert[]) => {
+    if (!items?.length) return;
+    const newOnes: ToastItem[] = [];
+    for (const it of items) {
+      if (!it?.id) continue;
+      // ข้ามถ้าเคย dismiss ถาวรแล้ว
+      if (trainerEmail && dismissedRef.current.has(it.id)) continue;
+      // ข้ามถ้าแสดงอยู่แล้วในรอบนี้
+      if (seenIds.current.has(it.id)) continue;
+
+      seenIds.current.add(it.id);
+      newOnes.push({ ...it, _ts: Date.now() });
+
+      if (it.createdAt && it.createdAt > (lastSeenAt.current || "")) {
+        persistLastSeen(it.createdAt);
+      }
+    }
+    if (newOnes.length) {
+      // เพิ่มท้าย (ล่าสุดอยู่ล่าง)
+      setToasts((prev) => [...prev, ...newOnes].slice(-6));
+    }
+  };
+
+  // เปิด/ปิด SSE
+  useEffect(() => {
+    if (!token || !trainerEmail) return;
+
+    // ปิดเดิมก่อน
+    sseRef.current?.close();
+    sseRef.current = null;
+
+    const params = new URLSearchParams();
+    params.set("trainer", trainerEmail.trim().toLowerCase());
+    if (lastSeenAt.current) params.set("since", lastSeenAt.current);
+
+    const url = `${SSE_URL}?${params.toString()}`;
+
+    const es = new EventSourcePolyfill(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      withCredentials: false,
+    });
+
+    const onQuestion = (ev: MessageEvent) => {
+      try {
+        const raw = typeof ev.data === "string" ? ev.data : String(ev.data);
+        const payload = JSON.parse(raw) as QuestionAlert | QuestionAlert[];
+        const arr = Array.isArray(payload) ? payload : [payload];
+
+        // อัปเดต lastSeenAt เป็นล่าสุดจาก payload (ถ้ามี)
+        const sortedDates = arr.map((a) => a.createdAt).filter(Boolean).sort();
+        const latest =
+          sortedDates.length > 0 ? (sortedDates[sortedDates.length - 1] as string) : undefined;
+        if (latest) persistLastSeen(latest);
+
+        pushToasts(arr);
+      } catch {
+        // ignore parse error
+      }
+    };
+
+    // ใช้ cast any เพื่อเลี่ยง type conflict DOM vs polyfill
+    (es as any).addEventListener("question", onQuestion as any);
+    es.onerror = () => {
+      es.close();
+      sseRef.current = null;
+    };
+
+    sseRef.current = es;
+
+    return () => {
+      try {
+        (es as any).removeEventListener("question", onQuestion as any);
+      } finally {
+        es.close();
+        sseRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, trainerEmail]);
+
+  // Polling (15s) — หยุดถ้าแท็บไม่ active
+  useEffect(() => {
+    if (!token || !trainerEmail) return;
+
+    const tick = async () => {
+      if (!isDocVisible()) {
+        schedule();
+        return;
+      }
+      try {
+        const res = await axios.get<QuestionAlert[]>(POLL_URL, {
+          params: {
+            trainer: trainerEmail.trim().toLowerCase(),
+            since: lastSeenAt.current || undefined,
+            limit: 20,
+          },
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        pushToasts(Array.isArray(res.data) ? res.data : []);
+      } catch {
+        // เงียบ ๆ
+      } finally {
+        schedule();
+      }
+    };
+
+    const schedule = () => {
+      if (pollTimer.current) window.clearTimeout(pollTimer.current);
+      pollTimer.current = window.setTimeout(tick, 15000) as unknown as number;
+    };
+
+    // เริ่ม polling ช้า ๆ เพื่อหลบจังหวะ SSE
+    pollTimer.current = window.setTimeout(tick, 3000) as unknown as number;
+
+    const onVisibility = () => {
+      if (isDocVisible()) {
+        if (pollTimer.current) window.clearTimeout(pollTimer.current);
+        pollTimer.current = window.setTimeout(tick, 1000) as unknown as number;
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      if (pollTimer.current) window.clearTimeout(pollTimer.current);
+      pollTimer.current = null;
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [token, trainerEmail]);
+
+  // ปิด/ลบ toast แบบถาวร (บันทึกลง localStorage)
+  const closeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    if (trainerEmail) {
+      dismissedRef.current.add(id);
+      saveDismissed(trainerEmail, dismissedRef.current);
+    }
+  };
+
+  // ปิดทุกอันที่โชว์ (บันทึกทั้งหมดลง dismissed)
+  const markAllRead = () => {
+    setToasts((prev) => {
+      if (trainerEmail) {
+        for (const t of prev) dismissedRef.current.add(t.id);
+        saveDismissed(trainerEmail, dismissedRef.current);
+      }
+      return [];
+    });
+  };
+
+  return { toasts, closeToast, markAllRead };
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+const AdminDashboard = () => {
+  const { token: ctxToken } = useContext(AuthContext);
+  const token =
+    ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
+  const navigate = useNavigate();
+
+  // block unauthenticated
+  useEffect(() => {
+    if (!token) navigate("/");
+  }, [token, navigate]);
+
+  const { fullName, email: trainerEmail } = useUserProfile(token || null);
+  const displayName = fullName || "Administrator";
+
+  // ---------- popup คำถามใหม่ ----------
+  const { toasts, closeToast, markAllRead } = useTrainerQuestionAlerts(
+    token || null,
+    trainerEmail || null
+  );
+
+  // ---------------- Filters ----------------
+  const [showFilter, setShowFilter] = useState(false);
+  const [filterText, setFilterText] = useState({ course: "" });
+  const today = useMemo(() => new Date(), []);
+  const weekAgo = useMemo(
+    () => new Date(Date.now() - 6 * 24 * 3600 * 1000),
+    []
+  );
+
+  const [start, setStart] = useState(toDateInput(weekAgo));
+  const [end, setEnd] = useState(toDateInput(today));
+
+  // ---------------- Data ----------------
+  const [loading, setLoading] = useState(false);
+  const [overview, setOverview] = useState<OverviewResponse | null>(null);
+  const [contentPerf, setContentPerf] = useState<ContentPerfItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchAll = async () => {
+    if (!token) return;
+    setLoading(true);
+    setError(null);
+    const auth = { headers: { Authorization: `Bearer ${token}` } };
+
+    try {
+      const [ovRes, cpRes] = await Promise.all([
+        axios.get<OverviewResponse>(ENDPOINTS.TrainerOverview, {
+          params: { start, end },
+          ...auth,
+        }),
+        axios.get<ContentPerformanceResponse>(ENDPOINTS.TrainerPerformance, {
+          params: { start, end, order: "learners:desc", limit: 20, offset: 0 },
+          ...auth,
+        }),
+      ]);
+      setOverview(ovRes.data);
+      setContentPerf(cpRes.data.items || []);
+    } catch (e: any) {
+      console.error("Failed to load trainer analytics:", e);
+      setError(
+        e?.response?.data?.error || e?.message || "Failed to load analytics"
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---------- Derived (Chart) Data ----------
+  const dailyActivity = useMemo(() => {
+    if (!overview?.trend?.length) return [];
+    return overview.trend.map((t) => ({
+      date: t.date,
+      enroll: t.enroll,
+      complete: t.complete,
+    }));
+  }, [overview]);
+
+  // donut data
+  const pieData = useMemo(() => {
+    const rows = contentPerf
+      .filter((it) =>
+        filterText.course
+          ? it.title.toLowerCase().includes(filterText.course.toLowerCase())
+          : true
+      )
+      .map((it) => ({
+        name: it.title,
+        value: it.learners,
+      }));
+    const total = rows.reduce((acc, r) => acc + r.value, 0);
+    return total > 0 ? rows : [];
+  }, [contentPerf, filterText.course]);
+
+  const handleClear = () => setFilterText({ course: "" });
+
+  // เมื่อคลิก toast → ไปยังหน้าที่ต้องการ
+  const handleToastClick = (t: ToastItem) => {
+    closeToast(t.id);
+    navigate("/administrator/administrator/task-management", {
+      state: {
+        focusUserEmail: t.userEmail,
+        focusLessonId: t.lessonId,
+      },
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* sidebar */}
+      <AdminSidebarWidget />
+
+      {/* main */}
+      <main className="flex-1 p-6 flex flex-col">
+        {/* header + filter */}
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-800 mb-1">
+              👋 Welcome, {displayName}
+            </h1>
+            <p className="text-gray-600 mb-4 ml-10">Have a good day!</p>
+          </div>
+
+          <div className="flex items-center justify-end space-x-4">
+            <RoleSwitcher />
+            <div className="relative flex items-center space-x-3">
+              <button
+                className="flex items-center gap-2 px-4 py-2 bg-white border shadow rounded-full hover:bg-gray-100"
+                onClick={() => setShowFilter(!showFilter)}
+              >
+                <FaFilter /> Filter
+              </button>
+
+              <AdminAvatarWidget />
+
+              {showFilter && (
+                <div className="absolute right-0 mt-2 w-72 bg-white border shadow-lg rounded-xl z-10 p-4 space-y-3">
+                  <p className="font-semibold text-gray-700">Filter & Range</p>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">Start</div>
+                      <input
+                        type="date"
+                        className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
+                        value={start}
+                        onChange={(e) => setStart(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">End</div>
+                      <input
+                        type="date"
+                        className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
+                        value={end}
+                        onChange={(e) => setEnd(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <input
+                    type="text"
+                    placeholder="Filter course title"
+                    className="w-full px-4 py-2 bg-gray-100 rounded-full text-sm"
+                    value={filterText.course}
+                    onChange={(e) => setFilterText({ course: e.target.value })}
+                  />
+
+                  <div className="flex justify-between pt-1">
+                    <button
+                      onClick={handleClear}
+                      className="text-sm text-red-500 hover:underline"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={fetchAll}
+                      className="px-3 py-1 text-sm bg-blue-600 text-white rounded-full hover:bg-blue-700"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* KPI */}
+        {overview && (
+          <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
+              <div className="text-xs text-gray-500">Total Contents</div>
+              <div className="text-2xl font-bold">{overview.kpi.totalContents}</div>
+            </div>
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-indigo-500">
+              <div className="text-xs text-gray-500">New Enrollments</div>
+              <div className="text-2xl font-bold">{overview.kpi.newEnrollments}</div>
+            </div>
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-fuchsia-500">
+              <div className="text-xs text-gray-500">Completion Rate</div>
+              <div className="text-2xl font-bold">
+                {Math.round((overview.kpi.completionRate || 0) * 100)}%
+              </div>
+            </div>
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-rose-500">
+              <div className="text-xs text-gray-500">Avg Score</div>
+              <div className="text-2xl font-bold">
+                {overview.kpi.avgScore == null
+                  ? "-"
+                  : Math.round(overview.kpi.avgScore)}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
+            {String(error)}
+          </div>
+        )}
+
+        {/* summary section */}
+        <h2 className="text-xl font-semibold text-gray-700 mb-2 ml-2">Summary</h2>
+
+        <div className="flex flex-col xl:flex-row gap-6">
+          {/* Left column */}
+          <div className="flex-1 space-y-6">
+            {/* Bar chart: Daily Activity */}
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-lg font-semibold text-gray-700">
+                  Daily Activity (Enroll / Complete)
+                </h2>
+                <div className="text-xs text-gray-500">
+                  Range {start} → {end}
+                </div>
+              </div>
+
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={dailyActivity}>
+                  <XAxis dataKey="date" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar
+                    dataKey="enroll"
+                    name="Enroll"
+                    fill="#0575E6"
+                    radius={[4, 4, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="complete"
+                    name="Complete"
+                    fill="#22C55E"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Donut charts by Course */}
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
+              <h2 className="text-lg font-semibold text-gray-700 mb-4">
+                Learners by Content
+              </h2>
+
+              {pieData.length === 0 ? (
+                <div className="text-sm text-gray-500">No data in range.</div>
+              ) : (
+                <div className="flex flex-wrap justify-center gap-6">
+                  <div className="flex flex-col items-center w-[320px] max-w-full">
+                    <h3 className="text-sm font-semibold mb-2 text-center">
+                      {filterText.course
+                        ? `Filtered: ${filterText.course}`
+                        : "All Contents"}
+                    </h3>
+                    <ResponsiveContainer width="100%" height={240}>
+                      <PieChart>
+                        <Pie
+                          data={pieData}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={90}
+                          label
+                          isAnimationActive
+                        >
+                          {pieData.map((_, i) => (
+                            <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right column */}
+          <div className="flex flex-col xl:flex-row justify-end gap-6 mb-6">
+            <div className="space-y-6">
+              <AdminCalendar />
+              <ScoreboardChart token={token || ""} />
+            </div>
+          </div>
+        </div>
+
+        {loading && (
+          <div className="fixed inset-0 flex items-center justify-center bg-black/20">
+            <div className="animate-spin rounded-full h-10 w-10 border-t-4 border-blue-500" />
+          </div>
+        )}
+      </main>
+
+      {/* 🔔 Toast stack (มุมขวาล่าง) */}
+      <ToastStack
+        toasts={toasts}
+        onClose={closeToast}
+        onItemClick={handleToastClick}
+        onMarkAllRead={markAllRead}
+      />
+    </div>
+  );
+};
+
+export default AdminDashboard;
+package TrainerAnalytic.Resources;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
+import org.acme.security.jwt.Roles;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+@Path("trainer-information")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+public class TrainerInfoResources {
+
+    private static final Logger log = LoggerFactory.getLogger(TrainerInfoResources.class);
+
+    @Inject
+    EntityManager em;
+
+    @GET
+    @Path("/assignment/{trainerId}")
+    public Response getTrainerAssignmentInfo(@PathParam("trainerId") String trainerId,
+                                             @Context SecurityContext securityContext) {
+        log.info("Getting TrainerAssignmentInfo -> Fetching assignment info for trainerId => {}", trainerId);
+        String jpql = """
+        SELECT ra.assignedBy.name, ra.team.name , ra.team.id
+        FROM RoleAssignmentEntity ra
+        WHERE ra.assignedTo.id = :trainerId
+    """;
+
+        List<Object[]> results = em.createQuery(jpql, Object[].class)
+                .setParameter("trainerId", trainerId)
+                .setMaxResults(1)
+                .getResultList();
+
+        if (!results.isEmpty()) {
+            Object[] row = results.get(0);
+            return Response.ok(Map.of(
+                    "supervisor", row[0] != null ? row[0].toString() : "N/A",
+                    "team", row[1] != null ? row[1].toString() : "N/A",
+                    "teamId", row[2] != null ? row[2].toString() : "N/A"
+            )).build();
+        }
+
+        return Response.ok(Map.of("supervisor", "Not Assigned", "team", "Not Assigned")).build();
+    }
+
+}
