@@ -352,6 +352,16 @@ function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | n
 }
 
 // ---------------------------------------------------------------------------
+// NEW: minimal profile type for /api/profile
+// ---------------------------------------------------------------------------
+type MyProfile = {
+  id: string;
+  name?: string;
+  email: string;
+  avatarUrl?: string;
+};
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 const AdminDashboard = () => {
@@ -373,6 +383,45 @@ const AdminDashboard = () => {
     token || null,
     trainerEmail || null
   );
+
+  // ---------------- Trainer Assignment Info (NEW) ----------------
+  const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
+  const [assignment, setAssignment] = useState<{
+    supervisor: string;
+    team: string;
+    teamId?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const loadProfileAndAssignment = async () => {
+      if (!token) return;
+      try {
+        // 1) get my profile to obtain trainerId
+        const prof = await axios.get<MyProfile>("/api/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setMyProfile(prof.data);
+
+        // 2) call assignment by trainerId
+        if (prof.data?.id) {
+          const res = await axios.get<{
+            supervisor: string;
+            team: string;
+            teamId?: string;
+          }>(`/api/trainer-information/assignment/${prof.data.id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          setAssignment(res.data || null);
+        } else {
+          setAssignment(null);
+        }
+      } catch (err) {
+        // ไม่ต้องล้มทั้งหน้า แค่ซ่อนการ์ด assignment
+        setAssignment(null);
+      }
+    };
+    loadProfileAndAssignment();
+  }, [token]);
 
   // ---------------- Filters ----------------
   const [showFilter, setShowFilter] = useState(false);
@@ -431,8 +480,8 @@ const AdminDashboard = () => {
     if (!overview?.trend?.length) return [];
     return overview.trend.map((t) => ({
       date: t.date,
-      enroll: t.enroll,
-      complete: t.complete,
+      enroll: (t as any).enrollCount ?? (t as any).enroll ?? 0,
+      complete: (t as any).completeCount ?? (t as any).complete ?? 0,
     }));
   }, [overview]);
 
@@ -478,7 +527,37 @@ const AdminDashboard = () => {
             <h1 className="text-3xl font-bold text-gray-800 mb-1">
               👋 Welcome, {displayName}
             </h1>
-            <p className="text-gray-600 mb-4 ml-10">Have a good day!</p>
+            <p className="text-gray-600 mb-2 ml-10">Have a good day!</p>
+
+            {/* --- NEW: Trainer Assignment Card --- */}
+            {assignment && (
+              <div className="ml-10 mb-4">
+                <div className="inline-flex items-center gap-3 bg-white border rounded-xl shadow-sm px-4 py-3">
+                  <div className="text-sm">
+                    <div className="text-gray-500">Supervisor</div>
+                    <div className="font-semibold text-gray-800">
+                      {assignment.supervisor || "N/A"}
+                    </div>
+                  </div>
+                  <div className="w-px h-8 bg-gray-200" />
+                  <div className="text-sm">
+                    <div className="text-gray-500">Team</div>
+                    <div className="font-semibold text-gray-800">
+                      {assignment.team || "Not Assigned"}
+                    </div>
+                  </div>
+                  {assignment.teamId && (
+                    <>
+                      <div className="w-px h-8 bg-gray-200" />
+                      <div className="text-sm">
+                        <div className="text-gray-500">Team ID</div>
+                        <div className="font-mono text-gray-700">{assignment.teamId}</div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-end space-x-4">
@@ -690,60 +769,3 @@ const AdminDashboard = () => {
 };
 
 export default AdminDashboard;
-package TrainerAnalytic.Resources;
-
-import jakarta.annotation.security.RolesAllowed;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManager;
-import jakarta.ws.rs.*;
-import jakarta.ws.rs.core.Context;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.SecurityContext;
-import org.acme.security.jwt.Roles;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
-@Path("trainer-information")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
-public class TrainerInfoResources {
-
-    private static final Logger log = LoggerFactory.getLogger(TrainerInfoResources.class);
-
-    @Inject
-    EntityManager em;
-
-    @GET
-    @Path("/assignment/{trainerId}")
-    public Response getTrainerAssignmentInfo(@PathParam("trainerId") String trainerId,
-                                             @Context SecurityContext securityContext) {
-        log.info("Getting TrainerAssignmentInfo -> Fetching assignment info for trainerId => {}", trainerId);
-        String jpql = """
-        SELECT ra.assignedBy.name, ra.team.name , ra.team.id
-        FROM RoleAssignmentEntity ra
-        WHERE ra.assignedTo.id = :trainerId
-    """;
-
-        List<Object[]> results = em.createQuery(jpql, Object[].class)
-                .setParameter("trainerId", trainerId)
-                .setMaxResults(1)
-                .getResultList();
-
-        if (!results.isEmpty()) {
-            Object[] row = results.get(0);
-            return Response.ok(Map.of(
-                    "supervisor", row[0] != null ? row[0].toString() : "N/A",
-                    "team", row[1] != null ? row[1].toString() : "N/A",
-                    "teamId", row[2] != null ? row[2].toString() : "N/A"
-            )).build();
-        }
-
-        return Response.ok(Map.of("supervisor", "Not Assigned", "team", "Not Assigned")).build();
-    }
-
-}
