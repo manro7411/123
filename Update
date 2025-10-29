@@ -388,47 +388,52 @@ const AdminDashboard = () => {
   const [teamMembersLoading, setTeamMembersLoading] = useState(false);
   const [teamMembersError, setTeamMembersError] = useState<string | null>(null);
 
+  // NEW: user selection for analysis
+  const [userQuery, setUserQuery] = useState("");
+  const [selectedUserEmail, setSelectedUserEmail] = useState<string | null>(null);
+  const [selectedUserName, setSelectedUserName] = useState<string | null>(null);
+
   const hasTeams = useMemo(() => (assignment?.teams?.length || 0) > 0, [assignment?.teams]);
 
- useEffect(() => {
-  const loadProfileAndAssignment = async () => {
-    if (!token) return;
+  useEffect(() => {
+    const loadProfileAndAssignment = async () => {
+      if (!token) return;
 
-    setMyProfile(null);
-    setAssignment({ trainerId: "", teams: [] });
-
-    try {
-      // 1) โหลดโปรไฟล์เพื่อหา trainerId
-      const profileRes = await axios.get<MyProfile>("/api/profile", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const profile = profileRes.data;
-      setMyProfile(profile);
-
-      // 2) โหลด assignment ของ trainer (หลายทีม)
-      if (profile?.id) {
-        const assignmentRes = await axios.get<AssignmentResponse>(
-          `/api/trainer-information/assignment/${encodeURIComponent(profile.id)}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Cache-Control": "no-cache", // ป้องกัน 304
-            },
-          }
-        );
-
-        const payload = assignmentRes.data || { trainerId: profile.id, teams: [] };
-        payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
-        setAssignment(payload);
-      }
-    } catch (error: any) {
-      console.error("Failed to load profile or assignment:", error);
+      setMyProfile(null);
       setAssignment({ trainerId: "", teams: [] });
-    }
-  };
 
-  loadProfileAndAssignment();
-}, [token]);
+      try {
+        // 1) profile
+        const profileRes = await axios.get<MyProfile>("/api/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const profile = profileRes.data;
+        setMyProfile(profile);
+
+        // 2) assignment
+        if (profile?.id) {
+          const assignmentRes = await axios.get<AssignmentResponse>(
+            `/api/trainer-information/assignment/${encodeURIComponent(profile.id)}`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Cache-Control": "no-cache",
+              },
+            }
+          );
+          const payload = assignmentRes.data || { trainerId: profile.id, teams: [] };
+          payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
+          setAssignment(payload);
+        }
+      } catch (error: any) {
+        console.error("Failed to load profile or assignment:", error);
+        setAssignment({ trainerId: "", teams: [] });
+      }
+    };
+
+    loadProfileAndAssignment();
+  }, [token]);
+
   const fetchTeamMembers = async (teamId: string | null) => {
     if (!teamId || !token) return;
     setTeamMembersLoading(true);
@@ -438,8 +443,12 @@ const AdminDashboard = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       setTeamMembers(Array.isArray(res.data) ? res.data : []);
-      console.log(res.data)
       setSelectedTeamIdForMembers(teamId);
+      // reset selection if current selected user is not in this team
+      if (selectedUserEmail && !res.data.some((m: any) => m.email === selectedUserEmail)) {
+        setSelectedUserEmail(null);
+        setSelectedUserName(null);
+      }
     } catch (e: any) {
       setTeamMembers([]);
       setTeamMembersError(e?.response?.data?.message || e?.message || "Failed to load members");
@@ -457,7 +466,7 @@ const AdminDashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignment?.teams]);
 
-  // ---------------- Filters ----------------
+  // ---------------- Filters (date/title) ----------------
   const [showFilter, setShowFilter] = useState(false);
   const [filterText, setFilterText] = useState({ course: "" });
   const today = useMemo(() => new Date(), []);
@@ -465,11 +474,10 @@ const AdminDashboard = () => {
     () => new Date(Date.now() - 6 * 24 * 3600 * 1000),
     []
   );
-
   const [start, setStart] = useState(toDateInput(weekAgo));
   const [end, setEnd] = useState(toDateInput(today));
 
-  // ---------------- Data ----------------
+  // ---------------- Data: overview + content-performance ----------------
   const [loading, setLoading] = useState(false);
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [contentPerf, setContentPerf] = useState<ContentPerfItem[]>([]);
@@ -529,11 +537,85 @@ const AdminDashboard = () => {
   const pieData = useMemo(() => {
     const rows = filteredContentPerf.map((it) => ({
       name: it.title,
-      value: getLearnersCount(it), // SAFE!
+      value: getLearnersCount(it),
     }));
     const total = rows.reduce((acc, r) => acc + r.value, 0);
     return total > 0 ? rows : [];
   }, [filteredContentPerf]);
+
+  // ---------- Derived: Selected User Snapshot ----------
+  type UserActivityRow = {
+    date: string;
+    type: "enroll" | "complete";
+    course: string;
+    score?: number | null;
+    totalQuestions?: number | null;
+    at?: string; // startedAt or completedAt
+  };
+
+  const selectedUserActivity = useMemo<UserActivityRow[]>(() => {
+    if (!selectedUserEmail || !overview?.trend?.length) return [];
+    const out: UserActivityRow[] = [];
+    for (const day of overview.trend as any[]) {
+      if (Array.isArray(day.enroll)) {
+        for (const e of day.enroll) {
+          if (e?.email === selectedUserEmail) {
+            out.push({
+              date: day.date,
+              type: "enroll",
+              course: e.course,
+              at: e.startedAt,
+            });
+          }
+        }
+      }
+      if (Array.isArray(day.complete)) {
+        for (const c of day.complete) {
+          if (c?.email === selectedUserEmail) {
+            out.push({
+              date: day.date,
+              type: "complete",
+              course: c.course,
+              score: typeof c.score === "number" ? c.score : null,
+              totalQuestions: typeof c.totalQuestions === "number" ? c.totalQuestions : null,
+              at: c.CompletedAt,
+            });
+          }
+        }
+      }
+    }
+    // sort desc by timestamp if any, else by date string
+    out.sort((a, b) => String(b.at || b.date).localeCompare(String(a.at || a.date)));
+    return out;
+  }, [selectedUserEmail, overview?.trend]);
+
+  const userSnapshot = useMemo(() => {
+    if (!selectedUserEmail) return null;
+    const enrolls = selectedUserActivity.filter((r) => r.type === "enroll").length;
+    const completes = selectedUserActivity.filter((r) => r.type === "complete");
+    const completedCount = completes.length;
+    const avgScore =
+      completes.length > 0
+        ? Math.round(
+            (completes
+              .map((r) => (typeof r.score === "number" ? r.score : 0))
+              .reduce((a, b) => a + b, 0) /
+              completes.length) * 10
+          ) / 10
+        : null;
+
+    const courses = Array.from(
+      new Set(selectedUserActivity.map((r) => r.course).filter(Boolean))
+    );
+
+    return {
+      enrolls,
+      completedCount,
+      avgScore,
+      courses,
+      recent: selectedUserActivity.slice(0, 8),
+    };
+  }, [selectedUserEmail, selectedUserActivity]);
 
   const handleClear = () => setFilterText({ course: "" });
 
@@ -546,6 +628,17 @@ const AdminDashboard = () => {
       },
     });
   };
+
+  // Filter team member list by search
+  const filteredMembers = useMemo(() => {
+    if (!userQuery.trim()) return teamMembers;
+    const q = userQuery.toLowerCase();
+    return teamMembers.filter(
+      (m: any) =>
+        String(m.name || "").toLowerCase().includes(q) ||
+        String(m.email || "").toLowerCase().includes(q)
+    );
+  }, [teamMembers, userQuery]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -598,35 +691,70 @@ const AdminDashboard = () => {
                     ))}
                   </div>
 
+                  {/* User List + Selector */}
                   <div className="mt-2">
-                    <div className="text-xs text-gray-500 mb-1">
-                      Members {selectedTeamIdForMembers ? `(Team ID: ${selectedTeamIdForMembers})` : ""}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs text-gray-500">
+                        Members {selectedTeamIdForMembers ? `(Team: ${selectedTeamIdForMembers})` : ""}
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Search user..."
+                        className="px-3 py-1.5 text-sm bg-gray-50 border rounded-full"
+                        value={userQuery}
+                        onChange={(e) => setUserQuery(e.target.value)}
+                      />
                     </div>
+
                     <div className="bg-gray-50 rounded-lg border p-3">
                       {teamMembersLoading ? (
                         <div className="text-sm text-gray-500">Loading members...</div>
                       ) : teamMembersError ? (
                         <div className="text-sm text-red-600">{teamMembersError}</div>
-                      ) : teamMembers.length === 0 ? (
+                      ) : filteredMembers.length === 0 ? (
                         <div className="text-sm text-gray-500">No members found.</div>
                       ) : (
                         <div className="overflow-x-auto">
-                          <table className="min-w-[520px] w-full text-sm">
+                          <table className="min-w-[560px] w-full text-sm">
                             <thead>
                               <tr className="text-left text-gray-600">
+                                <th className="py-2 px-3 w-8"></th>
                                 <th className="py-2 px-3">Name</th>
                                 <th className="py-2 px-3">Email</th>
                                 <th className="py-2 px-3">Role</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {teamMembers.map((m: any) => (
-                                <tr key={m.id || m.email} className="border-t">
-                                  <td className="py-2 px-3">{m.name || "-"}</td>
-                                  <td className="py-2 px-3">{m.email || "-"}</td>
-                                  <td className="py-2 px-3">{m.role || "member"}</td>
-                                </tr>
-                              ))}
+                              {filteredMembers.map((m: any) => {
+                                const isSel = selectedUserEmail === m.email;
+                                return (
+                                  <tr
+                                    key={m.id || m.email}
+                                    className={`border-t cursor-pointer ${
+                                      isSel ? "bg-blue-50" : "hover:bg-gray-100"
+                                    }`}
+                                    onClick={() => {
+                                      setSelectedUserEmail(m.email);
+                                      setSelectedUserName(m.name || m.email);
+                                    }}
+                                  >
+                                    <td className="py-2 px-3">
+                                      <input
+                                        type="radio"
+                                        aria-label="select user"
+                                        checked={isSel}
+                                        onChange={() => {
+                                          setSelectedUserEmail(m.email);
+                                          setSelectedUserName(m.name || m.email);
+                                        }}
+                                      />
+                                    </td>
+                                    <td className="py-2 px-3">{m.name || "-"}</td>
+                                    <td className="py-2 px-3">{m.email || "-"}</td>
+                                    <td className="py-2 px-3">{m.role || "member"}</td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -855,7 +983,115 @@ const AdminDashboard = () => {
 
           {/* Right column */}
           <div className="flex flex-col xl:flex-row justify-end gap-6 mb-6">
-            <div className="space-y-6">
+            {/* Selected User Snapshot */}
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-emerald-500 w-[420px]">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-lg font-semibold text-gray-700">Selected User</h2>
+                {selectedUserEmail && (
+                  <button
+                    className="text-xs text-red-600 hover:underline"
+                    onClick={() => {
+                      setSelectedUserEmail(null);
+                      setSelectedUserName(null);
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {!selectedUserEmail ? (
+                <div className="text-sm text-gray-500">
+                  Select a member on the left to analyze their activity.
+                </div>
+              ) : (
+                <>
+                  <div className="mb-3">
+                    <div className="text-sm font-medium text-gray-800">
+                      {selectedUserName || selectedUserEmail}
+                    </div>
+                    <div className="text-xs text-gray-500">{selectedUserEmail}</div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <div className="bg-emerald-50 border rounded-lg p-3">
+                      <div className="text-[11px] text-gray-500">Enrolls</div>
+                      <div className="text-xl font-semibold">
+                        {userSnapshot?.enrolls ?? 0}
+                      </div>
+                    </div>
+                    <div className="bg-emerald-50 border rounded-lg p-3">
+                      <div className="text-[11px] text-gray-500">Completed</div>
+                      <div className="text-xl font-semibold">
+                        {userSnapshot?.completedCount ?? 0}
+                      </div>
+                    </div>
+                    <div className="bg-emerald-50 border rounded-lg p-3">
+                      <div className="text-[11px] text-gray-500">Avg Score</div>
+                      <div className="text-xl font-semibold">
+                        {userSnapshot?.avgScore != null ? userSnapshot?.avgScore : "-"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <div className="text-xs text-gray-500 mb-1">Courses engaged</div>
+                    {userSnapshot?.courses?.length ? (
+                      <div className="flex flex-wrap gap-2">
+                        {userSnapshot!.courses.map((c) => (
+                          <span
+                            key={c}
+                            className="px-2 py-1 text-xs bg-gray-100 border rounded-full"
+                            title={c}
+                          >
+                            {c}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-500">-</div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Recent activity</div>
+                    {userSnapshot?.recent?.length ? (
+                      <ul className="space-y-2 max-h-64 overflow-auto pr-1">
+                        {userSnapshot!.recent.map((r, idx) => (
+                          <li key={idx} className="text-sm">
+                            <span
+                              className={`inline-block px-1.5 py-0.5 text-[10px] rounded border mr-2 ${
+                                r.type === "complete"
+                                  ? "bg-green-50 text-green-700 border-green-200"
+                                  : "bg-blue-50 text-blue-700 border-blue-200"
+                              }`}
+                            >
+                              {r.type}
+                            </span>
+                            <span className="font-medium">{r.course}</span>{" "}
+                            <span className="text-xs text-gray-500">
+                              {r.at ? new Date(r.at).toLocaleString() : r.date}
+                            </span>
+                            {r.type === "complete" && typeof r.score === "number" && (
+                              <span className="text-xs text-gray-600 ml-2">
+                                score: {Math.round(r.score)}
+                                {typeof r.totalQuestions === "number"
+                                  ? ` / ${r.totalQuestions}`
+                                  : ""}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="text-sm text-gray-500">No activity in range.</div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="space-y-6 w-[420px]">
               <AdminCalendar />
               <ScoreboardChart token={token || ""} />
             </div>
