@@ -330,7 +330,7 @@ function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | n
 }
 
 // ---------------------------------------------------------------------------
-// NEW: minimal profile type for /api/profile
+// NEW: minimal profile type for /api/profile + Assignment types
 // ---------------------------------------------------------------------------
 type MyProfile = {
   id: string;
@@ -339,7 +339,6 @@ type MyProfile = {
   avatarUrl?: string;
 };
 
-// assignment type (NEW multiple teams)
 type AssignmentTeam = {
   supervisor: string;
   teamName: string;
@@ -374,7 +373,7 @@ const AdminDashboard = () => {
     trainerEmail || null
   );
 
-  // ---------------- Trainer Assignment Info (NEW) ----------------
+  // ---------------- Trainer Assignment Info (multi-team) ----------------
   const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
   const [assignment, setAssignment] = useState<AssignmentResponse | null>(null);
 
@@ -382,20 +381,17 @@ const AdminDashboard = () => {
     const loadProfileAndAssignment = async () => {
       if (!token) return;
       try {
-        // 1) profile เพื่อหา trainerId
         const prof = await axios.get<MyProfile>("/api/profile", {
           headers: { Authorization: `Bearer ${token}` },
         });
         setMyProfile(prof.data);
 
-        // 2) assignment (หลายทีม)
         if (prof.data?.id) {
           const res = await axios.get<AssignmentResponse>(
             `/api/trainer-information/assignment/${prof.data.id}`,
             { headers: { Authorization: `Bearer ${token}` } }
           );
           const payload = res.data || { trainerId: prof.data.id, teams: [] };
-          // ทำให้มั่นใจว่าเป็น array เสมอ
           payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
           setAssignment(payload);
         } else {
@@ -408,6 +404,18 @@ const AdminDashboard = () => {
     loadProfileAndAssignment();
   }, [token]);
 
+  // ---------------- View scope (Individual / Team) ----------------
+  const hasTeams = (assignment?.teams?.length || 0) > 0;
+  const [view, setView] = useState<"individual" | "team">("individual");
+  const [teamId, setTeamId] = useState<string>("");
+
+  // sync default team when assignment loads
+  useEffect(() => {
+    if (hasTeams && !teamId) {
+      setTeamId(assignment!.teams[0].teamId);
+    }
+  }, [hasTeams, assignment, teamId]);
+
   // ---------------- Filters ----------------
   const [showFilter, setShowFilter] = useState(false);
   const [filterText, setFilterText] = useState({ course: "" });
@@ -416,7 +424,6 @@ const AdminDashboard = () => {
     () => new Date(Date.now() - 6 * 24 * 3600 * 1000),
     []
   );
-
   const [start, setStart] = useState(toDateInput(weekAgo));
   const [end, setEnd] = useState(toDateInput(today));
 
@@ -426,39 +433,63 @@ const AdminDashboard = () => {
   const [contentPerf, setContentPerf] = useState<ContentPerfItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // pagination for content-performance
+  const [limit, setLimit] = useState(10);
+  const [offset, setOffset] = useState(0);
+  const [total, setTotal] = useState(0);
+
+  const page = Math.floor(offset / limit) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)));
+
   const fetchAll = async () => {
     if (!token) return;
+    if (view === "team" && !teamId) return; // guard
     setLoading(true);
     setError(null);
     const auth = { headers: { Authorization: `Bearer ${token}` } };
 
+    const commonParams: Record<string, any> = {
+      start,
+      end,
+      view,
+      ...(view === "team" ? { teamId } : {}),
+    };
+
     try {
       const [ovRes, cpRes] = await Promise.all([
         axios.get<OverviewResponse>(ENDPOINTS.TrainerOverview, {
-          params: { start, end },
+          params: commonParams,
           ...auth,
         }),
         axios.get<ContentPerformanceResponse>(ENDPOINTS.TrainerPerformance, {
-          params: { start, end, order: "learners:desc", limit: 20, offset: 0 },
+          params: {
+            ...commonParams,
+            order: "learners:desc",
+            limit,
+            offset,
+            title: filterText.course || undefined,
+          },
           ...auth,
         }),
       ]);
       setOverview(ovRes.data);
       setContentPerf(cpRes.data.items || []);
+      setTotal((cpRes.data.total as unknown as number) ?? 0);
     } catch (e: any) {
       console.error("Failed to load trainer analytics:", e);
-      setError(
-        e?.response?.data?.error || e?.message || "Failed to load analytics"
-      );
+      setError(e?.response?.data?.error || e?.message || "Failed to load analytics");
+      setContentPerf([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
   };
 
+  // (re)load when scope/range/pagination changes
   useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [view, teamId, start, end, limit, offset]);
 
   // ---------- Derived (Chart) Data ----------
   const dailyActivity = useMemo(() => {
@@ -481,11 +512,14 @@ const AdminDashboard = () => {
         name: it.title,
         value: it.learners,
       }));
-    const total = rows.reduce((acc, r) => acc + r.value, 0);
-    return total > 0 ? rows : [];
+    const totalV = rows.reduce((acc, r) => acc + r.value, 0);
+    return totalV > 0 ? rows : [];
   }, [contentPerf, filterText.course]);
 
-  const handleClear = () => setFilterText({ course: "" });
+  const handleClear = () => {
+    setFilterText({ course: "" });
+    setOffset(0);
+  };
 
   const handleToastClick = (t: ToastItem) => {
     closeToast(t.id);
@@ -497,8 +531,13 @@ const AdminDashboard = () => {
     });
   };
 
-  // --------- Small UI helpers for assignment ----------
-  const hasTeams = (assignment?.teams?.length || 0) > 0;
+  // pagination actions
+  const goPrev = () => setOffset((o) => Math.max(0, o - limit));
+  const goNext = () => setOffset((o) => (o + limit < total ? o + limit : o));
+  const changeLimit = (n: number) => {
+    setLimit(n);
+    setOffset(0);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -507,7 +546,7 @@ const AdminDashboard = () => {
 
       {/* main */}
       <main className="flex-1 p-6 flex flex-col">
-        {/* header + filter */}
+        {/* header + controls */}
         <div className="flex justify-between items-start">
           <div>
             <h1 className="text-3xl font-bold text-gray-800 mb-1">
@@ -515,82 +554,102 @@ const AdminDashboard = () => {
             </h1>
             <p className="text-gray-600 mb-2 ml-10">Have a good day!</p>
 
-            {/* --- NEW: Assignment Section (multi-team) --- */}
-            
-            {/* --- /Assignment Section --- */}
+            {/* Assignment Box */}
+            <div className="bg-white rounded-xl border shadow-sm px-4 py-3 inline-block">
+              <div className="flex items-center gap-3">
+                <div className="text-sm font-semibold text-gray-700">Assignment</div>
+                <div className="text-xs text-gray-500">Trainer ID: {myProfile?.id || "-"}</div>
+              </div>
+              {!assignment ? (
+                <div className="text-sm text-gray-500 mt-2">Loading assignment...</div>
+              ) : (assignment.teams?.length || 0) === 0 ? (
+                <div className="text-sm text-gray-500 mt-2">
+                  {assignment.message || "Not Assigned"}
+                </div>
+              ) : (
+                <div className="mt-3 flex flex-wrap gap-3">
+                  {assignment.teams.map((t) => (
+                    <div
+                      key={t.teamId}
+                      className="flex items-center gap-3 px-3 py-2 bg-gray-50 border rounded-lg"
+                      title={`Team ID: ${t.teamId}`}
+                    >
+                      <div className="flex flex-col">
+                        <span className="text-[11px] text-gray-500">Team</span>
+                        <span className="text-sm font-medium text-gray-800">{t.teamName}</span>
+                      </div>
+                      <div className="w-px h-8 bg-gray-200 mx-1" />
+                      <div className="flex flex-col">
+                        <span className="text-[11px] text-gray-500">Supervisor</span>
+                        <span className="text-sm text-gray-800">{t.supervisor}</span>
+                      </div>
+                      <div className="w-px h-8 bg-gray-200 mx-1" />
+                      <div className="flex flex-col">
+                        <span className="text-[11px] text-gray-500">Team ID</span>
+                        <span className="text-[12px] font-mono text-gray-700">{t.teamId}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="flex items-center justify-end space-x-4">
-            <div className="ml-10 mb-4">
-              {/* <div className="bg-white border rounded-xl shadow-sm px-4 py-3">
-                
-              </div> */}
-              {/* <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-gray-700">
-                    Assignment
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    Trainer ID: {myProfile?.id || "-"}
-                  </div>
-                </div> */}
+          <div className="flex items-start justify-end space-x-4">
+            {/* Scope Controls */}
+            <div className="bg-white border rounded-xl shadow-sm px-4 py-3">
+              <div className="text-xs text-gray-500 mb-1">Scope</div>
+              <div className="flex gap-2">
+                <select
+                  className="px-3 py-2 bg-gray-50 border rounded-md text-sm"
+                  value={view}
+                  onChange={(e) => {
+                    const v = e.target.value as "individual" | "team";
+                    setView(v);
+                    setOffset(0);
+                  }}
+                >
+                  <option value="individual">Individual</option>
+                  <option value="team" disabled={!hasTeams}>
+                    Team
+                  </option>
+                </select>
 
-                {!assignment ? (
-                  <div className="text-sm text-gray-500 mt-2">Loading assignment...</div>
-                ) : !hasTeams ? (
-                  <div className="text-sm text-gray-500 mt-2">
-                    {assignment.message || "Not Assigned"}
-                  </div>
-                ) : (
-                  <div className="mt-3">
-                    <div className="text-xs text-gray-500 mb-2">
-                      {/* Teams ({assignment.teams.length}) */}
-                    </div>
-                    <div className="flex flex-wrap gap-3">
-                      {assignment.teams.map((t) => (
-                        <div
-                          key={t.teamId}
-                          className="flex items-center gap-3 px-3 py-2 bg-gray-50 border rounded-lg"
-                          title={`Team ID: ${t.teamId}`}
-                        >
-                          <div className="flex flex-col">
-                            <span className="text-[11px] text-gray-500">Team</span>
-                            <span className="text-sm font-medium text-gray-800">
-                              {t.teamName || "N/A"}
-                            </span>
-                          </div>
-                          <div className="w-px h-8 bg-gray-200 mx-1" />
-                          <div className="flex flex-col">
-                            <span className="text-[11px] text-gray-500">Supervisor</span>
-                            <span className="text-sm text-gray-800">
-                              {t.supervisor || "N/A"}
-                            </span>
-                          </div>
-                          <div className="w-px h-8 bg-gray-200 mx-1" />
-                          <div className="flex flex-col">
-                            <span className="text-[11px] text-gray-500">Team ID</span>
-                            <span className="text-[12px] font-mono text-gray-700">
-                              {t.teamId || "-"}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <select
+                  className="px-3 py-2 bg-gray-50 border rounded-md text-sm"
+                  disabled={view !== "team" || !hasTeams}
+                  value={teamId}
+                  onChange={(e) => {
+                    setTeamId(e.target.value);
+                    setOffset(0);
+                  }}
+                >
+                  {hasTeams ? (
+                    assignment!.teams.map((t) => (
+                      <option key={t.teamId} value={t.teamId}>
+                        {t.teamName}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">No team</option>
+                  )}
+                </select>
+              </div>
             </div>
+
             <RoleSwitcher />
 
-            <div className="relative flex items-center space-x-3">
-              {/* <button
+            {/* Filter popover */}
+            <div className="relative flex items-center">
+              <button
                 className="flex items-center gap-2 px-4 py-2 bg-white border shadow rounded-full hover:bg-gray-100"
                 onClick={() => setShowFilter(!showFilter)}
               >
                 <FaFilter /> Filter
-              </button> */}
-              <AdminAvatarWidget />
+              </button>
 
               {showFilter && (
-                <div className="absolute right-0 mt-2 w-72 bg-white border shadow-lg rounded-xl z-10 p-4 space-y-3">
+                <div className="absolute right-0 top-12 w-80 bg-white border shadow-lg rounded-xl z-10 p-4 space-y-3">
                   <p className="font-semibold text-gray-700">Filter & Range</p>
 
                   <div className="grid grid-cols-2 gap-2">
@@ -600,7 +659,10 @@ const AdminDashboard = () => {
                         type="date"
                         className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
                         value={start}
-                        onChange={(e) => setStart(e.target.value)}
+                        onChange={(e) => {
+                          setStart(e.target.value);
+                          setOffset(0);
+                        }}
                       />
                     </div>
                     <div>
@@ -609,7 +671,10 @@ const AdminDashboard = () => {
                         type="date"
                         className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
                         value={end}
-                        onChange={(e) => setEnd(e.target.value)}
+                        onChange={(e) => {
+                          setEnd(e.target.value);
+                          setOffset(0);
+                        }}
                       />
                     </div>
                   </div>
@@ -619,14 +684,14 @@ const AdminDashboard = () => {
                     placeholder="Filter course title"
                     className="w-full px-4 py-2 bg-gray-100 rounded-full text-sm"
                     value={filterText.course}
-                    onChange={(e) => setFilterText({ course: e.target.value })}
+                    onChange={(e) => {
+                      setFilterText({ course: e.target.value });
+                      setOffset(0);
+                    }}
                   />
 
                   <div className="flex justify-between pt-1">
-                    <button
-                      onClick={handleClear}
-                      className="text-sm text-red-500 hover:underline"
-                    >
+                    <button onClick={handleClear} className="text-sm text-red-500 hover:underline">
                       Clear
                     </button>
                     <button
@@ -639,15 +704,29 @@ const AdminDashboard = () => {
                 </div>
               )}
             </div>
+
+            <AdminAvatarWidget />
           </div>
         </div>
 
         {/* KPI */}
         {overview && (
-          <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
+              <div className="text-xs text-gray-500">Scope</div>
+              <div className="text-sm font-semibold">
+                {view === "team"
+                  ? `Team • ${(assignment?.teams.find((t) => t.teamId === teamId)?.teamName) || "-"}`
+                  : "Individual"}
+              </div>
+            </div>
             <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
               <div className="text-xs text-gray-500">Total Contents</div>
               <div className="text-2xl font-bold">{overview.kpi.totalContents}</div>
+            </div>
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-indigo-500">
+              <div className="text-xs text-gray-500">Active Learners</div>
+              <div className="text-2xl font-bold">{(overview as any)?.kpi?.activeLearners ?? "-"}</div>
             </div>
             <div className="bg-white rounded-xl shadow p-4 border-t-8 border-indigo-500">
               <div className="text-xs text-gray-500">New Enrollments</div>
@@ -706,9 +785,7 @@ const AdminDashboard = () => {
 
             {/* Donut charts by Course */}
             <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
-              <h2 className="text-lg font-semibold text-gray-700 mb-4">
-                Learners by Content
-              </h2>
+              <h2 className="text-lg font-semibold text-gray-700 mb-4">Learners by Content</h2>
 
               {pieData.length === 0 ? (
                 <div className="text-sm text-gray-500">No data in range.</div>
@@ -741,6 +818,119 @@ const AdminDashboard = () => {
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Content Performance (table-lite) */}
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-semibold text-gray-700">Content Performance</h2>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-gray-500">Rows</span>
+                  <select
+                    className="px-2 py-1 bg-gray-50 border rounded"
+                    value={limit}
+                    onChange={(e) => changeLimit(Number(e.target.value))}
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                  <div className="w-px h-5 bg-gray-200 mx-1" />
+                  <button
+                    className="px-2 py-1 rounded border bg-gray-50 hover:bg-gray-100"
+                    onClick={() => setOffset(0)}
+                    title="Refresh"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-600 border-b">
+                      <th className="py-2 pr-3">Title</th>
+                      <th className="py-2 px-3">Learners</th>
+                      <th className="py-2 px-3">Completion Rate</th>
+                      <th className="py-2 px-3">Avg Score</th>
+                      <th className="py-2 pl-3">Learners (detail)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contentPerf.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="text-center py-6 text-gray-500">
+                          No content in this range/scope.
+                        </td>
+                      </tr>
+                    ) : (
+                      contentPerf.map((it) => (
+                        <tr key={it.contentId} className="border-b align-top">
+                          <td className="py-2 pr-3 font-medium text-gray-800">{it.title}</td>
+                          <td className="py-2 px-3">{it.learners}</td>
+                          <td className="py-2 px-3">
+                            {Math.round(((it as any).completionRate || 0) * 100)}%
+                          </td>
+                          <td className="py-2 px-3">
+                            {(it as any).avgScore == null
+                              ? "-"
+                              : Math.round((it as any).avgScore)}
+                          </td>
+                          <td className="py-2 pl-3">
+                            {(it as any).learners && (it as any).learners.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {(it as any).learners.slice(0, 6).map((lr: any, idx: number) => (
+                                  <div
+                                    key={idx}
+                                    className="px-2 py-1 rounded bg-gray-50 border text-[12px]"
+                                    title={`${lr.email} • ${lr.percent ?? 0}% • score: ${
+                                      lr.score ?? "-"
+                                    }`}
+                                  >
+                                    {lr.name || lr.email}
+                                  </div>
+                                ))}
+                                {(it as any).learners.length > 6 && (
+                                  <span className="text-xs text-gray-500">
+                                    +{(it as any).learners.length - 6} more
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* pagination */}
+              <div className="flex items-center justify-between mt-3">
+                <div className="text-xs text-gray-500">
+                  Page {page} / {totalPages} • Total {total}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    className="px-3 py-1 border rounded disabled:opacity-50"
+                    onClick={goPrev}
+                    disabled={offset === 0}
+                  >
+                    Prev
+                  </button>
+                  <button
+                    className="px-3 py-1 border rounded disabled:opacity-50"
+                    onClick={goNext}
+                    disabled={offset + limit >= total}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
