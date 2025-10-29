@@ -1,83 +1,873 @@
-3react-dom.development.js:13123  Uncaught Error: Objects are not valid as a React child (found: object with keys {name, email, percent, score}). If you meant to render a collection of children, use an array instead.
-    at throwOnInvalidObjectType (react-dom.development.js:13123:9)
-    at createChild (react-dom.development.js:13375:7)
-    at reconcileChildrenArray (react-dom.development.js:13640:25)
-    at reconcileChildFibers2 (react-dom.development.js:14057:16)
-    at reconcileChildren (react-dom.development.js:19186:28)
-    at updateHostComponent (react-dom.development.js:19953:3)
-    at beginWork (react-dom.development.js:21657:14)
-    at HTMLUnknownElement.callCallback2 (react-dom.development.js:4164:14)
-    at Object.invokeGuardedCallbackDev (react-dom.development.js:4213:16)
-    at invokeGuardedCallback (react-dom.development.js:4277:31)
-throwOnInvalidObjectType @ react-dom.development.js:13123
-createChild @ react-dom.development.js:13375
-reconcileChildrenArray @ react-dom.development.js:13640
-reconcileChildFibers2 @ react-dom.development.js:14057
-reconcileChildren @ react-dom.development.js:19186
-updateHostComponent @ react-dom.development.js:19953
-beginWork @ react-dom.development.js:21657
-callCallback2 @ react-dom.development.js:4164
-invokeGuardedCallbackDev @ react-dom.development.js:4213
-invokeGuardedCallback @ react-dom.development.js:4277
-beginWork$1 @ react-dom.development.js:27490
-performUnitOfWork @ react-dom.development.js:26596
-workLoopSync @ react-dom.development.js:26505
-renderRootSync @ react-dom.development.js:26473
-recoverFromConcurrentError @ react-dom.development.js:25889
-performConcurrentWorkOnRoot @ react-dom.development.js:25789
-workLoop @ scheduler.development.js:266
-flushWork @ scheduler.development.js:239
-performWorkUntilDeadline @ scheduler.development.js:533
-3react-dom.development.js:18704  The above error occurred in the <td> component:
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useState, useContext, useEffect, useMemo, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import AdminSidebarWidget from "../Widgets/AdminSideBar";
+import AdminCalendar from "../Widgets/AdminCalendar";
+import AdminAvatarWidget from "../Widgets/AdminAvatarWidget";
+import ScoreboardChart from "../../../components/ScoreboardChart";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+} from "recharts";
+import axios from "axios";
+import RoleSwitcher from "../../../components/RoleSwitcher";
+import { EventSourcePolyfill } from "event-source-polyfill";
+import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
+import {
+  COLORS,
+  type ContentPerfItem,
+  type ContentPerformanceResponse,
+  type OverviewResponse,
+} from "../../../types/trainer/types";
+import { ENDPOINTS } from "../../../config/endpoints";
 
-    at td
-    at tr
-    at tbody
-    at table
-    at div
-    at div
-    at div
-    at div
-    at main
-    at div
-    at AdminDashboard (http://localhost:5173/src/pages/Admin/Dashboard/AdminDashboard.tsx?t=1761720644392:336:31)
-    at RenderedRoute (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=24d671f9:5653:26)
-    at Routes (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=24d671f9:6389:3)
-    at Suspense
-    at AdminRoutes
-    at RenderedRoute (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=24d671f9:5653:26)
-    at Routes (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=24d671f9:6389:3)
-    at Suspense
-    at Router (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=24d671f9:6332:13)
-    at BrowserRouter (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=24d671f9:9416:3)
-    at AuthProvider (http://localhost:5173/src/Authentication/AuthContext.tsx:29:32)
-    at App
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+function toDateInput(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+const isDocVisible = () =>
+  typeof document !== "undefined" ? document.visibilityState === "visible" : true;
 
-Consider adding an error boundary to your tree to customize error handling behavior.
-Visit https://reactjs.org/link/error-boundaries to learn more about error boundaries.
-logCapturedError @ react-dom.development.js:18704
-update.callback @ react-dom.development.js:18737
-callCallback @ react-dom.development.js:15036
-commitUpdateQueue @ react-dom.development.js:15057
-commitLayoutEffectOnFiber @ react-dom.development.js:23430
-commitLayoutMountEffects_complete @ react-dom.development.js:24727
-commitLayoutEffects_begin @ react-dom.development.js:24713
-commitLayoutEffects @ react-dom.development.js:24651
-commitRootImpl @ react-dom.development.js:26862
-commitRoot @ react-dom.development.js:26721
-finishConcurrentRender @ react-dom.development.js:25931
-performConcurrentWorkOnRoot @ react-dom.development.js:25848
-workLoop @ scheduler.development.js:266
-flushWork @ scheduler.development.js:239
-performWorkUntilDeadline @ scheduler.development.js:533
-react-dom.development.js:13123  Uncaught Error: Objects are not valid as a React child (found: object with keys {name, email, percent, score}). If you meant to render a collection of children, use an array instead.
-    at throwOnInvalidObjectType (react-dom.development.js:13123:9)
-    at createChild (react-dom.development.js:13375:7)
-    at reconcileChildrenArray (react-dom.development.js:13640:25)
-    at reconcileChildFibers2 (react-dom.development.js:14057:16)
-    at reconcileChildren (react-dom.development.js:19186:28)
-    at updateHostComponent (react-dom.development.js:19953:3)
-    at beginWork (react-dom.development.js:21657:14)
-    at beginWork$1 (react-dom.development.js:27465:14)
-    at performUnitOfWork (react-dom.development.js:26596:12)
-    at workLoopSync (react-dom.development.js:26505:5)
+// Normalize learners field to a number (fixes crash when an array leaks into the UI)
+const getLearnersCount = (row: any) => {
+  if (!row) return 0;
+  if (Array.isArray(row.learners)) return row.learners.length;
+  if (typeof row.learnersCount === "number") return row.learnersCount;
+  if (typeof row.learners === "number") return row.learners;
+  return 0;
+};
+
+// helpers for localStorage (per trainer)
+const dismissedKey = (email: string) => `QA_DISMISSED_${email}`;
+const lastSeenKey = (email: string) => `QA_LAST_SEEN_${email}`;
+function loadDismissed(email: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(dismissedKey(email));
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as string[];
+    return new Set(arr);
+  } catch {
+    return new Set();
+  }
+}
+function saveDismissed(email: string, set: Set<string>) {
+  try {
+    localStorage.setItem(dismissedKey(email), JSON.stringify([...set]));
+  } catch {}
+}
+function loadLastSeen(email: string): string {
+  try {
+    return localStorage.getItem(lastSeenKey(email)) || "";
+  } catch {
+    return "";
+  }
+}
+function saveLastSeen(email: string, iso: string) {
+  try {
+    localStorage.setItem(lastSeenKey(email), iso);
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Toast (popup) มุมขวาล่าง
+// ---------------------------------------------------------------------------
+type QuestionAlert = {
+  id: string;
+  userEmail: string;
+  lessonId?: string | number;
+  lessonTitle?: string;
+  question: string;
+  createdAt?: string;
+};
+type ToastItem = QuestionAlert & { _ts: number };
+
+function ToastCard({
+  toast,
+  onClose,
+  onClick,
+}: {
+  toast: ToastItem;
+  onClose: (id: string) => void;
+  onClick?: (toast: ToastItem) => void;
+}) {
+  const [hover, setHover] = useState(false);
+
+  useEffect(() => {
+    if (hover) return;
+    const t = setTimeout(() => onClose(toast.id), 8000);
+    return () => clearTimeout(t);
+  }, [hover, toast.id, onClose]);
+
+  return (
+    <div
+      className="w-80 max-w-[88vw] bg-white shadow-xl rounded-xl border p-3 cursor-pointer transition hover:shadow-2xl"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={() => onClick?.(toast)}
+      role="alert"
+      aria-live="polite"
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-sm">
+          Q
+        </div>
+        <div className="flex-1">
+          <div className="text-xs text-gray-500 mb-0.5">
+            {toast.lessonTitle ? toast.lessonTitle : "New Question"} • {toast.userEmail}
+          </div>
+          <div className="text-sm text-gray-800 line-clamp-3 whitespace-pre-wrap">
+            {toast.question}
+          </div>
+          {toast.createdAt && (
+            <div className="text-[10px] text-gray-400 mt-1">
+              {new Date(toast.createdAt).toLocaleString()}
+            </div>
+          )}
+        </div>
+        <button
+          aria-label="Close notification"
+          className="text-gray-400 hover:text-gray-600 ml-1"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose(toast.id);
+          }}
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ToastStack({
+  toasts,
+  onClose,
+  onItemClick,
+  onMarkAllRead,
+}: {
+  toasts: ToastItem[];
+  onClose: (id: string) => void;
+  onItemClick?: (toast: ToastItem) => void;
+  onMarkAllRead?: () => void;
+}) {
+  if (toasts.length === 0) return null;
+  return (
+    <div className="fixed bottom-4 right-4 z-[60] flex flex-col gap-3">
+      <div className="flex justify-end">
+        <button
+          className="text-xs px-2 py-1 rounded-full bg-gray-100 border hover:bg-gray-200"
+          onClick={onMarkAllRead}
+        >
+          Mark all as read
+        </button>
+      </div>
+      {toasts.map((t) => (
+        <ToastCard key={t.id} toast={t} onClose={onClose} onClick={onItemClick} />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Hook: รับ “คำถามใหม่สำหรับเทรนเนอร์” (SSE → fallback polling)
+// ---------------------------------------------------------------------------
+function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | null) {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const dismissedRef = useRef<Set<string>>(new Set());
+  const seenIds = useRef<Set<string>>(new Set());
+  const lastSeenAt = useRef<string>(""); // ISO string
+  const sseRef = useRef<EventSourcePolyfill | null>(null);
+  const pollTimer = useRef<number | null>(null);
+
+  const SSE_URL = "/api/user-question-answer/stream";
+  const POLL_URL = "/api/user-question-answer/pending";
+
+  useEffect(() => {
+    if (!trainerEmail) return;
+    dismissedRef.current = loadDismissed(trainerEmail);
+    lastSeenAt.current = loadLastSeen(trainerEmail);
+  }, [trainerEmail]);
+
+  const persistLastSeen = (iso: string | undefined) => {
+    if (!trainerEmail || !iso) return;
+    lastSeenAt.current = iso;
+    saveLastSeen(trainerEmail, iso);
+  };
+
+  const pushToasts = (items: QuestionAlert[]) => {
+    if (!items?.length) return;
+    const newOnes: ToastItem[] = [];
+    for (const it of items) {
+      if (!it?.id) continue;
+      if (trainerEmail && dismissedRef.current.has(it.id)) continue;
+      if (seenIds.current.has(it.id)) continue;
+
+      seenIds.current.add(it.id);
+      newOnes.push({ ...it, _ts: Date.now() });
+
+      if (it.createdAt && it.createdAt > (lastSeenAt.current || "")) {
+        persistLastSeen(it.createdAt);
+      }
+    }
+    if (newOnes.length) setToasts((prev) => [...prev, ...newOnes].slice(-6));
+  };
+
+  useEffect(() => {
+    if (!token || !trainerEmail) return;
+
+    sseRef.current?.close();
+    sseRef.current = null;
+
+    const params = new URLSearchParams();
+    params.set("trainer", trainerEmail.trim().toLowerCase());
+    if (lastSeenAt.current) params.set("since", lastSeenAt.current);
+
+    const url = `${SSE_URL}?${params.toString()}`;
+    const es = new EventSourcePolyfill(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      withCredentials: false,
+    });
+
+    const onQuestion = (ev: MessageEvent) => {
+      try {
+        const raw = typeof ev.data === "string" ? ev.data : String(ev.data);
+        const payload = JSON.parse(raw) as QuestionAlert | QuestionAlert[];
+        const arr = Array.isArray(payload) ? payload : [payload];
+        const sortedDates = arr.map((a) => a.createdAt).filter(Boolean).sort();
+        const latest =
+          sortedDates.length > 0 ? (sortedDates[sortedDates.length - 1] as string) : undefined;
+        if (latest) persistLastSeen(latest);
+        pushToasts(arr);
+      } catch { /* empty */ }
+    };
+
+    (es as any).addEventListener("question", onQuestion as any);
+    es.onerror = () => {
+      es.close();
+      sseRef.current = null;
+    };
+    sseRef.current = es;
+
+    return () => {
+      try {
+        (es as any).removeEventListener("question", onQuestion as any);
+      } finally {
+        es.close();
+        sseRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, trainerEmail]);
+
+  useEffect(() => {
+    if (!token || !trainerEmail) return;
+
+    const tick = async () => {
+      if (!isDocVisible()) {
+        schedule();
+        return;
+      }
+      try {
+        const res = await axios.get<QuestionAlert[]>(POLL_URL, {
+          params: {
+            trainer: trainerEmail.trim().toLowerCase(),
+            since: lastSeenAt.current || undefined,
+            limit: 20,
+          },
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        pushToasts(Array.isArray(res.data) ? res.data : []);
+      } catch { /* empty */ } finally {
+        schedule();
+      }
+    };
+
+    const schedule = () => {
+      if (pollTimer.current) window.clearTimeout(pollTimer.current);
+      pollTimer.current = window.setTimeout(tick, 15000) as unknown as number;
+    };
+
+    pollTimer.current = window.setTimeout(tick, 3000) as unknown as number;
+
+    const onVisibility = () => {
+      if (isDocVisible()) {
+        if (pollTimer.current) window.clearTimeout(pollTimer.current);
+        pollTimer.current = window.setTimeout(tick, 1000) as unknown as number;
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      if (pollTimer.current) window.clearTimeout(pollTimer.current);
+      pollTimer.current = null;
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [token, trainerEmail]);
+
+  const closeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    if (trainerEmail) {
+      dismissedRef.current.add(id);
+      saveDismissed(trainerEmail, dismissedRef.current);
+    }
+  };
+  const markAllRead = () => {
+    setToasts((prev) => {
+      if (trainerEmail) {
+        for (const t of prev) dismissedRef.current.add(t.id);
+        saveDismissed(trainerEmail, dismissedRef.current);
+      }
+      return [];
+    });
+  };
+
+  return { toasts, closeToast, markAllRead };
+}
+
+// ---------------------------------------------------------------------------
+// NEW: minimal profile type for /api/profile
+// ---------------------------------------------------------------------------
+type MyProfile = {
+  id: string;
+  name?: string;
+  email: string;
+  avatarUrl?: string;
+};
+
+// assignment type (multi-team)
+type AssignmentTeam = {
+  supervisor: string;
+  teamName: string;
+  teamId: string;
+};
+type AssignmentResponse = {
+  trainerId: string;
+  teams: AssignmentTeam[];
+  message?: string;
+};
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+const AdminDashboard = () => {
+  const { token: ctxToken } = useContext(AuthContext);
+  const token =
+    ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
+  const navigate = useNavigate();
+
+  // block unauthenticated
+  useEffect(() => {
+    if (!token) navigate("/");
+  }, [token, navigate]);
+
+  const { fullName, email: trainerEmail } = useUserProfile(token || null);
+  const displayName = fullName || "Administrator";
+
+  // ---------- popup คำถามใหม่ ----------
+  const { toasts, closeToast, markAllRead } = useTrainerQuestionAlerts(
+    token || null,
+    trainerEmail || null
+  );
+
+  // ---------------- Trainer Assignment Info (NEW) ----------------
+  const [, setMyProfile] = useState<MyProfile | null>(null);
+  const [assignment, setAssignment] = useState<AssignmentResponse | null>(null);
+  const [selectedTeamIdForMembers, setSelectedTeamIdForMembers] = useState<string | null>(null);
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const [teamMembersLoading, setTeamMembersLoading] = useState(false);
+  const [teamMembersError, setTeamMembersError] = useState<string | null>(null);
+
+  const hasTeams = useMemo(() => (assignment?.teams?.length || 0) > 0, [assignment?.teams]);
+
+  useEffect(() => {
+    const loadProfileAndAssignment = async () => {
+      if (!token) return;
+      try {
+        // 1) profile เพื่อหา trainerId
+        const prof = await axios.get<MyProfile>("/api/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setMyProfile(prof.data);
+
+        // 2) assignment (หลายทีม)
+        if (prof.data?.id) {
+          const res = await axios.get<AssignmentResponse>(
+            `/api/trainer-information/assignment/${prof.data.id}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          const payload = res.data || { trainerId: prof.data.id, teams: [] };
+          payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
+          setAssignment(payload);
+        } else {
+          setAssignment({ trainerId: "", teams: [] });
+        }
+      } catch {
+        setAssignment({ trainerId: "", teams: [] });
+      }
+    };
+    loadProfileAndAssignment();
+  }, [token]);
+
+  const fetchTeamMembers = async (teamId: string | null) => {
+    if (!teamId || !token) return;
+    setTeamMembersLoading(true);
+    setTeamMembersError(null);
+    try {
+      const res = await axios.get<any[]>(`/teams/${encodeURIComponent(teamId)}/members`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setTeamMembers(Array.isArray(res.data) ? res.data : []);
+      setSelectedTeamIdForMembers(teamId);
+    } catch (e: any) {
+      setTeamMembers([]);
+      setTeamMembersError(e?.response?.data?.message || e?.message || "Failed to load members");
+    } finally {
+      setTeamMembersLoading(false);
+    }
+  };
+
+  // auto-load first team’s members
+  useEffect(() => {
+    if (hasTeams && assignment?.teams?.length) {
+      const first = assignment.teams[0];
+      if (first?.teamId) fetchTeamMembers(first.teamId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignment?.teams]);
+
+  // ---------------- Filters ----------------
+  const [showFilter, setShowFilter] = useState(false);
+  const [filterText, setFilterText] = useState({ course: "" });
+  const today = useMemo(() => new Date(), []);
+  const weekAgo = useMemo(
+    () => new Date(Date.now() - 6 * 24 * 3600 * 1000),
+    []
+  );
+
+  const [start, setStart] = useState(toDateInput(weekAgo));
+  const [end, setEnd] = useState(toDateInput(today));
+
+  // ---------------- Data ----------------
+  const [loading, setLoading] = useState(false);
+  const [overview, setOverview] = useState<OverviewResponse | null>(null);
+  const [contentPerf, setContentPerf] = useState<ContentPerfItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchAll = async () => {
+    if (!token) return;
+    setLoading(true);
+    setError(null);
+    const auth = { headers: { Authorization: `Bearer ${token}` } };
+
+    try {
+      const [ovRes, cpRes] = await Promise.all([
+        axios.get<OverviewResponse>(ENDPOINTS.TrainerOverview, {
+          params: { start, end },
+          ...auth,
+        }),
+        axios.get<ContentPerformanceResponse>(ENDPOINTS.TrainerPerformance, {
+          params: { start, end, order: "learners:desc", limit: 20, offset: 0 },
+          ...auth,
+        }),
+      ]);
+      setOverview(ovRes.data);
+      setContentPerf(cpRes.data.items || []);
+    } catch (e: any) {
+      setError(e?.response?.data?.error || e?.message || "Failed to load analytics");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---------- Derived (Chart) Data ----------
+  const dailyActivity = useMemo(() => {
+    if (!overview?.trend?.length) return [];
+    return overview.trend.map((t: any) => ({
+      date: t.date,
+      enroll: t.enrollCount ?? t.enroll ?? 0,
+      complete: t.completeCount ?? t.complete ?? 0,
+    }));
+  }, [overview]);
+
+  const filteredContentPerf = useMemo(
+    () =>
+      contentPerf.filter((it) =>
+        filterText.course
+          ? it.title.toLowerCase().includes(filterText.course.toLowerCase())
+          : true
+      ),
+    [contentPerf, filterText.course]
+  );
+
+  const pieData = useMemo(() => {
+    const rows = filteredContentPerf.map((it) => ({
+      name: it.title,
+      value: getLearnersCount(it), // SAFE!
+    }));
+    const total = rows.reduce((acc, r) => acc + r.value, 0);
+    return total > 0 ? rows : [];
+  }, [filteredContentPerf]);
+
+  const handleClear = () => setFilterText({ course: "" });
+
+  const handleToastClick = (t: ToastItem) => {
+    closeToast(t.id);
+    navigate("/administrator/administrator/task-management", {
+      state: {
+        focusUserEmail: t.userEmail,
+        focusLessonId: t.lessonId,
+      },
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* sidebar */}
+      <AdminSidebarWidget />
+
+      {/* main */}
+      <main className="flex-1 p-6 flex flex-col">
+        {/* header + filter */}
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-800 mb-1">
+              👋 Welcome, {displayName}
+            </h1>
+            <p className="text-gray-600 mb-2 ml-10">Have a good day!</p>
+
+            {/* --- Assignment Section (multi-team) --- */}
+            <div className="bg-white border rounded-xl shadow-sm px-4 py-3 max-w-3xl">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-semibold text-gray-700">
+                  Assignment
+                </div>
+                <div className="text-xs text-gray-500">
+                  Teams: {assignment?.teams?.length ?? 0}
+                </div>
+              </div>
+
+              {!assignment ? (
+                <div className="text-sm text-gray-500">Loading assignment...</div>
+              ) : !hasTeams ? (
+                <div className="text-sm text-gray-500">
+                  {assignment.message || "Not Assigned"}
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-3 mb-3">
+                    {assignment.teams.map((t) => (
+                      <button
+                        key={t.teamId}
+                        onClick={() => fetchTeamMembers(t.teamId)}
+                        className={`px-3 py-2 rounded-lg border text-sm ${
+                          selectedTeamIdForMembers === t.teamId
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-gray-50 text-gray-800 hover:bg-gray-100"
+                        }`}
+                        title={`Supervisor: ${t.supervisor || "N/A"}`}
+                      >
+                        {t.teamName || "N/A"}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-2">
+                    <div className="text-xs text-gray-500 mb-1">
+                      Members {selectedTeamIdForMembers ? `(Team ID: ${selectedTeamIdForMembers})` : ""}
+                    </div>
+                    <div className="bg-gray-50 rounded-lg border p-3">
+                      {teamMembersLoading ? (
+                        <div className="text-sm text-gray-500">Loading members...</div>
+                      ) : teamMembersError ? (
+                        <div className="text-sm text-red-600">{teamMembersError}</div>
+                      ) : teamMembers.length === 0 ? (
+                        <div className="text-sm text-gray-500">No members found.</div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="min-w-[520px] w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-gray-600">
+                                <th className="py-2 px-3">Name</th>
+                                <th className="py-2 px-3">Email</th>
+                                <th className="py-2 px-3">Role</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {teamMembers.map((m: any) => (
+                                <tr key={m.id || m.email} className="border-t">
+                                  <td className="py-2 px-3">{m.name || "-"}</td>
+                                  <td className="py-2 px-3">{m.email || "-"}</td>
+                                  <td className="py-2 px-3">{m.role || "member"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            {/* --- /Assignment Section --- */}
+          </div>
+
+          <div className="flex items-center justify-end space-x-4">
+            <RoleSwitcher />
+            <div className="relative flex items-center space-x-3">
+              <button
+                className="flex items-center gap-2 px-4 py-2 bg-white border shadow rounded-full hover:bg-gray-100"
+                onClick={() => setShowFilter(!showFilter)}
+              >
+                {/* @ts-ignore icon only */}
+                <span className="i">🔍</span> Filter
+              </button>
+              <AdminAvatarWidget />
+
+              {showFilter && (
+                <div className="absolute right-0 mt-2 w-72 bg-white border shadow-lg rounded-xl z-10 p-4 space-y-3">
+                  <p className="font-semibold text-gray-700">Filter & Range</p>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">Start</div>
+                      <input
+                        type="date"
+                        className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
+                        value={start}
+                        onChange={(e) => setStart(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">End</div>
+                      <input
+                        type="date"
+                        className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
+                        value={end}
+                        onChange={(e) => setEnd(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <input
+                    type="text"
+                    placeholder="Filter course title"
+                    className="w-full px-4 py-2 bg-gray-100 rounded-full text-sm"
+                    value={filterText.course}
+                    onChange={(e) => setFilterText({ course: e.target.value })}
+                  />
+
+                  <div className="flex justify-between pt-1">
+                    <button
+                      onClick={() => setFilterText({ course: "" })}
+                      className="text-sm text-red-500 hover:underline"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={fetchAll}
+                      className="px-3 py-1 text-sm bg-blue-600 text-white rounded-full hover:bg-blue-700"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* KPI */}
+        {overview && (
+          <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
+              <div className="text-xs text-gray-500">Total Contents</div>
+              <div className="text-2xl font-bold">{overview.kpi.totalContents}</div>
+            </div>
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-indigo-500">
+              <div className="text-xs text-gray-500">New Enrollments</div>
+              <div className="text-2xl font-bold">{overview.kpi.newEnrollments}</div>
+            </div>
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-fuchsia-500">
+              <div className="text-xs text-gray-500">Completion Rate</div>
+              <div className="text-2xl font-bold">
+                {Math.round((overview.kpi.completionRate || 0) * 100)}%
+              </div>
+            </div>
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-rose-500">
+              <div className="text-xs text-gray-500">Avg Score</div>
+              <div className="text-2xl font-bold">
+                {overview.kpi.avgScore == null ? "-" : Math.round(overview.kpi.avgScore)}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
+            {String(error)}
+          </div>
+        )}
+
+        {/* Summary */}
+        <h2 className="text-xl font-semibold text-gray-700 mb-2 ml-2">Summary</h2>
+
+        <div className="flex flex-col xl:flex-row gap-6">
+          {/* Left column */}
+          <div className="flex-1 space-y-6">
+            {/* Bar chart: Daily Activity */}
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-lg font-semibold text-gray-700">
+                  Daily Activity (Enroll / Complete)
+                </h2>
+                <div className="text-xs text-gray-500">
+                  Range {start} → {end}
+                </div>
+              </div>
+
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={dailyActivity}>
+                  <XAxis dataKey="date" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="enroll" name="Enroll" radius={[4, 4, 0, 0]} fill="#0575E6" />
+                  <Bar dataKey="complete" name="Complete" radius={[4, 4, 0, 0]} fill="#22C55E" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Donut charts by Course */}
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
+              <h2 className="text-lg font-semibold text-gray-700 mb-4">
+                Learners by Content
+              </h2>
+
+              {pieData.length === 0 ? (
+                <div className="text-sm text-gray-500">No data in range.</div>
+              ) : (
+                <div className="flex flex-wrap justify-center gap-6">
+                  <div className="flex flex-col items-center w-[320px] max-w-full">
+                    <h3 className="text-sm font-semibold mb-2 text-center">
+                      {filterText.course ? `Filtered: ${filterText.course}` : "All Contents"}
+                    </h3>
+                    <ResponsiveContainer width="100%" height={240}>
+                      <PieChart>
+                        <Pie
+                          data={pieData}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={90}
+                          label
+                          isAnimationActive
+                        >
+                          {pieData.map((_, i) => (
+                            <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Content Performance Table */}
+            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-semibold text-gray-700">Content Performance</h2>
+                <button
+                  onClick={fetchAll}
+                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded-full hover:bg-blue-700"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-[720px] w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-600">
+                      <th className="py-2 px-3">Title</th>
+                      <th className="py-2 px-3">Learners</th>
+                      <th className="py-2 px-3">Completion</th>
+                      <th className="py-2 px-3">Avg Score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredContentPerf.length === 0 ? (
+                      <tr>
+                        <td className="py-3 px-3 text-gray-500" colSpan={4}>
+                          No content in range.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredContentPerf.map((it: any) => (
+                        <tr key={it.contentId || it.id || it.title} className="border-t">
+                          <td className="py-2 px-3">{it.title}</td>
+                          <td className="py-2 px-3">{getLearnersCount(it)}</td>
+                          <td className="py-2 px-3">
+                            {Math.round(((it.completionRate || 0) as number) * 100)}%
+                          </td>
+                          <td className="py-2 px-3">
+                            {typeof it.avgScore === "number" ? Math.round(it.avgScore) : "-"}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Right column */}
+          <div className="flex flex-col xl:flex-row justify-end gap-6 mb-6">
+            <div className="space-y-6">
+              <AdminCalendar />
+              <ScoreboardChart token={token || ""} />
+            </div>
+          </div>
+        </div>
+
+        {loading && (
+          <div className="fixed inset-0 flex items-center justify-center bg-black/20">
+            <div className="animate-spin rounded-full h-10 w-10 border-t-4 border-blue-500" />
+          </div>
+        )}
+      </main>
+
+      {/* 🔔 Toast stack (มุมขวาล่าง) */}
+      <ToastStack
+        toasts={toasts}
+        onClose={closeToast}
+        onItemClick={handleToastClick}
+        onMarkAllRead={markAllRead}
+      />
+    </div>
+  );
+};
+
+export default AdminDashboard;
