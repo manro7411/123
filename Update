@@ -390,44 +390,55 @@ const AdminDashboard = () => {
 
   const hasTeams = useMemo(() => (assignment?.teams?.length || 0) > 0, [assignment?.teams]);
 
-  useEffect(() => {
-    const loadProfileAndAssignment = async () => {
-      if (!token) return;
-      try {
-        // 1) profile เพื่อหา trainerId
-        const prof = await axios.get<MyProfile>("/api/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setMyProfile(prof.data);
+ useEffect(() => {
+  const loadProfileAndAssignment = async () => {
+    if (!token) return;
 
-        // 2) assignment (หลายทีม)
-        if (prof.data?.id) {
-          const res = await axios.get<AssignmentResponse>(
-            `/api/trainer-information/assignment/${prof.data.id}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          const payload = res.data || { trainerId: prof.data.id, teams: [] };
-          payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
-          setAssignment(payload);
-        } else {
-          setAssignment({ trainerId: "", teams: [] });
-        }
-      } catch {
-        setAssignment({ trainerId: "", teams: [] });
+    setMyProfile(null);
+    setAssignment({ trainerId: "", teams: [] });
+
+    try {
+      // 1) โหลดโปรไฟล์เพื่อหา trainerId
+      const profileRes = await axios.get<MyProfile>("/api/profile", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const profile = profileRes.data;
+      setMyProfile(profile);
+
+      // 2) โหลด assignment ของ trainer (หลายทีม)
+      if (profile?.id) {
+        const assignmentRes = await axios.get<AssignmentResponse>(
+          `/api/trainer-information/assignment/${encodeURIComponent(profile.id)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Cache-Control": "no-cache", // ป้องกัน 304
+            },
+          }
+        );
+
+        const payload = assignmentRes.data || { trainerId: profile.id, teams: [] };
+        payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
+        setAssignment(payload);
       }
-    };
-    loadProfileAndAssignment();
-  }, [token]);
+    } catch (error: any) {
+      console.error("Failed to load profile or assignment:", error);
+      setAssignment({ trainerId: "", teams: [] });
+    }
+  };
 
+  loadProfileAndAssignment();
+}, [token]);
   const fetchTeamMembers = async (teamId: string | null) => {
     if (!teamId || !token) return;
     setTeamMembersLoading(true);
     setTeamMembersError(null);
     try {
-      const res = await axios.get<any[]>(`/teams/${encodeURIComponent(teamId)}/members`, {
+      const res = await axios.get<any[]>(`/api/teams/${encodeURIComponent(teamId)}/members`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setTeamMembers(Array.isArray(res.data) ? res.data : []);
+      console.log(res.data)
       setSelectedTeamIdForMembers(teamId);
     } catch (e: any) {
       setTeamMembers([]);
@@ -635,7 +646,6 @@ const AdminDashboard = () => {
                 className="flex items-center gap-2 px-4 py-2 bg-white border shadow rounded-full hover:bg-gray-100"
                 onClick={() => setShowFilter(!showFilter)}
               >
-                {/* @ts-ignore icon only */}
                 <span className="i">🔍</span> Filter
               </button>
               <AdminAvatarWidget />
