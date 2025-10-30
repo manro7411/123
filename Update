@@ -74,7 +74,7 @@ function loadLastSeen(email: string): string {
   }
 }
 function saveLastSeen(email: string, iso: string) {
-  // FIX: เอาเครื่องหมายจุลภาคเกินออก
+  // fixed: no stray comma
   try {
     localStorage.setItem(lastSeenKey(email), iso);
   } catch {}
@@ -386,8 +386,9 @@ const AdminDashboard = () => {
 
   const hasTeams = useMemo(() => (assignment?.teams?.length || 0) > 0, [assignment?.teams]);
 
-  // NEW: Analysis mode & selected user
+  // Analysis mode & selected user (NEW: keep userId for backend + email/name for UI)
   const [mode, setMode] = useState<"team" | "individual">("team");
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null); // NEW
   const [selectedUserEmail, setSelectedUserEmail] = useState<string | null>(null);
   const [selectedUserName, setSelectedUserName] = useState<string | null>(null);
 
@@ -428,12 +429,13 @@ const AdminDashboard = () => {
       const res = await axios.get<any[]>(`/api/teams/${encodeURIComponent(teamId)}/members`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      setTeamMembers(Array.isArray(res.data) ? res.data : []);
-      console.log(res.data)
+      const members = Array.isArray(res.data) ? res.data : [];
+      setTeamMembers(members);
       setSelectedTeamId(teamId);
 
-      // reset selected user ถ้าอยู่นอกทีม
-      if (selectedUserEmail && !res.data.some((m: any) => m.email === selectedUserEmail)) {
+      // reset selected user if not in team
+      if (selectedUserId && !members.some((m: any) => m.id === selectedUserId)) {
+        setSelectedUserId(null);
         setSelectedUserEmail(null);
         setSelectedUserName(null);
       }
@@ -470,10 +472,7 @@ const AdminDashboard = () => {
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * ตรงนี้คือ “หัวใจ” ที่ผูก frontend กับ backend ใหม่:
-   * - หาก mode = team → ส่ง view=team และ teamId
-   * - หาก mode = individual และเลือก user แล้ว → ส่ง view=team + teamId + userEmail (แม่นสุด)
-   *   (ถ้าไม่มี teamId ก็จะ fallback เป็น view=individual)
+   * Build query params for backend (NEW: userId instead of userEmail)
    */
   const buildQueryParams = () => {
     const base: Record<string, any> = { start, end };
@@ -482,7 +481,7 @@ const AdminDashboard = () => {
         base.view = "team";
         base.teamId = selectedTeamId;
       } else {
-        base.view = "individual"; // fallback ให้เห็นข้อมูลตาม author
+        base.view = "individual"; // fallback to author's own contents
       }
     } else {
       // individual
@@ -492,7 +491,7 @@ const AdminDashboard = () => {
       } else {
         base.view = "individual";
       }
-      if (selectedUserEmail) base.userEmail = selectedUserEmail;
+      if (selectedUserId) base.userId = selectedUserId; // <<<<<< IMPORTANT
     }
     return base;
   };
@@ -521,17 +520,17 @@ const AdminDashboard = () => {
     }
   };
 
-  // โหลดครั้งแรก
+  // initial load
   useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // โหลดใหม่เมื่อเปลี่ยนโหมด / ทีม / ผู้ใช้ / ช่วงเวลา
+  // reload when core params change (note: backend uses userId)
   useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, selectedTeamId, selectedUserEmail, start, end]);
+  }, [mode, selectedTeamId, selectedUserId, start, end]);
 
   // ---------- Build helper sets for filtering by team/user (client-side safety net) ----------
   const selectedEmailSet = useMemo(() => {
@@ -794,16 +793,17 @@ const AdminDashboard = () => {
                     ))}
                   </div>
 
-                  {/* Members SELECT (ใหม่) */}
+                  {/* Members SELECT (NEW: value=id, used for userId param) */}
                   <div className="mt-2">
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-xs text-gray-500">
                         Members {selectedTeamId ? `(Team: ${selectedTeamId})` : ""}
                       </div>
-                      {mode === "individual" && selectedUserEmail && (
+                      {mode === "individual" && (selectedUserId || selectedUserEmail) && (
                         <button
                           className="text-xs text-red-600 hover:underline"
                           onClick={() => {
+                            setSelectedUserId(null);
                             setSelectedUserEmail(null);
                             setSelectedUserName(null);
                           }}
@@ -821,12 +821,13 @@ const AdminDashboard = () => {
                       ) : mode === "individual" ? (
                         <select
                           className="px-3 py-2 border rounded-md text-sm bg-white min-w-[280px]"
-                          value={selectedUserEmail || ""}
+                          value={selectedUserId || ""}
                           onChange={(e) => {
-                            const email = e.target.value || null;
-                            setSelectedUserEmail(email);
-                            const u = teamMembers.find((m: any) => m.email === email);
-                            setSelectedUserName(u?.name || email || null);
+                            const id = e.target.value || null;
+                            setSelectedUserId(id);
+                            const u = teamMembers.find((m: any) => String(m.id) === id);
+                            setSelectedUserEmail(u?.email || null);
+                            setSelectedUserName(u?.name || u?.email || null);
                           }}
                         >
                           <option value="">Select a member</option>
@@ -1073,10 +1074,11 @@ const AdminDashboard = () => {
             <div className="bg-white rounded-xl shadow p-4 border-t-8 border-emerald-500">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-lg font-semibold text-gray-700">Selected User</h2>
-                {selectedUserEmail && (
+                {(selectedUserId || selectedUserEmail) && (
                   <button
                     className="text-xs text-red-600 hover:underline"
                     onClick={() => {
+                      setSelectedUserId(null);
                       setSelectedUserEmail(null);
                       setSelectedUserName(null);
                     }}
@@ -1088,15 +1090,17 @@ const AdminDashboard = () => {
 
               {mode !== "individual" ? (
                 <div className="text-sm text-gray-500">Switch to “Individual” to see user details.</div>
-              ) : !selectedUserEmail ? (
+              ) : !(selectedUserId || selectedUserEmail) ? (
                 <div className="text-sm text-gray-500">Select a member to analyze their activity.</div>
               ) : (
                 <>
                   <div className="mb-3">
                     <div className="text-sm font-medium text-gray-800">
-                      {selectedUserName || selectedUserEmail}
+                      {selectedUserName || selectedUserEmail || selectedUserId}
                     </div>
-                    <div className="text-xs text-gray-500">{selectedUserEmail}</div>
+                    {selectedUserEmail && (
+                      <div className="text-xs text-gray-500">{selectedUserEmail}</div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-3 gap-3 mb-3">
