@@ -64,7 +64,7 @@ function loadDismissed(email: string): Set<string> {
 function saveDismissed(email: string, set: Set<string>) {
   try {
     localStorage.setItem(dismissedKey(email), JSON.stringify([...set]));
-  } catch {}
+  } catch { /* empty */ }
 }
 function loadLastSeen(email: string): string {
   try {
@@ -77,7 +77,7 @@ function saveLastSeen(email: string, iso: string) {
   // fixed: no stray comma
   try {
     localStorage.setItem(lastSeenKey(email), iso);
-  } catch {}
+  } catch {/* empty */}
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +248,7 @@ function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | n
           sortedDates.length > 0 ? (sortedDates[sortedDates.length - 1] as string) : undefined;
         if (latest) persistLastSeen(latest);
         pushToasts(arr);
-      } catch {}
+      } catch {/*empty*/}
     };
 
     (es as any).addEventListener("question", onQuestion as any);
@@ -286,7 +286,7 @@ function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | n
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         });
         pushToasts(Array.isArray(res.data) ? res.data : []);
-      } catch {} finally {
+      } catch {/*empty*/} finally {
         schedule();
       }
     };
@@ -511,6 +511,8 @@ const AdminDashboard = () => {
           ...auth,
         }),
       ]);
+      console.log("[Dashboard] overview response:", ovRes);
+      console.log("[Dashboard] contentPerf response:", cpRes);
       setOverview(ovRes.data);
       setContentPerf(cpRes.data.items || []);
     } catch (e: any) {
