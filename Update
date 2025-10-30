@@ -30,9 +30,9 @@ import {
 } from "../../../types/trainer/types";
 import { ENDPOINTS } from "../../../config/endpoints";
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Utilities
+ * -------------------------------------------------------------------------*/
 function toDateInput(d: Date) {
   return d.toISOString().slice(0, 10);
 }
@@ -48,7 +48,7 @@ const getLearnersCount = (row: any) => {
   return 0;
 };
 
-// helpers for localStorage (per trainer)
+// localStorage helpers (per trainer)
 const dismissedKey = (email: string) => `QA_DISMISSED_${email}`;
 const lastSeenKey = (email: string) => `QA_LAST_SEEN_${email}`;
 function loadDismissed(email: string): Set<string> {
@@ -74,15 +74,14 @@ function loadLastSeen(email: string): string {
   }
 }
 function saveLastSeen(email: string, iso: string) {
-  // fixed: no stray comma
   try {
     localStorage.setItem(lastSeenKey(email), iso);
-  } catch {/* empty */}
+  } catch { /* empty */ }
 }
 
-// ---------------------------------------------------------------------------
-// Toast (popup)
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Toast (popup)
+ * -------------------------------------------------------------------------*/
 type QuestionAlert = {
   id: string;
   userEmail: string;
@@ -180,9 +179,9 @@ function ToastStack({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Hook: คำถามใหม่ (SSE → Poll)
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Hook: คำถามใหม่ (SSE → Poll)
+ * -------------------------------------------------------------------------*/
 function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | null) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const dismissedRef = useRef<Set<string>>(new Set());
@@ -248,7 +247,7 @@ function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | n
           sortedDates.length > 0 ? (sortedDates[sortedDates.length - 1] as string) : undefined;
         if (latest) persistLastSeen(latest);
         pushToasts(arr);
-      } catch {/*empty*/}
+      } catch { /* empty */ }
     };
 
     (es as any).addEventListener("question", onQuestion as any);
@@ -286,7 +285,7 @@ function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | n
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         });
         pushToasts(Array.isArray(res.data) ? res.data : []);
-      } catch {/*empty*/} finally {
+      } catch { /* empty */ } finally {
         schedule();
       }
     };
@@ -333,9 +332,9 @@ function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | n
   return { toasts, closeToast, markAllRead };
 }
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Types
+ * -------------------------------------------------------------------------*/
 type MyProfile = {
   id: string;
   name?: string;
@@ -354,13 +353,12 @@ type AssignmentResponse = {
   message?: string;
 };
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Main
+ * -------------------------------------------------------------------------*/
 const AdminDashboard = () => {
   const { token: ctxToken } = useContext(AuthContext);
-  const token =
-    ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
+  const token = ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -388,10 +386,11 @@ const AdminDashboard = () => {
 
   // Analysis mode & selected user (NEW: keep userId for backend + email/name for UI)
   const [mode, setMode] = useState<"team" | "individual">("team");
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null); // NEW
-  const [selectedUserEmail, setSelectedUserEmail] = useState<string | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null); // userId sent to BE
+  const [selectedUserEmail, setSelectedUserEmail] = useState<string | null>(null); // for client-side view
   const [selectedUserName, setSelectedUserName] = useState<string | null>(null);
 
+  // load profile + assignment
   useEffect(() => {
     const loadProfileAndAssignment = async () => {
       if (!token) return;
@@ -412,6 +411,8 @@ const AdminDashboard = () => {
           const payload = assignmentRes.data || { trainerId: profile.id, teams: [] };
           payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
           setAssignment(payload);
+
+          // pick first team if available
           if (payload.teams?.[0]?.teamId) setSelectedTeamId(payload.teams[0].teamId);
         }
       } catch {
@@ -434,7 +435,7 @@ const AdminDashboard = () => {
       setSelectedTeamId(teamId);
 
       // reset selected user if not in team
-      if (selectedUserId && !members.some((m: any) => m.id === selectedUserId)) {
+      if (selectedUserId && !members.some((m: any) => String(m.id) === String(selectedUserId))) {
         setSelectedUserId(null);
         setSelectedUserEmail(null);
         setSelectedUserName(null);
@@ -447,7 +448,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // auto-load first team’s members
+  // auto-load first team’s members when assignment arrives/changes
   useEffect(() => {
     if (hasTeams && selectedTeamId) {
       fetchTeamMembers(selectedTeamId);
@@ -457,7 +458,7 @@ const AdminDashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignment?.teams]);
 
-  // ---------------- Filters ----------------
+  /* ---------------- Filters ---------------- */
   const [showFilter, setShowFilter] = useState(false);
   const [filterText, setFilterText] = useState({ course: "" });
   const today = useMemo(() => new Date(), []);
@@ -465,45 +466,69 @@ const AdminDashboard = () => {
   const [start, setStart] = useState(toDateInput(weekAgo));
   const [end, setEnd] = useState(toDateInput(today));
 
-  // ---------------- Data ----------------
+  /* ---------------- Data ---------------- */
   const [loading, setLoading] = useState(false);
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [contentPerf, setContentPerf] = useState<ContentPerfItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Build query params for backend (NEW: userId instead of userEmail)
-   */
+  /** Build query params for backend (NEW: userId instead of userEmail) */
   const buildQueryParams = () => {
     const base: Record<string, any> = { start, end };
+
     if (mode === "team") {
+      // team mode prefers team view WHEN we actually have a team selected
       if (selectedTeamId) {
         base.view = "team";
         base.teamId = selectedTeamId;
       } else {
-        base.view = "individual"; // fallback to author's own contents
+        // if no teams at all for this trainer, fallback to own contents
+        base.view = "individual";
       }
     } else {
-      // individual
+      // individual mode
       if (selectedTeamId) {
         base.view = "team";
         base.teamId = selectedTeamId;
       } else {
         base.view = "individual";
       }
-      if (selectedUserId) base.userId = selectedUserId; // <<<<<< IMPORTANT
+      if (selectedUserId) base.userId = selectedUserId;
     }
+
     return base;
   };
 
+  /** prevent "200 but empty" by fetching only when ready */
+  const shouldFetch = useMemo(() => {
+    if (!token) return false;
+    if (assignment === null) return false; // still loading assignment
+
+    // If trainer has teams:
+    if (hasTeams) {
+      if (mode === "team") {
+        // need a selected team before team view call
+        return !!selectedTeamId;
+      } else {
+        // individual mode works with or without userId; teamId optional
+        return true;
+      }
+    }
+
+    // If trainer has NO teams -> use individual view immediately
+    return true;
+  }, [token, assignment, hasTeams, mode, selectedTeamId]);
+
   const fetchAll = async () => {
     if (!token) return;
+    const params = buildQueryParams();
     setLoading(true);
     setError(null);
-    const auth = { headers: { Authorization: `Bearer ${token}` } };
-    const params = buildQueryParams();
 
+    const auth = { headers: { Authorization: `Bearer ${token}` } };
     try {
+      console.log("[Dashboard] fetching with params:", params);
+
       const [ovRes, cpRes] = await Promise.all([
         axios.get<OverviewResponse>(ENDPOINTS.TrainerOverview, { params, ...auth }),
         axios.get<ContentPerformanceResponse>(ENDPOINTS.TrainerPerformance, {
@@ -511,31 +536,28 @@ const AdminDashboard = () => {
           ...auth,
         }),
       ]);
-      console.log("[Dashboard] overview response:", ovRes);
-      console.log("[Dashboard] contentPerf response:", cpRes);
+
       setOverview(ovRes.data);
       setContentPerf(cpRes.data.items || []);
     } catch (e: any) {
+      setOverview(null);
+      setContentPerf([]);
       setError(e?.response?.data?.error || e?.message || "Failed to load analytics");
     } finally {
       setLoading(false);
     }
   };
 
-  // initial load
+  // fetch whenever core params change AND we're ready
   useEffect(() => {
+    if (!shouldFetch) return;
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [shouldFetch, mode, selectedTeamId, selectedUserId, start, end]);
 
-  // reload when core params change (note: backend uses userId)
-  useEffect(() => {
-    fetchAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, selectedTeamId, selectedUserId, start, end]);
-
-  // ---------- Build helper sets for filtering by team/user (client-side safety net) ----------
-  const selectedEmailSet = useMemo(() => {
+  /* ---------- Client-side “safety net” filtering ---------- */
+  // prefer filtering by userId (if learner objects carry userId), else fallback to email
+  const selectedUserEmailSet = useMemo(() => {
     if (mode === "individual" && selectedUserEmail) {
       return new Set([String(selectedUserEmail).toLowerCase()]);
     }
@@ -549,7 +571,7 @@ const AdminDashboard = () => {
     return new Set<string>();
   }, [mode, selectedUserEmail, teamMembers]);
 
-  // ---------- Derived (Chart) Data ----------
+  /* ---------- Derived (Chart) Data ---------- */
   const dailyActivityAll = useMemo(() => {
     if (!overview?.trend || overview.trend.length === 0) return [];
     return overview.trend.map((t: any) => ({
@@ -564,14 +586,14 @@ const AdminDashboard = () => {
   }, [overview]);
 
   const dailyActivity = useMemo(() => {
-    if (selectedEmailSet.size === 0) return dailyActivityAll;
+    if (selectedUserEmailSet.size === 0) return dailyActivityAll;
 
     return dailyActivityAll.map((row) => {
       const e = row.details.enroll.filter(
-        (x: any) => x?.email && selectedEmailSet.has(String(x.email).toLowerCase())
+        (x: any) => x?.email && selectedUserEmailSet.has(String(x.email).toLowerCase())
       );
       const c = row.details.complete.filter(
-        (x: any) => x?.email && selectedEmailSet.has(String(x.email).toLowerCase())
+        (x: any) => x?.email && selectedUserEmailSet.has(String(x.email).toLowerCase())
       );
       return {
         date: row.date,
@@ -580,7 +602,7 @@ const AdminDashboard = () => {
         details: { enroll: e, complete: c },
       };
     });
-  }, [dailyActivityAll, selectedEmailSet]);
+  }, [dailyActivityAll, selectedUserEmailSet]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload || payload.length === 0) return null;
@@ -611,7 +633,7 @@ const AdminDashboard = () => {
     );
   };
 
-  // Content perf (client-side safety net)
+  // Content performance (client-side safety net)
   const filteredContentPerf = useMemo(() => {
     const base = contentPerf.filter((it) =>
       filterText.course
@@ -619,12 +641,12 @@ const AdminDashboard = () => {
         : true
     );
 
-    if (selectedEmailSet.size === 0) return base;
+    if (selectedUserEmailSet.size === 0) return base;
 
     return base.map((it: any) => {
       const learnersArr = Array.isArray(it.learners) ? it.learners : [];
       const filteredLearners = learnersArr.filter(
-        (x: any) => x?.email && selectedEmailSet.has(String(x.email).toLowerCase())
+        (x: any) => x?.email && selectedUserEmailSet.has(String(x.email).toLowerCase())
       );
       const learnersCount = filteredLearners.length;
       const avgScore =
@@ -644,7 +666,7 @@ const AdminDashboard = () => {
         avgScore,
       };
     });
-  }, [contentPerf, filterText.course, selectedEmailSet]);
+  }, [contentPerf, filterText.course, selectedUserEmailSet]);
 
   const pieData = useMemo(() => {
     const rows = filteredContentPerf.map((it: any) => ({
@@ -666,7 +688,7 @@ const AdminDashboard = () => {
     );
   };
 
-  // ---------- Individual snapshot ----------
+  /* ---------- Individual snapshot ---------- */
   type UserActivityRow = {
     date: string;
     type: "enroll" | "complete";
@@ -735,6 +757,9 @@ const AdminDashboard = () => {
     });
   };
 
+  /* -----------------------------------------------------------------------
+   * Render
+   * ---------------------------------------------------------------------*/
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* sidebar */}
