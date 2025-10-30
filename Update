@@ -1,122 +1,3 @@
-2025-10-30 09:53:26,692 ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-1) HTTP Request to /trainer/content-performance?start=2025-10-24&end=2025-10-30&view=team&teamId=3fbf03f3013f42d2b9402&userEmail=BO3-4M9zL_3-2ZLS0syuu&order=learners:desc&limit=50&offset=0 failed, error id: f79818b9-07d9-4e10-b582-ec6c83428c9a-47
-
-Exception in TrainerAnalyticResources.java:318
-          316  
-          317          @SuppressWarnings("unchecked")                                                                                                                                                                               
-        ? 318          List<Object[]> rows = q.getResultList();                                                                                                                                                                     
-          319                                                                                                                                                                                                                       
-          320          // ---------- Learner details (��ͧ����͹ main) ----------                                                                                                                                                     
-
-Exception in TrainerAnalyticResources.java:318
-          316                                                                                                                                                                                                                       
-          317          @SuppressWarnings("unchecked")                                                                                                                                                                               
-        ? 318          List<Object[]> rows = q.getResultList();                                                                                                                                                                     
-          319                                                                                                                                                                                                                       
-          320          // ---------- Learner details (��ͧ����͹ main) ----------: org.hibernate.exception.SQLGrammarException: JDBC exception executing SQL [    SELECT                                                              
-      lc.id AS content_id,                                                                                                                                                                                                          
-      lc.title AS title,                                                                                                                                                                                                            
-      COUNT(DISTINCT p.user_email) AS learners,                                                                                                                                                                                     
-      AVG(CASE WHEN p.percent = 100 THEN 1.0 ELSE 0.0 END) AS completion_rate,                                                                                                                                                      
-      AVG(p.score) AS avg_score                                                                                                                                                                                                     
-    FROM learning_content lc                                                                                                                                                                                                        
-    LEFT JOIN user_lesson_progress p ON p.lesson_id = lc.id                                                                                                                                                                         
-      AND (                                                                                                                                                                                                                         
-           (p.started_at   IS NOT NULL AND p.started_at   >= ? AND p.started_at   < ?)                                                                                                                                              
-        OR (p.completed_at IS NOT NULL AND p.completed_at >= ? AND p.completed_at < ?)                                                                                                                                              
-      )                                                                                                                                                                                                                             
-      AND LOWER(p.user_email) = ?                                                                                                                                                                                                   
-    WHERE lc.team_id = ?                                                                                                                                                                                                            
-    GROUP BY lc.id, lc.title                                                                                                                                                                                                        
-    ORDER BY learners DESC fetch first ? rows only                                                                                                                                                                                  
-] [ERROR: column lc.team_id does not exist                                                                                                                                                                                          
-  Position: 555] [n/a]                                                                                                                                                                                                              
-        at org.hibernate.exception.internal.SQLStateConversionDelegate.convert(SQLStateConversionDelegate.java:91)                                                                                                                  
-        at org.hibernate.exception.internal.StandardSQLExceptionConverter.convert(StandardSQLExceptionConverter.java:58)                                                                                                            
-        at org.hibernate.engine.jdbc.spi.SqlExceptionHelper.convert(SqlExceptionHelper.java:108)                                                                                                                                    
-        at org.hibernate.engine.jdbc.spi.SqlExceptionHelper.convert(SqlExceptionHelper.java:94)                                                                                                                                     
-        at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.executeQuery(DeferredResultSetAccess.java:269)                                                                                                           
-        at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.getResultSet(DeferredResultSetAccess.java:172)                                                                                                           
-        at org.hibernate.sql.results.jdbc.internal.AbstractResultSetAccess.getMetaData(AbstractResultSetAccess.java:36)                                                                                                             
-        at org.hibernate.sql.results.jdbc.internal.AbstractResultSetAccess.getColumnCount(AbstractResultSetAccess.java:52)                                                                                                          
-        at org.hibernate.query.results.ResultSetMappingImpl.resolve(ResultSetMappingImpl.java:194)                                                                                                                                  
-        at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.resolveJdbcValuesSource(JdbcSelectExecutorStandardImpl.java:340)                                                                                          
-        at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.doExecuteQuery(JdbcSelectExecutorStandardImpl.java:137)                                                                                                   
-        at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.executeQuery(JdbcSelectExecutorStandardImpl.java:102)                                                                                                     
-        at org.hibernate.sql.exec.spi.JdbcSelectExecutor.executeQuery(JdbcSelectExecutor.java:91)                                                                                                                                   
-        at org.hibernate.sql.exec.spi.JdbcSelectExecutor.list(JdbcSelectExecutor.java:165)                                                                                                                                          
-        at org.hibernate.sql.exec.spi.JdbcSelectExecutor.list(JdbcSelectExecutor.java:142)                                                                                                                                          
-        at org.hibernate.sql.exec.spi.JdbcSelectExecutor.list(JdbcSelectExecutor.java:132)                                                                                                                                          
-        at org.hibernate.query.sql.internal.NativeSelectQueryPlanImpl.performList(NativeSelectQueryPlanImpl.java:135)                                                                                                               
-        at org.hibernate.query.sql.internal.NativeQueryImpl.doList(NativeQueryImpl.java:697)                                                                                                                                        
-        at org.hibernate.query.spi.AbstractSelectionQuery.list(AbstractSelectionQuery.java:143)                                                                                                                                     
-        at org.hibernate.query.Query.getResultList(Query.java:120)                                                                                                                                                                  
-        at TrainerAnalytic.Resources.TrainerAnalyticResources.contentPerformance(TrainerAnalyticResources.java:318)                                                                                                                 
-        at TrainerAnalytic.Resources.TrainerAnalyticResources_Subclass.contentPerformance$$superforward(Unknown Source)                                                                                                             
-        at TrainerAnalytic.Resources.TrainerAnalyticResources_Subclass$$function$$14.apply(Unknown Source)                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
-        at io.quarkus.security.runtime.interceptor.SecurityHandler.handle(SecurityHandler.java:27)                                                                                                                                  
-        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor.intercept(RolesAllowedInterceptor.java:29)                                                                                                               
-        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                                                           
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
-        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor.intercept(StandardSecurityCheckInterceptor.java:44)                                                                                         
-        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor_RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                      
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
-        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
-        at TrainerAnalytic.Resources.TrainerAnalyticResources_Subclass.contentPerformance(Unknown Source)                                                                                                                           
-        at TrainerAnalytic.Resources.TrainerAnalyticResources$quarkusrestinvoker$contentPerformance_6e652322075c378f8dbe169c9f842f6afe4d9dcb.invoke(Unknown Source)                                                                 
-        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
-        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
-        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
-        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
-        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
-        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
-        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
-Caused by: org.postgresql.util.PSQLException: ERROR: column lc.team_id does not exist                                                                                                                                               
-  Position: 555                                                                                                                                                                                                                     
-        at org.postgresql.core.v3.QueryExecutorImpl.receiveErrorResponse(QueryExecutorImpl.java:2736)                                                                                                                               
-        at org.postgresql.core.v3.QueryExecutorImpl.processResults(QueryExecutorImpl.java:2423)                                                                                                                                     
-        at org.postgresql.core.v3.QueryExecutorImpl.execute(QueryExecutorImpl.java:374)                                                                                                                                             
-        at org.postgresql.jdbc.PgStatement.executeInternal(PgStatement.java:518)                                                                                                                                                    
-        at org.postgresql.jdbc.PgStatement.execute(PgStatement.java:435)                                                                                                                                                            
-        at org.postgresql.jdbc.PgPreparedStatement.executeWithFlags(PgPreparedStatement.java:196)                                                                                                                                   
-        at org.postgresql.jdbc.PgPreparedStatement.executeQuery(PgPreparedStatement.java:139)                                                                                                                                       
-        at io.agroal.pool.wrapper.PreparedStatementWrapper.executeQuery(PreparedStatementWrapper.java:80)                                                                                                                           
-        at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.executeQuery(DeferredResultSetAccess.java:251)     
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 package TrainerAnalytic.Resources;
 
 import jakarta.annotation.security.RolesAllowed;
@@ -140,9 +21,15 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Trainer Analytics endpoints
+ * Trainer Analytics endpoints (new version)
  *
  * Base path: /trainer
+ *
+ * Key changes:
+ * - NO usage of lc.team_id anymore (fixes SQL error).
+ * - View supports: individual (default), team (filter on learners list).
+ * - Person filter via userId (JOIN users) instead of userEmail.
+ * - Team filter via p.user_email IN (emails of team members).
  */
 @Path("/trainer")
 @Produces(MediaType.APPLICATION_JSON)
@@ -171,8 +58,32 @@ public class TrainerAnalyticResources {
         return email.toLowerCase();
     }
 
+    /** Collect lowercased emails for team members to filter progress (team view) */
+    private Set<String> getTeamMemberEmailsLower(String teamId) {
+        if (teamId == null || teamId.isBlank()) return Set.of();
+        TeamEntity team = em.find(TeamEntity.class, teamId);
+        if (team == null || team.getMembers() == null) return Set.of();
+        return team.getMembers().stream()
+                .filter(Objects::nonNull)
+                .map(User::getEmail)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .map(String::toLowerCase)
+                .collect(Collectors.toSet());
+    }
+
+    private static LocalDate toLocalDate(Object raw) {
+        if (raw == null) return null;
+        if (raw instanceof LocalDate d) return d;
+        if (raw instanceof java.sql.Date d) return d.toLocalDate();
+        if (raw instanceof java.time.LocalDateTime dt) return dt.toLocalDate();
+        if (raw instanceof java.util.Date ud)
+            return ud.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+        return LocalDate.parse(raw.toString());
+    }
+
     // =========================================================================
-    // 1) OVERVIEW (รองรับ view=team|individual + teamId + userEmail)
+    // 1) OVERVIEW  (supports view=team|individual, teamId, userId)
     // =========================================================================
     @GET
     @Path("/overview")
@@ -183,7 +94,7 @@ public class TrainerAnalyticResources {
             @QueryParam("end") String end,
             @QueryParam("view") @DefaultValue("individual") String view,
             @QueryParam("teamId") String teamId,
-            @QueryParam("userEmail") String userEmail // <-- NEW (optional)
+            @QueryParam("userId") String userId // NEW: filter by users.id
     ) {
         final String trainerEmail = resolveTrainerEmail(securityContext);
         final LocalDate endDate = parseDateOr(end, LocalDate.now());
@@ -192,32 +103,34 @@ public class TrainerAnalyticResources {
         final LocalDateTime endDT = dayAfter(endDate);
 
         final boolean isTeamView = "team".equalsIgnoreCase(view);
-        final boolean filterUser = (userEmail != null && !userEmail.isBlank());
-        final String userEmailNorm = filterUser ? userEmail.trim().toLowerCase() : null;
+        final boolean filterUser = (userId != null && !userId.isBlank());
+        final Set<String> teamEmailsLower = isTeamView ? getTeamMemberEmailsLower(teamId) : Set.of();
+        final boolean hasTeamEmails = !teamEmailsLower.isEmpty();
 
-        log.info("[trainer/overview] email={} view={} teamId={} userEmail={} window {}..(exclusive {})",
-                trainerEmail, view, teamId, userEmailNorm, startDT, endDT);
+        log.info("[trainer/overview] email={} view={} teamId={} userId={} window {}..(exclusive {})",
+                trainerEmail, view, teamId, userId, startDT, endDT);
 
-        // Filter by content ownership (team หรือ ผู้แต่ง)
-        final String contentFilter = isTeamView ? "lc.team_id = :teamId" : "lc.author_email = :email";
+        // OWNERSHIP: only contents authored by this trainer
+        final String ownerFilter = "lc.author_email = :email";
 
-        // Helper: bind base filters
-        java.util.function.Consumer<Query> bindBase = q -> {
-            q.setParameter("start", startDT).setParameter("end", endDT);
-            if (isTeamView) q.setParameter("teamId", teamId);
-            else q.setParameter("email", trainerEmail);
-            if (filterUser) q.setParameter("userEmail", userEmailNorm);
-        };
+        // Learner filter (applied to progress p.*):
+        // - individual: EXISTS users.id = :userId
+        // - team: LOWER(p.user_email) IN (:teamEmailsLower)
+        String learnerFilter = "";
+        if (filterUser) {
+            learnerFilter = " AND EXISTS (SELECT 1 FROM users ux WHERE ux.email = p.user_email AND ux.id = :userId) ";
+        } else if (hasTeamEmails) {
+            learnerFilter = " AND LOWER(p.user_email) IN (:teamEmailsLower) ";
+        }
 
         // ---------- KPI: total contents ----------
-        String totalContentSql = "SELECT COUNT(*) FROM learning_content lc WHERE " + contentFilter;
-        Query totalContentQuery = em.createNativeQuery(totalContentSql);
-        if (isTeamView) totalContentQuery.setParameter("teamId", teamId);
-        else totalContentQuery.setParameter("email", trainerEmail);
-        long totalContents = ((Number) totalContentQuery.getSingleResult()).longValue();
+        long totalContents = ((Number) em.createNativeQuery(
+                "SELECT COUNT(*) FROM learning_content lc WHERE " + ownerFilter)
+                .setParameter("email", trainerEmail)
+                .getSingleResult()).longValue();
 
         // ---------- KPI: active learners ----------
-        String activeLearnersSql = String.format("""
+        String activeLearnersSql = """
             SELECT COUNT(DISTINCT p.user_email)
             FROM user_lesson_progress p
             JOIN learning_content lc ON p.lesson_id = lc.id
@@ -227,13 +140,17 @@ public class TrainerAnalyticResources {
                OR (p.completed_at IS NOT NULL AND p.completed_at >= :start AND p.completed_at < :end)
               )
               %s
-        """, contentFilter, filterUser ? "AND LOWER(p.user_email) = :userEmail" : "");
-        Query activeLearnersQuery = em.createNativeQuery(activeLearnersSql);
-        bindBase.accept(activeLearnersQuery);
+        """.formatted(ownerFilter, learnerFilter);
+        Query activeLearnersQuery = em.createNativeQuery(activeLearnersSql)
+                .setParameter("email", trainerEmail)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (filterUser) activeLearnersQuery.setParameter("userId", userId);
+        else if (hasTeamEmails) activeLearnersQuery.setParameter("teamEmailsLower", teamEmailsLower);
         long activeLearners = ((Number) activeLearnersQuery.getSingleResult()).longValue();
 
         // ---------- KPI: new enrollments ----------
-        String newEnrollmentsSql = String.format("""
+        String newEnrollmentsSql = """
             SELECT COUNT(*)
             FROM user_lesson_progress p
             JOIN learning_content lc ON p.lesson_id = lc.id
@@ -241,13 +158,17 @@ public class TrainerAnalyticResources {
               AND p.started_at IS NOT NULL
               AND p.started_at >= :start AND p.started_at < :end
               %s
-        """, contentFilter, filterUser ? "AND LOWER(p.user_email) = :userEmail" : "");
-        Query newEnrollmentsQuery = em.createNativeQuery(newEnrollmentsSql);
-        bindBase.accept(newEnrollmentsQuery);
+        """.formatted(ownerFilter, learnerFilter);
+        Query newEnrollmentsQuery = em.createNativeQuery(newEnrollmentsSql)
+                .setParameter("email", trainerEmail)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (filterUser) newEnrollmentsQuery.setParameter("userId", userId);
+        else if (hasTeamEmails) newEnrollmentsQuery.setParameter("teamEmailsLower", teamEmailsLower);
         long newEnrollments = ((Number) newEnrollmentsQuery.getSingleResult()).longValue();
 
         // ---------- KPI: completion rate & avg score ----------
-        String rateSql = String.format("""
+        String rateSql = """
             SELECT
               AVG(CASE WHEN p.percent = 100 THEN 1.0 ELSE 0.0 END),
               AVG(p.score)
@@ -259,15 +180,19 @@ public class TrainerAnalyticResources {
                OR (p.completed_at IS NOT NULL AND p.completed_at >= :start AND p.completed_at < :end)
               )
               %s
-        """, contentFilter, filterUser ? "AND LOWER(p.user_email) = :userEmail" : "");
-        Query rateQuery = em.createNativeQuery(rateSql);
-        bindBase.accept(rateQuery);
+        """.formatted(ownerFilter, learnerFilter);
+        Query rateQuery = em.createNativeQuery(rateSql)
+                .setParameter("email", trainerEmail)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (filterUser) rateQuery.setParameter("userId", userId);
+        else if (hasTeamEmails) rateQuery.setParameter("teamEmailsLower", teamEmailsLower);
         Object[] rateRow = (Object[]) rateQuery.getSingleResult();
         double completionRate = rateRow[0] == null ? 0d : ((Number) rateRow[0]).doubleValue();
         Double avgScore = rateRow[1] == null ? null : ((Number) rateRow[1]).doubleValue();
 
-        // ---------- Trend: enroll detail per day ----------
-        String enrollDetailSql = String.format("""
+        // ---------- Trend: enroll ---------
+        String enrollDetailSql = """
             SELECT DATE(p.started_at), u.name, p.user_email, lc.title, p.started_at
             FROM user_lesson_progress p
             JOIN users u ON u.email = p.user_email
@@ -276,13 +201,17 @@ public class TrainerAnalyticResources {
               AND p.started_at IS NOT NULL
               AND p.started_at >= :start AND p.started_at < :end
               %s
-        """, contentFilter, filterUser ? "AND LOWER(p.user_email) = :userEmail" : "");
-        Query enrollDetailQuery = em.createNativeQuery(enrollDetailSql);
-        bindBase.accept(enrollDetailQuery);
+        """.formatted(ownerFilter, learnerFilter);
+        Query enrollDetailQuery = em.createNativeQuery(enrollDetailSql)
+                .setParameter("email", trainerEmail)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (filterUser) enrollDetailQuery.setParameter("userId", userId);
+        else if (hasTeamEmails) enrollDetailQuery.setParameter("teamEmailsLower", teamEmailsLower);
         List<Object[]> enrollDetails = enrollDetailQuery.getResultList();
 
-        // ---------- Trend: complete detail per day ----------
-        String completeDetailSql = String.format("""
+        // ---------- Trend: complete ---------
+        String completeDetailSql = """
             SELECT DATE(p.completed_at), u.name, p.user_email, lc.title, p.score, p.total_questions, p.completed_at
             FROM user_lesson_progress p
             JOIN users u ON u.email = p.user_email
@@ -291,9 +220,13 @@ public class TrainerAnalyticResources {
               AND p.completed_at IS NOT NULL
               AND p.completed_at >= :start AND p.completed_at < :end
               %s
-        """, contentFilter, filterUser ? "AND LOWER(p.user_email) = :userEmail" : "");
-        Query completeDetailQuery = em.createNativeQuery(completeDetailSql);
-        bindBase.accept(completeDetailQuery);
+        """.formatted(ownerFilter, learnerFilter);
+        Query completeDetailQuery = em.createNativeQuery(completeDetailSql)
+                .setParameter("email", trainerEmail)
+                .setParameter("start", startDT)
+                .setParameter("end", endDT);
+        if (filterUser) completeDetailQuery.setParameter("userId", userId);
+        else if (hasTeamEmails) completeDetailQuery.setParameter("teamEmailsLower", teamEmailsLower);
         List<Object[]> completeDetails = completeDetailQuery.getResultList();
 
         // ---------- Merge trend ----------
@@ -358,7 +291,7 @@ public class TrainerAnalyticResources {
     }
 
     // =========================================================================
-    // 2) CONTENT PERFORMANCE (รองรับ view + teamId + userEmail)
+    // 2) CONTENT PERFORMANCE  (supports view + teamId + userId)
     // =========================================================================
     @GET
     @Path("/content-performance")
@@ -370,9 +303,9 @@ public class TrainerAnalyticResources {
             @QueryParam("order") @DefaultValue("completionRate:desc") String order,
             @QueryParam("limit") @DefaultValue("20") int limit,
             @QueryParam("offset") @DefaultValue("0") int offset,
-            @QueryParam("view") @DefaultValue("individual") String view,     // <-- NEW
-            @QueryParam("teamId") String teamId,                              // <-- NEW
-            @QueryParam("userEmail") String userEmail                         // <-- NEW
+            @QueryParam("view") @DefaultValue("individual") String view, // NEW
+            @QueryParam("teamId") String teamId,                          // NEW
+            @QueryParam("userId") String userId                           // NEW
     ) {
         final String trainerEmail = resolveTrainerEmail(securityContext);
         final LocalDate endDate = parseDateOr(end, LocalDate.now());
@@ -385,8 +318,9 @@ public class TrainerAnalyticResources {
         if (offset < 0) offset = 0;
 
         final boolean isTeamView = "team".equalsIgnoreCase(view);
-        final boolean filterUser = (userEmail != null && !userEmail.isBlank());
-        final String userEmailNorm = filterUser ? userEmail.trim().toLowerCase() : null;
+        final boolean filterUser = (userId != null && !userId.isBlank());
+        final Set<String> teamEmailsLower = isTeamView ? getTeamMemberEmailsLower(teamId) : Set.of();
+        final boolean hasTeamEmails = !teamEmailsLower.isEmpty();
 
         String orderSql = "completion_rate DESC";
         if (order != null && !order.isBlank()) {
@@ -402,10 +336,18 @@ public class TrainerAnalyticResources {
             }
         }
 
-        // Ownership filter (ทีม/ผู้แต่ง)
-        final String contentFilter = isTeamView ? "lc.team_id = :teamId" : "lc.author_email = :email";
+        // OWNERSHIP
+        final String ownerFilter = "lc.author_email = :email";
 
-        // ---------- Main content performance ----------
+        // learner condition placed in LEFT JOIN ON-clause (to keep contents with zero progress)
+        String onLearnerFilter = "";
+        if (filterUser) {
+            onLearnerFilter = " AND EXISTS (SELECT 1 FROM users ux WHERE ux.email = p.user_email AND ux.id = :userId) ";
+        } else if (hasTeamEmails) {
+            onLearnerFilter = " AND LOWER(p.user_email) IN (:teamEmailsLower) ";
+        }
+
+        // ---------- main ----------
         String sql = ("""
             SELECT
               lc.id AS content_id,
@@ -423,24 +365,29 @@ public class TrainerAnalyticResources {
             WHERE %s
             GROUP BY lc.id, lc.title
             ORDER BY %s
-        """).formatted(filterUser ? "AND LOWER(p.user_email) = :userEmail" : "", contentFilter, orderSql);
+        """).formatted(onLearnerFilter, ownerFilter, orderSql);
 
         Query q = em.createNativeQuery(sql)
+                .setParameter("email", trainerEmail)
                 .setParameter("start", startDT)
                 .setParameter("end", endDT);
-        if (isTeamView) q.setParameter("teamId", teamId); else q.setParameter("email", trainerEmail);
-        if (filterUser) q.setParameter("userEmail", userEmailNorm);
+        if (filterUser) q.setParameter("userId", userId);
+        else if (hasTeamEmails) q.setParameter("teamEmailsLower", teamEmailsLower);
         q.setFirstResult(offset);
         q.setMaxResults(limit);
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = q.getResultList();
 
-        // ---------- Learner details (กรองเหมือน main) ----------
+        // ---------- learners detail ----------
         List<String> contentIds = rows.stream().map(r -> String.valueOf(r[0])).toList();
-        List<Map<String, Object>> items = new ArrayList<>(rows.size());
-
+        Map<String, List<Map<String, Object>>> learnersByContent = new HashMap<>();
         if (!contentIds.isEmpty()) {
+            String detailLearnerFilter =
+                    filterUser
+                            ? " AND u.id = :userId "
+                            : (hasTeamEmails ? " AND LOWER(p.user_email) IN (:teamEmailsLower) " : "");
+
             String learnerSql = ("""
                 SELECT
                   p.lesson_id AS content_id,
@@ -458,19 +405,18 @@ public class TrainerAnalyticResources {
                   )
                   %s
                   AND %s
-            """).formatted(filterUser ? "AND LOWER(p.user_email) = :userEmail" : "", contentFilter);
+            """).formatted(detailLearnerFilter, ownerFilter);
 
             Query learnerQuery = em.createNativeQuery(learnerSql)
                     .setParameter("contentIds", contentIds)
                     .setParameter("start", startDT)
-                    .setParameter("end", endDT);
-            if (filterUser) learnerQuery.setParameter("userEmail", userEmailNorm);
-            if (isTeamView) learnerQuery.setParameter("teamId", teamId); else learnerQuery.setParameter("email", trainerEmail);
+                    .setParameter("end", endDT)
+                    .setParameter("email", trainerEmail);
+            if (filterUser) learnerQuery.setParameter("userId", userId);
+            else if (hasTeamEmails) learnerQuery.setParameter("teamEmailsLower", teamEmailsLower);
 
             @SuppressWarnings("unchecked")
             List<Object[]> learnerRows = learnerQuery.getResultList();
-
-            Map<String, List<Map<String, Object>>> learnersByContent = new HashMap<>();
             for (Object[] r : learnerRows) {
                 String cid = String.valueOf(r[0]);
                 Map<String, Object> learner = new LinkedHashMap<>();
@@ -480,24 +426,25 @@ public class TrainerAnalyticResources {
                 learner.put("score", r[4]);
                 learnersByContent.computeIfAbsent(cid, k -> new ArrayList<>()).add(learner);
             }
+        }
 
-            for (Object[] r : rows) {
-                String cid = String.valueOf(r[0]);
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("contentId", cid);
-                m.put("title", r[1]);
-                m.put("learnersCount", ((Number) (r[2] == null ? 0 : r[2])).longValue());
-                m.put("completionRate", r[3] == null ? 0d : ((Number) r[3]).doubleValue());
-                m.put("avgScore", r[4] == null ? null : ((Number) r[4]).doubleValue());
-                m.put("learners", learnersByContent.getOrDefault(cid, List.of()));
-                items.add(m);
-            }
+        List<Map<String, Object>> items = new ArrayList<>(rows.size());
+        for (Object[] r : rows) {
+            String cid = String.valueOf(r[0]);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("contentId", cid);
+            m.put("title", r[1]);
+            m.put("learnersCount", ((Number) (r[2] == null ? 0 : r[2])).longValue());
+            m.put("completionRate", r[3] == null ? 0d : ((Number) r[3]).doubleValue());
+            m.put("avgScore", r[4] == null ? null : ((Number) r[4]).doubleValue());
+            m.put("learners", learnersByContent.getOrDefault(cid, List.of()));
+            items.add(m);
         }
 
         Number total = (Number) em.createNativeQuery("""
             SELECT COUNT(*) FROM learning_content lc WHERE %s
-        """.formatted(contentFilter))
-                .setParameter(isTeamView ? "teamId" : "email", isTeamView ? teamId : trainerEmail)
+        """.formatted(ownerFilter))
+                .setParameter("email", trainerEmail)
                 .getSingleResult();
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -509,7 +456,7 @@ public class TrainerAnalyticResources {
     }
 
     // =========================================================================
-    // 3) CONTENT FUNNEL (เดิม)
+    // 3) CONTENT FUNNEL (unchanged ownership check by author_email)
     // =========================================================================
     @GET
     @Path("/content-funnel")
@@ -585,5 +532,29 @@ public class TrainerAnalyticResources {
                 "completed", completed.longValue()
         ));
         return Response.ok(out).build();
+    }
+
+    // (Optional helper endpoint still available)
+    @GET
+    @Path("/assignable-teams")
+    @RolesAllowed({Roles.ROLE_TRAINER})
+    public Response getAssignableTeams(@Context SecurityContext sc) {
+        String trainerEmail = sc.getUserPrincipal().getName();
+        log.info("Incoming Info: get assignable teams for trainer {}", trainerEmail);
+        User trainer = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                .setParameter("email", trainerEmail)
+                .getSingleResult();
+
+        List<TeamEntity> teams = trainerUtilities.getTeamsAssignedToTrainer(trainer.getEmail());
+
+        List<Map<String, String>> result = teams.stream()
+                .map(team -> Map.of(
+                        "id", team.getId(),
+                        "name", team.getName(),
+                        "description", team.getDescription()
+                ))
+                .collect(Collectors.toList());
+
+        return Response.ok(result).build();
     }
 }
