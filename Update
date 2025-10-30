@@ -21,15 +21,16 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Trainer Analytics endpoints (new version)
+ * Trainer Analytics endpoints (hardened version)
  *
  * Base path: /trainer
  *
- * Key changes:
- * - NO usage of lc.team_id anymore (fixes SQL error).
- * - View supports: individual (default), team (filter on learners list).
- * - Person filter via userId (JOIN users) instead of userEmail.
- * - Team filter via p.user_email IN (emails of team members).
+ * - ไม่ใช้ lc.team_id แล้ว
+ * - view: individual (default) / team
+ * - filter บุคคลด้วย userId (JOIN users)
+ * - Team filter: p.user_email IN (emails ของสมาชิกทีม; case-insensitive)
+ * - ปิดช่องโหว่: team ว่างใน Team view → คืนศูนย์ (ไม่ดันข้อมูลรวม)
+ * - ป้องกัน date cast จาก native query ด้วย toLocalDate(...)
  */
 @Path("/trainer")
 @Produces(MediaType.APPLICATION_JSON)
@@ -58,7 +59,8 @@ public class TrainerAnalyticResources {
         return email.toLowerCase();
     }
 
-    /** Collect lowercased emails for team members to filter progress (team view) */
+    /** Collect lowercased emails for team members to filter progress (team view). Supports String or User member shapes. */
+    @SuppressWarnings("unchecked")
     private Set<String> getTeamMemberEmailsLower(String teamId) {
         if (teamId == null || teamId.isBlank()) return Set.of();
         TeamEntity team = em.find(TeamEntity.class, teamId);
@@ -66,20 +68,41 @@ public class TrainerAnalyticResources {
 
         return team.getMembers().stream()
                 .filter(Objects::nonNull)
-                .map(String::toLowerCase)
+                .map(member -> {
+                    if (member instanceof User u) return u.getEmail();
+                    return String.valueOf(member);
+                })
                 .filter(Objects::nonNull)
                 .map(String::trim)
+                .filter(s -> !s.isEmpty())
                 .map(String::toLowerCase)
-                .collect(Collectors.toSet());
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
+
+    /** Safe convert native result to LocalDate (supports Date, Timestamp, LocalDateTime, LocalDate, String) */
     private static LocalDate toLocalDate(Object raw) {
         if (raw == null) return null;
         if (raw instanceof LocalDate d) return d;
         if (raw instanceof java.sql.Date d) return d.toLocalDate();
         if (raw instanceof java.time.LocalDateTime dt) return dt.toLocalDate();
+        if (raw instanceof java.sql.Timestamp ts) return ts.toLocalDateTime().toLocalDate();
         if (raw instanceof java.util.Date ud)
             return ud.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
         return LocalDate.parse(raw.toString());
+    }
+
+    private static List<Map<String, Object>> buildZeroTrend(LocalDate start, LocalDate end) {
+        List<Map<String, Object>> trend = new ArrayList<>();
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("date", d.toString());
+            row.put("enrollCount", 0);
+            row.put("completeCount", 0);
+            row.put("enroll", List.of());
+            row.put("complete", List.of());
+            trend.add(row);
+        }
+        return trend;
     }
 
     // =========================================================================
@@ -94,7 +117,7 @@ public class TrainerAnalyticResources {
             @QueryParam("end") String end,
             @QueryParam("view") @DefaultValue("individual") String view,
             @QueryParam("teamId") String teamId,
-            @QueryParam("userId") String userId // NEW: filter by users.id
+            @QueryParam("userId") String userId // filter by users.id
     ) {
         final String trainerEmail = resolveTrainerEmail(securityContext);
         final LocalDate endDate = parseDateOr(end, LocalDate.now());
@@ -110,15 +133,28 @@ public class TrainerAnalyticResources {
         log.info("[trainer/overview] email={} view={} teamId={} userId={} window {}..(exclusive {})",
                 trainerEmail, view, teamId, userId, startDT, endDT);
 
+        // Team view but no members → return zeros (ไม่ดึงข้อมูลรวม)
+        if (isTeamView && !hasTeamEmails) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("kpi", Map.of(
+                    "totalContents", 0,
+                    "newEnrollments", 0,
+                    "completionRate", 0.0,
+                    "avgScore", null
+            ));
+            out.put("trend", buildZeroTrend(startDate, endDate));
+            return Response.ok(out).build();
+        }
+
         // OWNERSHIP: only contents authored by this trainer
         final String ownerFilter = "lc.author_email = :email";
 
         // Learner filter (applied to progress p.*):
-        // - individual: EXISTS users.id = :userId
+        // - individual: EXISTS users.id = :userId (case-insensitive email join)
         // - team: LOWER(p.user_email) IN (:teamEmailsLower)
         String learnerFilter = "";
         if (filterUser) {
-            learnerFilter = " AND EXISTS (SELECT 1 FROM users ux WHERE ux.email = p.user_email AND ux.id = :userId) ";
+            learnerFilter = " AND EXISTS (SELECT 1 FROM users ux WHERE LOWER(ux.email) = LOWER(p.user_email) AND ux.id = :userId) ";
         } else if (hasTeamEmails) {
             learnerFilter = " AND LOWER(p.user_email) IN (:teamEmailsLower) ";
         }
@@ -128,26 +164,6 @@ public class TrainerAnalyticResources {
                         "SELECT COUNT(*) FROM learning_content lc WHERE " + ownerFilter)
                 .setParameter("email", trainerEmail)
                 .getSingleResult()).longValue();
-
-        // ---------- KPI: active learners ----------
-        String activeLearnersSql = """
-            SELECT COUNT(DISTINCT p.user_email)
-            FROM user_lesson_progress p
-            JOIN learning_content lc ON p.lesson_id = lc.id
-            WHERE %s
-              AND (
-                  (p.started_at   IS NOT NULL AND p.started_at   >= :start AND p.started_at   < :end)
-               OR (p.completed_at IS NOT NULL AND p.completed_at >= :start AND p.completed_at < :end)
-              )
-              %s
-        """.formatted(ownerFilter, learnerFilter);
-        Query activeLearnersQuery = em.createNativeQuery(activeLearnersSql)
-                .setParameter("email", trainerEmail)
-                .setParameter("start", startDT)
-                .setParameter("end", endDT);
-        if (filterUser) activeLearnersQuery.setParameter("userId", userId);
-        else if (hasTeamEmails) activeLearnersQuery.setParameter("teamEmailsLower", teamEmailsLower);
-        long activeLearners = ((Number) activeLearnersQuery.getSingleResult()).longValue();
 
         // ---------- KPI: new enrollments ----------
         String newEnrollmentsSql = """
@@ -195,7 +211,7 @@ public class TrainerAnalyticResources {
         String enrollDetailSql = """
             SELECT DATE(p.started_at), u.name, p.user_email, lc.title, p.started_at
             FROM user_lesson_progress p
-            JOIN users u ON u.email = p.user_email
+            JOIN users u ON LOWER(u.email) = LOWER(p.user_email)
             JOIN learning_content lc ON p.lesson_id = lc.id
             WHERE %s
               AND p.started_at IS NOT NULL
@@ -214,7 +230,7 @@ public class TrainerAnalyticResources {
         String completeDetailSql = """
             SELECT DATE(p.completed_at), u.name, p.user_email, lc.title, p.score, p.total_questions, p.completed_at
             FROM user_lesson_progress p
-            JOIN users u ON u.email = p.user_email
+            JOIN users u ON LOWER(u.email) = LOWER(p.user_email)
             JOIN learning_content lc ON p.lesson_id = lc.id
             WHERE %s
               AND p.completed_at IS NOT NULL
@@ -239,8 +255,8 @@ public class TrainerAnalyticResources {
         }
 
         for (Object[] r : enrollDetails) {
-            LocalDate d = ((java.sql.Date) r[0]).toLocalDate();
-            if (trendMap.containsKey(d)) {
+            LocalDate d = toLocalDate(r[0]);
+            if (d != null && trendMap.containsKey(d)) {
                 Map<String, Object> user = Map.of(
                         "name", r[1],
                         "email", r[2],
@@ -252,8 +268,8 @@ public class TrainerAnalyticResources {
         }
 
         for (Object[] r : completeDetails) {
-            LocalDate d = ((java.sql.Date) r[0]).toLocalDate();
-            if (trendMap.containsKey(d)) {
+            LocalDate d = toLocalDate(r[0]);
+            if (d != null && trendMap.containsKey(d)) {
                 Map<String, Object> user = Map.of(
                         "name", r[1],
                         "email", r[2],
@@ -303,9 +319,9 @@ public class TrainerAnalyticResources {
             @QueryParam("order") @DefaultValue("completionRate:desc") String order,
             @QueryParam("limit") @DefaultValue("20") int limit,
             @QueryParam("offset") @DefaultValue("0") int offset,
-            @QueryParam("view") @DefaultValue("individual") String view, // NEW
-            @QueryParam("teamId") String teamId,                          // NEW
-            @QueryParam("userId") String userId                           // NEW
+            @QueryParam("view") @DefaultValue("individual") String view,
+            @QueryParam("teamId") String teamId,
+            @QueryParam("userId") String userId
     ) {
         final String trainerEmail = resolveTrainerEmail(securityContext);
         final LocalDate endDate = parseDateOr(end, LocalDate.now());
@@ -321,6 +337,16 @@ public class TrainerAnalyticResources {
         final boolean filterUser = (userId != null && !userId.isBlank());
         final Set<String> teamEmailsLower = isTeamView ? getTeamMemberEmailsLower(teamId) : Set.of();
         final boolean hasTeamEmails = !teamEmailsLower.isEmpty();
+
+        // Team view แต่ทีมว่าง → คืนลิสต์ว่างทันที
+        if (isTeamView && !hasTeamEmails) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("items", List.of());
+            out.put("total", 0L);
+            out.put("limit", limit);
+            out.put("offset", offset);
+            return Response.ok(out).build();
+        }
 
         String orderSql = "completion_rate DESC";
         if (order != null && !order.isBlank()) {
@@ -342,7 +368,7 @@ public class TrainerAnalyticResources {
         // learner condition placed in LEFT JOIN ON-clause (to keep contents with zero progress)
         String onLearnerFilter = "";
         if (filterUser) {
-            onLearnerFilter = " AND EXISTS (SELECT 1 FROM users ux WHERE ux.email = p.user_email AND ux.id = :userId) ";
+            onLearnerFilter = " AND EXISTS (SELECT 1 FROM users ux WHERE LOWER(ux.email) = LOWER(p.user_email) AND ux.id = :userId) ";
         } else if (hasTeamEmails) {
             onLearnerFilter = " AND LOWER(p.user_email) IN (:teamEmailsLower) ";
         }
@@ -396,7 +422,7 @@ public class TrainerAnalyticResources {
                   p.percent,
                   p.score
                 FROM user_lesson_progress p
-                JOIN users u ON u.email = p.user_email
+                JOIN users u ON LOWER(u.email) = LOWER(p.user_email)
                 JOIN learning_content lc ON lc.id = p.lesson_id
                 WHERE p.lesson_id IN :contentIds
                   AND (
