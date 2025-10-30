@@ -180,7 +180,7 @@ function ToastStack({
 }
 
 /* ---------------------------------------------------------------------------
- * Hook: คำถามใหม่ (SSE → Poll)
+ * Hook: SSE → Poll
  * -------------------------------------------------------------------------*/
 function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | null) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -384,10 +384,10 @@ const AdminDashboard = () => {
 
   const hasTeams = useMemo(() => (assignment?.teams?.length || 0) > 0, [assignment?.teams]);
 
-  // Analysis mode & selected user (NEW: keep userId for backend + email/name for UI)
+  // Selected user (อยู่ในระนาบเดียวกับ Assignment)
   const [mode, setMode] = useState<"team" | "individual">("team");
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null); // userId sent to BE
-  const [selectedUserEmail, setSelectedUserEmail] = useState<string | null>(null); // for client-side view
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedUserEmail, setSelectedUserEmail] = useState<string | null>(null);
   const [selectedUserName, setSelectedUserName] = useState<string | null>(null);
 
   // load profile + assignment
@@ -412,7 +412,7 @@ const AdminDashboard = () => {
           payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
           setAssignment(payload);
 
-          // pick first team if available
+          // default team
           if (payload.teams?.[0]?.teamId) setSelectedTeamId(payload.teams[0].teamId);
         }
       } catch {
@@ -434,7 +434,7 @@ const AdminDashboard = () => {
       setTeamMembers(members);
       setSelectedTeamId(teamId);
 
-      // reset selected user if not in team
+      // ถ้าย้ายทีมแล้ว user เดิมไม่อยู่ ให้ clear
       if (selectedUserId && !members.some((m: any) => String(m.id) === String(selectedUserId))) {
         setSelectedUserId(null);
         setSelectedUserEmail(null);
@@ -448,7 +448,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // auto-load first team’s members when assignment arrives/changes
+  // auto-load members
   useEffect(() => {
     if (hasTeams && selectedTeamId) {
       fetchTeamMembers(selectedTeamId);
@@ -471,22 +471,21 @@ const AdminDashboard = () => {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [contentPerf, setContentPerf] = useState<ContentPerfItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null); // 200 แต่ payload ว่าง/รูปทรงไม่ครบ
 
-  /** Build query params for backend (NEW: userId instead of userEmail) */
+  /** Build query params (ใช้ userId ไม่ใช่ email) */
   const buildQueryParams = () => {
     const base: Record<string, any> = { start, end };
 
     if (mode === "team") {
-      // team mode prefers team view WHEN we actually have a team selected
       if (selectedTeamId) {
         base.view = "team";
         base.teamId = selectedTeamId;
       } else {
-        // if no teams at all for this trainer, fallback to own contents
         base.view = "individual";
       }
     } else {
-      // individual mode
+      // individual
       if (selectedTeamId) {
         base.view = "team";
         base.teamId = selectedTeamId;
@@ -499,46 +498,65 @@ const AdminDashboard = () => {
     return base;
   };
 
-  /** prevent "200 but empty" by fetching only when ready */
+  /** กันไม่ให้ยิงก่อนพร้อมจริง */
   const shouldFetch = useMemo(() => {
     if (!token) return false;
-    if (assignment === null) return false; // still loading assignment
+    if (assignment === null) return false;
 
-    // If trainer has teams:
     if (hasTeams) {
-      if (mode === "team") {
-        // need a selected team before team view call
-        return !!selectedTeamId;
-      } else {
-        // individual mode works with or without userId; teamId optional
-        return true;
-      }
+      if (mode === "team") return !!selectedTeamId;
+      return true; // individual โอเค ยิงได้
     }
-
-    // If trainer has NO teams -> use individual view immediately
-    return true;
+    return true; // ไม่มีทีม ยิง individual ได้เลย
   }, [token, assignment, hasTeams, mode, selectedTeamId]);
+
+  const validateOverview = (ov: any): ov is OverviewResponse => {
+    if (!ov || typeof ov !== "object") return false;
+    if (!ov.kpi || typeof ov.kpi !== "object") return false;
+    if (!Array.isArray(ov.trend)) return false;
+    return true;
+  };
+
+  const validateContentPerf = (cp: any): cp is ContentPerformanceResponse => {
+    if (!cp || typeof cp !== "object") return false;
+    if (!Array.isArray(cp.items)) return false;
+    return true;
+  };
 
   const fetchAll = async () => {
     if (!token) return;
     const params = buildQueryParams();
     setLoading(true);
     setError(null);
+    setWarning(null);
 
     const auth = { headers: { Authorization: `Bearer ${token}` } };
     try {
       console.log("[Dashboard] fetching with params:", params);
 
       const [ovRes, cpRes] = await Promise.all([
-        axios.get<OverviewResponse>(ENDPOINTS.TrainerOverview, { params, ...auth }),
-        axios.get<ContentPerformanceResponse>(ENDPOINTS.TrainerPerformance, {
+        axios.get(ENDPOINTS.TrainerOverview, { params, ...auth }),
+        axios.get(ENDPOINTS.TrainerPerformance, {
           params: { ...params, order: "learners:desc", limit: 50, offset: 0 },
           ...auth,
         }),
       ]);
 
-      setOverview(ovRes.data);
-      setContentPerf(cpRes.data.items || []);
+      const ovData = ovRes?.data;
+      const cpData = cpRes?.data;
+
+      const okOv = validateOverview(ovData);
+      const okCp = validateContentPerf(cpData);
+
+      if (!okOv || !okCp) {
+        console.warn("[Dashboard] 200 but payload shape unexpected", { ovData, cpData });
+        setWarning(
+          "ได้สถานะ 200 จากเซิร์ฟเวอร์ แต่รูปแบบข้อมูลไม่ตรงที่ UI คาดไว้ หรือไม่มีข้อมูลในช่วงที่เลือก"
+        );
+      }
+
+      setOverview(okOv ? (ovData as OverviewResponse) : { kpi: { totalContents: 0, newEnrollments: 0, completionRate: 0, avgScore: null }, trend: [] });
+      setContentPerf(okCp ? (cpData as ContentPerformanceResponse).items || [] : []);
     } catch (e: any) {
       setOverview(null);
       setContentPerf([]);
@@ -548,15 +566,13 @@ const AdminDashboard = () => {
     }
   };
 
-  // fetch whenever core params change AND we're ready
   useEffect(() => {
     if (!shouldFetch) return;
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldFetch, mode, selectedTeamId, selectedUserId, start, end]);
 
-  /* ---------- Client-side “safety net” filtering ---------- */
-  // prefer filtering by userId (if learner objects carry userId), else fallback to email
+  /* ---------- Client-side filtering safety net ---------- */
   const selectedUserEmailSet = useMemo(() => {
     if (mode === "individual" && selectedUserEmail) {
       return new Set([String(selectedUserEmail).toLowerCase()]);
@@ -773,7 +789,7 @@ const AdminDashboard = () => {
             <h1 className="text-3xl font-bold text-gray-800 mb-1">👋 Welcome, {displayName}</h1>
             <p className="text-gray-600 mb-2 ml-10">Have a good day!</p>
 
-            {/* --- Assignment + Analysis Mode --- */}
+            {/* --- Assignment + Selected User (ระนาบเดียวกัน) --- */}
             <div className="bg-white border rounded-xl shadow-sm px-4 py-3 max-w-4xl">
               <div className="flex items-center justify-between mb-3">
                 <div className="text-sm font-semibold text-gray-700">Assignment</div>
@@ -807,7 +823,13 @@ const AdminDashboard = () => {
                     {assignment.teams.map((t) => (
                       <button
                         key={t.teamId}
-                        onClick={() => fetchTeamMembers(t.teamId)}
+                        onClick={() => {
+                          // เปลี่ยนทีม -> เคลียร์ user ที่เลือกไว้
+                          setSelectedUserId(null);
+                          setSelectedUserEmail(null);
+                          setSelectedUserName(null);
+                          fetchTeamMembers(t.teamId);
+                        }}
                         className={`px-3 py-2 rounded-lg border text-sm ${
                           selectedTeamId === t.teamId
                             ? "bg-blue-600 text-white border-blue-600"
@@ -820,160 +842,150 @@ const AdminDashboard = () => {
                     ))}
                   </div>
 
-                  {/* Members SELECT (NEW: value=id, used for userId param) */}
-                  <div className="mt-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-xs text-gray-500">
-                        Members {selectedTeamId ? `(Team: ${selectedTeamId})` : ""}
-                      </div>
-                      {mode === "individual" && (selectedUserId || selectedUserEmail) && (
-                        <button
-                          className="text-xs text-red-600 hover:underline"
-                          onClick={() => {
-                            setSelectedUserId(null);
-                            setSelectedUserEmail(null);
-                            setSelectedUserName(null);
-                          }}
-                        >
-                          Clear selection
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="flex gap-2 items-center">
-                      {teamMembersLoading ? (
-                        <div className="text-sm text-gray-500">Loading members...</div>
-                      ) : teamMembersError ? (
-                        <div className="text-sm text-red-600">{teamMembersError}</div>
-                      ) : mode === "individual" ? (
-                        <select
-                          className="px-3 py-2 border rounded-md text-sm bg-white min-w-[280px]"
-                          value={selectedUserId || ""}
-                          onChange={(e) => {
-                            const id = e.target.value || null;
-                            setSelectedUserId(id);
-                            const u = teamMembers.find((m: any) => String(m.id) === id);
-                            setSelectedUserEmail(u?.email || null);
-                            setSelectedUserName(u?.name || u?.email || null);
-                          }}
-                        >
-                          <option value="">Select a member</option>
-                          {teamMembers.map((m: any) => (
-                            <option key={m.id} value={m.id}>
-                              {(m.name || m.email) + (m.role ? ` (${m.role})` : "")}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <div className="text-xs text-gray-600">
-                          Team size: <span className="font-medium">{teamMembers.length}</span>
+                  {/* Members select + Selected User snapshot */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* left: member selector */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-xs text-gray-500">
+                          Members {selectedTeamId ? `(Team: ${selectedTeamId})` : ""}
                         </div>
+                        {mode === "individual" && (selectedUserId || selectedUserEmail) && (
+                          <button
+                            className="text-xs text-red-600 hover:underline"
+                            onClick={() => {
+                              setSelectedUserId(null);
+                              setSelectedUserEmail(null);
+                              setSelectedUserName(null);
+                            }}
+                          >
+                            Clear selection
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2 items-center">
+                        {teamMembersLoading ? (
+                          <div className="text-sm text-gray-500">Loading members...</div>
+                        ) : teamMembersError ? (
+                          <div className="text-sm text-red-600">{teamMembersError}</div>
+                        ) : mode === "individual" ? (
+                          <select
+                            className="px-3 py-2 border rounded-md text-sm bg-white min-w-[280px]"
+                            value={selectedUserId || ""}
+                            onChange={(e) => {
+                              const id = e.target.value || null;
+                              setSelectedUserId(id);
+                              const u = teamMembers.find((m: any) => String(m.id) === id);
+                              setSelectedUserEmail(u?.email || null);
+                              setSelectedUserName(u?.name || u?.email || null);
+                            }}
+                          >
+                            <option value="">Select a member</option>
+                            {teamMembers.map((m: any) => (
+                              <option key={m.id} value={m.id}>
+                                {(m.name || m.email) + (m.role ? ` (${m.role})` : "")}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="text-xs text-gray-600">
+                            Team size: <span className="font-medium">{teamMembers.length}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* right: Selected User snapshot */}
+                    <div className="bg-emerald-50/40 rounded-lg p-3 border">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-sm font-semibold text-emerald-700">Selected User</div>
+                        {(selectedUserId || selectedUserEmail) && (
+                          <button
+                            className="text-xs text-emerald-700/80 hover:underline"
+                            onClick={() => {
+                              setSelectedUserId(null);
+                              setSelectedUserEmail(null);
+                              setSelectedUserName(null);
+                            }}
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+
+                      {mode !== "individual" ? (
+                        <div className="text-sm text-gray-600">
+                          Switch to “Individual” เพื่อดูรายละเอียดผู้ใช้
+                        </div>
+                      ) : !(selectedUserId || selectedUserEmail) ? (
+                        <div className="text-sm text-gray-600">เลือกสมาชิกเพื่อดูสรุปกิจกรรม</div>
+                      ) : (
+                        <>
+                          <div className="mb-2">
+                            <div className="text-sm font-medium text-gray-800">
+                              {selectedUserName || selectedUserEmail || selectedUserId}
+                            </div>
+                            {selectedUserEmail && (
+                              <div className="text-xs text-gray-500">{selectedUserEmail}</div>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2 mb-2">
+                            <div className="bg-white border rounded-lg p-2">
+                              <div className="text-[11px] text-gray-500">Enrolls</div>
+                              <div className="text-lg font-semibold">{userSnapshot?.enrolls ?? 0}</div>
+                            </div>
+                            <div className="bg-white border rounded-lg p-2">
+                              <div className="text-[11px] text-gray-500">Completed</div>
+                              <div className="text-lg font-semibold">{userSnapshot?.completedCount ?? 0}</div>
+                            </div>
+                            <div className="bg-white border rounded-lg p-2">
+                              <div className="text-[11px] text-gray-500">Avg Score</div>
+                              <div className="text-lg font-semibold">
+                                {userSnapshot?.avgScore != null ? userSnapshot?.avgScore : "-"}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="text-xs text-gray-500 mb-1">Recent</div>
+                          {userSnapshot?.recent?.length ? (
+                            <ul className="space-y-1 max-h-40 overflow-auto pr-1 text-xs">
+                              {userSnapshot!.recent.map((r, idx) => (
+                                <li key={idx}>
+                                  <span
+                                    className={`inline-block px-1.5 py-0.5 text-[10px] rounded border mr-2 ${
+                                      r.type === "complete"
+                                        ? "bg-green-50 text-green-700 border-green-200"
+                                        : "bg-blue-50 text-blue-700 border-blue-200"
+                                    }`}
+                                  >
+                                    {r.type}
+                                  </span>
+                                  <span className="font-medium">{r.course}</span>{" "}
+                                  <span className="text-[10px] text-gray-500">
+                                    {r.at ? new Date(r.at).toLocaleString() : r.date}
+                                  </span>
+                                  {r.type === "complete" && typeof r.score === "number" && (
+                                    <span className="text-[10px] text-gray-600 ml-2">
+                                      score: {Math.round(r.score)}
+                                      {typeof r.totalQuestions === "number" ? ` / ${r.totalQuestions}` : ""}
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="text-sm text-gray-600">No activity in range.</div>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
                 </>
               )}
             </div>
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-emerald-500">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-gray-700">Selected User</h2>
-                {(selectedUserId || selectedUserEmail) && (
-                  <button
-                    className="text-xs text-red-600 hover:underline"
-                    onClick={() => {
-                      setSelectedUserId(null);
-                      setSelectedUserEmail(null);
-                      setSelectedUserName(null);
-                    }}
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-
-              {mode !== "individual" ? (
-                <div className="text-sm text-gray-500">Switch to “Individual” to see user details.</div>
-              ) : !(selectedUserId || selectedUserEmail) ? (
-                <div className="text-sm text-gray-500">Select a member to analyze their activity.</div>
-              ) : (
-                <>
-                  <div className="mb-3">
-                    <div className="text-sm font-medium text-gray-800">
-                      {selectedUserName || selectedUserEmail || selectedUserId}
-                    </div>
-                    {selectedUserEmail && (
-                      <div className="text-xs text-gray-500">{selectedUserEmail}</div>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-3 mb-3">
-                    <div className="bg-emerald-50 border rounded-lg p-3">
-                      <div className="text-[11px] text-gray-500">Enrolls</div>
-                      <div className="text-xl font-semibold">{userSnapshot?.enrolls ?? 0}</div>
-                    </div>
-                    <div className="bg-emerald-50 border rounded-lg p-3">
-                      <div className="text-[11px] text-gray-500">Completed</div>
-                      <div className="text-xl font-semibold">{userSnapshot?.completedCount ?? 0}</div>
-                    </div>
-                    <div className="bg-emerald-50 border rounded-lg p-3">
-                      <div className="text-[11px] text-gray-500">Avg Score</div>
-                      <div className="text-xl font-semibold">
-                        {userSnapshot?.avgScore != null ? userSnapshot?.avgScore : "-"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mb-3">
-                    <div className="text-xs text-gray-500 mb-1">Courses engaged</div>
-                    {userSnapshot?.courses?.length ? (
-                      <div className="flex flex-wrap gap-2">
-                        {userSnapshot!.courses.map((c) => (
-                          <span key={c} className="px-2 py-1 text-xs bg-gray-100 border rounded-full" title={c}>
-                            {c}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500">-</div>
-                    )}
-                  </div>
-
-                  <div>
-                    <div className="text-xs text-gray-500 mb-1">Recent activity</div>
-                    {userSnapshot?.recent?.length ? (
-                      <ul className="space-y-2 max-h-64 overflow-auto pr-1">
-                        {userSnapshot!.recent.map((r, idx) => (
-                          <li key={idx} className="text-sm">
-                            <span
-                              className={`inline-block px-1.5 py-0.5 text-[10px] rounded border mr-2 ${
-                                r.type === "complete"
-                                  ? "bg-green-50 text-green-700 border-green-200"
-                                  : "bg-blue-50 text-blue-700 border-blue-200"
-                              }`}
-                            >
-                              {r.type}
-                            </span>
-                            <span className="font-medium">{r.course}</span>{" "}
-                            <span className="text-xs text-gray-500">
-                              {r.at ? new Date(r.at).toLocaleString() : r.date}
-                            </span>
-                            {r.type === "complete" && typeof r.score === "number" && (
-                              <span className="text-xs text-gray-600 ml-2">
-                                score: {Math.round(r.score)}
-                                {typeof r.totalQuestions === "number" ? ` / ${r.totalQuestions}` : ""}
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="text-sm text-gray-500">No activity in range.</div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-            {/* --- /Assignment & Mode --- */}
+            {/* --- /Assignment & Selected User --- */}
           </div>
 
           <div className="flex items-center justify-end space-x-4">
@@ -1037,7 +1049,17 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        {/* KPI */}
+        {/* KPI / Warnings / Errors */}
+        {warning && (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-800">
+            {warning}
+          </div>
+        )}
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
+            {String(error)}
+          </div>
+        )}
         {overview && (
           <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
             <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
@@ -1063,13 +1085,6 @@ const AdminDashboard = () => {
           </div>
         )}
 
-        {/* Error */}
-        {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
-            {String(error)}
-          </div>
-        )}
-
         {/* Summary */}
         <h2 className="text-xl font-semibold text-gray-700 mb-2 ml-2">
           Summary {mode === "team" ? "(Team View)" : "(Individual View)"}
@@ -1078,7 +1093,7 @@ const AdminDashboard = () => {
         <div className="flex flex-col xl:flex-row gap-6">
           {/* Left column */}
           <div className="flex-1 space-y-6">
-            {/* Bar chart: Daily Activity */}
+            {/* Daily Activity */}
             <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-lg font-semibold text-gray-700">
@@ -1099,7 +1114,7 @@ const AdminDashboard = () => {
               </ResponsiveContainer>
             </div>
 
-            {/* Donut charts by Content */}
+            {/* Learners by Content */}
             <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-gray-700 mb-4">Learners by Content</h2>
@@ -1145,7 +1160,7 @@ const AdminDashboard = () => {
               )}
             </div>
 
-            {/* Content Performance Table */}
+            {/* Content Performance */}
             <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-gray-700">Content Performance</h2>
@@ -1196,9 +1211,6 @@ const AdminDashboard = () => {
 
           {/* Right column */}
           <div className="flex flex-col xl:flex-row justify-end gap-6 mb-6 w-[440px]">
-            {/* Individual Snapshot */}
-            
-
             <div className="space-y-6">
               <AdminCalendar />
               <ScoreboardChart token={token || ""} />
