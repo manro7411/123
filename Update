@@ -1,306 +1,302 @@
-@PUT
-@Path("/{id}")
-@Transactional
-@RolesAllowed(Roles.ROLE_TRAINER)
-public LearningContentDto update(
-        @PathParam("id") String id,
-        LearningContentDto dto,
-        @Context SecurityContext securityContext
-) {
-    String currentUser = securityContext.getUserPrincipal().getName();
-    String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
-    log.info("User '{}' called method '{}' to update Learning content with ID: {}", currentUser, methodName, id);
+/* eslint-disable react-hooks/exhaustive-deps */
+import { useState, useEffect, useContext, useMemo } from "react";
+import { useParams, Navigate, useNavigate } from "react-router-dom";
+import axios from "axios";
+import QuestionWidget from "./QuestionWidget";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import type { Progress, Question } from "../../../types/user/types";
 
-    LearningContent lc = em.find(LearningContent.class, id);
-    if (lc == null) {
-        log.error("Learning content with ID: {} not found in method -> {}", id, methodName);
-        throw new NotFoundException();
+type AnswerPayload = { questionId: string; selectedChoiceId: string };
+
+const TIME_PER_QUESTION = 20; // วินาทีต่อข้อ
+const REDIRECT_DELAY_MS = 5000;
+
+const QuizPageStyled = () => {
+  const { id: learningContentId } = useParams<{ id: string }>();
+  const { user, token: ctxToken } = useContext(AuthContext);
+  const navigate = useNavigate();
+
+  const token = useMemo(
+    () => ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token"),
+    [ctxToken]
+  );
+
+  const displayName = user?.name || user?.upn || "User";
+
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null);
+  const [timeLeft, setTimeLeft] = useState(TIME_PER_QUESTION);
+  const [showSummary, setShowSummary] = useState(false);
+
+  // attempts info
+  const [attempts, setAttempts] = useState(0);
+  const [maxAttempts, setMaxAttempts] = useState(1);
+  const [hasTakenQuiz, setHasTakenQuiz] = useState(false);
+
+  // answers accum
+  const [answers, setAnswers] = useState<AnswerPayload[]>([]);
+
+  // result from backend
+  const [finalScore, setFinalScore] = useState<number | null>(null);
+  const [percentScore, setPercentScore] = useState<number | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
+
+  // ---------- fetch progress ----------
+  const fetchProgress = async () => {
+    try {
+      const res = await axios.get<Progress[]>("/api/user/progress", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const progress = res.data.find((p) => p.lessonId === learningContentId);
+      if (!progress) return;
+      setAttempts(progress.attempts || 0);
+      setMaxAttempts(progress.maxAttempts || 1);
+      if ((progress.attempts || 0) >= (progress.maxAttempts || 1)) {
+        setHasTakenQuiz(true);
+      }
+    } catch (err) {
+      console.error("❌ Failed to check progress:", err);
     }
+  };
 
-    // อนุญาตเฉพาะเจ้าของ (ปรับตาม policy ได้)
-    if (lc.getAuthorEmail() != null && !lc.getAuthorEmail().equalsIgnoreCase(currentUser)) {
-        log.warn("User {} is not owner of content {} (owner: {}), forbidden", currentUser, id, lc.getAuthorEmail());
-        throw new ForbiddenException("You are not allowed to update this learning content");
-    }
+  useEffect(() => {
+    if (!learningContentId || !token) return;
+    fetchProgress();
+  }, [learningContentId, token]);
 
-    /* ==================== อัปเดตข้อมูลพื้นฐาน ==================== */
-    if (dto.title() != null) {
-        lc.setTitle(dto.title());
-    }
-    if (dto.description() != null) {
-        lc.setDescription(dto.description());
-    }
-    if (dto.category() != null) {
-        lc.setCategory(dto.category());
-    }
-    if (dto.thumbnailUrl() != null) {
-        lc.setThumbnailUrl(dto.thumbnailUrl());
-    }
-    if (dto.authorAvatarUrl() != null) {
-        lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
-    }
-    if (dto.assignType() != null) {
-        lc.setAssignType(dto.assignType());
-    }
+  // ---------- fetch questions ----------
+  useEffect(() => {
+    if (!learningContentId) return;
+    setLoading(true);
+    axios
+      .get<Question[]>(`/api/questions/by-learning/${learningContentId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      .then((res) => setQuestions(res.data || []))
+      .catch((error) => console.error("❌ Failed to fetch questions:", error))
+      .finally(() => setLoading(false));
+  }, [learningContentId, token]);
 
-    if (dto.assignedUserIds() != null) {
-        var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new));
-        merged.addAll(dto.assignedUserIds());
-        lc.setAssignedUserIds(new ArrayList<>(merged));
-    }
+  // reset state เมื่อชุดคำถาม/lesson เปลี่ยน
+  useEffect(() => {
+    setCurrentQuestionIndex(0);
+    setSelectedChoiceId(null);
+    setAnswers([]);
+    setTimeLeft(TIME_PER_QUESTION);
+    setShowSummary(false);
+    setFinalScore(null);
+    setPercentScore(null);
+    setAttemptId(null);
+  }, [learningContentId]);
 
-    if (dto.assignedTeamIds() != null) {
-        var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(ArrayList::new));
-        merged.addAll(dto.assignedTeamIds());
-        lc.setAssignedTeamIds(new ArrayList<>(merged));
-    }
+  // ---------- helpers ----------
+  const handleOptionSelect = (choiceId: string) => setSelectedChoiceId(choiceId);
 
-    if (dto.dueDate() != null) {
-        lc.setDueDate(dto.dueDate());
-    }
+  /**
+   * รวมคำตอบของ "ข้อตอนนี้" เข้ากับ answers แล้วคืน array ชุดใหม่กลับมา
+   * (เพื่อใช้ส่งทันที โดยไม่รอ state)
+   */
+  const pushAnswerForCurrent = (): AnswerPayload[] => {
+    const q = questions[currentQuestionIndex];
+    if (!q || !selectedChoiceId) return answers;
+    const next = [...answers, { questionId: q.id, selectedChoiceId }];
+    setAnswers(next);
+    return next;
+  };
 
-    /* ==================== อัปเดต Quiz ==================== */
+  /**
+   * ส่งคำตอบขึ้น backend
+   * - ถ้ามี override ให้ใช้ชุดนั้น (เช่น ส่งชุดที่เพิ่งรวมข้อสุดท้าย) เพื่อไม่พลาดคำตอบ
+   */
+  const submitAnswers = async (override?: AnswerPayload[]) => {
+    if (!learningContentId || !token) return;
 
-    List<QuestionDTO> dtoQuestions = dto.questions();
-    List<QuestionDTO> resultQuestions = new ArrayList<>();
+    const toSend = override ?? answers;
 
-    if (dtoQuestions != null) {
-        // โหลดคำถามเดิมทั้งหมดของ content นี้ (managed)
-        List<QuestionEntity> existingQuestions = em.createQuery(
-                        "SELECT q FROM QuestionEntity q WHERE q.learningContent.id = :contentId",
-                        QuestionEntity.class)
-                .setParameter("contentId", id)
-                .getResultList();
+    const payload = {
+      // lessonId: learningContentId, // จะตัดออกได้ ถ้า backend เช็คจาก path อย่างเดียว
+      answers: toSend, // [{ questionId, selectedChoiceId }]
+    };
 
-        Map<String, QuestionEntity> existingById = existingQuestions.stream()
-                .filter(q -> q.getId() != null)
-                .collect(Collectors.toMap(QuestionEntity::getId, q -> q));
+    const res = await axios.post(
+      `/api/questions/${learningContentId}/submit-answers`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-        Set<String> keepQuestionIds = new HashSet<>();
+    const { score, percentScore, attemptId } = res.data || {};
+    setFinalScore(typeof score === "number" ? score : 0);
+    setPercentScore(typeof percentScore === "number" ? percentScore : null);
+    setAttemptId(attemptId ?? null);
+    setShowSummary(true);
+  };
 
-        for (QuestionDTO qdto : dtoQuestions) {
-            // FE ต้องส่ง questionId กลับมาถ้าเป็นคำถามเดิม
-            String qId = qdto.questionId;
+  // ---------- timer ----------
+  useEffect(() => {
+    if (showSummary) return;
 
-            QuestionEntity question;
-            boolean isNew = false;
-
-            if (qId != null && existingById.containsKey(qId)) {
-                // อัปเดตคำถามเดิม
-                question = existingById.get(qId);
-                log.info("Updating existing question ID: {} for content {}", qId, id);
-            } else {
-                // เพิ่มคำถามใหม่
-                question = new QuestionEntity();
-                String newId = generateId();
-                question.setId(newId);
-                question.setLearningContent(lc);
-                em.persist(question);
-                isNew = true;
-                log.info("Creating new question ID: {} for content {}", newId, id);
-            }
-
-            keepQuestionIds.add(question.getId());
-
-            // อัปเดต field ของ question
-            question.setQuestionText(qdto.questionText);
-            question.setPoints(qdto.points != null ? qdto.points : 1);
-
-            QuestionType type = resolveTypeFromDto(qdto);
-            question.setType(type);
-
-            /* ========== MULTIPLE CHOICE ========== */
-            if (type == QuestionType.MULTIPLE) {
-                if (question.getChoices() == null) {
-                    question.setChoices(new ArrayList<>());
-                }
-                List<QuestionChoiceEntity> existingChoices = question.getChoices();
-
-                Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
-                        .filter(c -> c.getId() != null)
-                        .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
-
-                Set<String> keepChoiceIds = new HashSet<>();
-
-                if (qdto.choices != null) {
-                    for (ChoiceDTO cdto : qdto.choices) {
-                        String cId = cdto.getChoiceId();
-                        QuestionChoiceEntity choice = null;
-
-                        if (cId != null) {
-                            choice = choiceById.get(cId);
-                            if (choice == null) {
-                                // fallback: ถ้ามีใน DB และ belong กับคำถามนี้ ให้ reuse
-                                QuestionChoiceEntity found = em.find(QuestionChoiceEntity.class, cId);
-                                if (found != null && found.getQuestion() != null &&
-                                        question.getId().equals(found.getQuestion().getId())) {
-                                    choice = found;
-                                    if (!existingChoices.contains(found)) {
-                                        existingChoices.add(found);
-                                    }
-                                }
-                            }
-                        }
-
-                        if (choice == null) {
-                            // choice ใหม่
-                            String newCid =
-                                    (cId != null && em.find(QuestionChoiceEntity.class, cId) == null)
-                                            ? cId
-                                            : generateId();
-
-                            choice = new QuestionChoiceEntity();
-                            choice.setId(newCid);
-                            choice.setQuestion(question);
-                            existingChoices.add(choice); // cascade จะ persist ให้
-                            log.info("Creating new choice ID: {} for question {}", newCid, question.getId());
-                        }
-
-                        keepChoiceIds.add(choice.getId());
-                        choice.setChoiceText(cdto.getText());
-                        choice.setCorrect(cdto.isCorrect());
-                    }
-                }
-
-                // ลบ choices ที่ไม่อยู่ใน DTO
-                for (var it = existingChoices.iterator(); it.hasNext(); ) {
-                    QuestionChoiceEntity c = it.next();
-                    if (!keepChoiceIds.contains(c.getId())) {
-                        log.info("Removing choice ID: {} from question {}", c.getId(), question.getId());
-                        em.remove(c); // orphanRemoval + remove
-                        it.remove();
-                    }
-                }
-
-                // เคลียร์ fill-blank ถ้ามี (กัน type เปลี่ยน)
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", question)
-                        .executeUpdate();
-            }
-
-            /* ========== FILL IN THE BLANK ========== */
-            else if (type == QuestionType.FILL_BLANK) {
-                // ลบ choices เดิมออก
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
-                    question.getChoices().clear();
-                }
-
-                // หา fill-blank เดิม
-                List<QuestionFillBlankEntity> fbList = em.createQuery(
-                                "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
-                                QuestionFillBlankEntity.class)
-                        .setParameter("q", question)
-                        .getResultList();
-                QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
-
-                String answer = qdto.correctAnswer != null ? qdto.correctAnswer.trim() : "";
-
-                if (!answer.isEmpty()) {
-                    if (fb == null) {
-                        fb = new QuestionFillBlankEntity();
-                        fb.setId(generateId());
-                        fb.setQuestion(question);
-                    }
-                    fb.setCorrectAnswer(answer); // ตั้งค่าก่อน persist/flush
-                    if (!em.contains(fb)) {
-                        em.persist(fb);
-                        log.info("Creating fill-blank record ID: {} for question {}", fb.getId(), question.getId());
-                    }
-                } else if (fb != null) {
-                    log.info("Removing fill-blank record ID: {} for question {}", fb.getId(), question.getId());
-                    em.remove(fb);
-                }
-            }
-
-            /* ========== TYPE อื่น ========== */
-            else {
-                // ลบ choices ถ้ามี
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
-                    question.getChoices().clear();
-                }
-                // ลบ fill-blank ถ้ามี
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", question)
-                        .executeUpdate();
-            }
-
-            resultQuestions.add(qdto);
-
-            if (isNew) {
-                log.info("Question {} created for content {}", question.getId(), id);
-            } else {
-                log.info("Question {} updated for content {}", question.getId(), id);
-            }
-        }
-
-        // ลบคำถามที่ไม่อยู่ใน DTO (ถ้าไม่มีคำตอบใน quiz_answers เท่านั้น)
-        for (QuestionEntity q : existingQuestions) {
-            if (!keepQuestionIds.contains(q.getId())) {
-                // เช็คว่ามีคำตอบอ้างอิงอยู่ไหม
-                Number answerCount = (Number) em.createNativeQuery(
-                                "SELECT COUNT(*) FROM quiz_answers WHERE question_id = :qid")
-                        .setParameter("qid", q.getId())
-                        .getSingleResult();
-
-                if (answerCount != null && answerCount.longValue() > 0L) {
-                    log.warn(
-                            "Skip deleting question {} because {} quiz_answers still reference it",
-                            q.getId(), answerCount.longValue()
-                    );
-                    continue; // ห้ามลบคำถามนี้
-                }
-
-                log.info("Removing question ID: {} from content {}", q.getId(), id);
-
-                // ลบ fill-blank
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", q)
-                        .executeUpdate();
-
-                // ลบ choices
-                if (q.getChoices() != null && !q.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
-                        em.remove(c);
-                    }
-                    q.getChoices().clear();
-                }
-
-                em.remove(q);
-            }
-        }
-    } else {
-        log.info("No quiz data provided for content {}, skipping quiz update", id);
-    }
-
-    em.flush();
-    log.info("Learning content with ID: {} updated successfully in {}", id, methodName);
-
-    return LearningContentDto.withQuizInfo(lc, resultQuestions);
-}
-
-/* ==================== Helpers ==================== */
-
-private static String generateId() {
-    return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-}
-
-private static QuestionType resolveTypeFromDto(QuestionDTO qdto) {
-    if (qdto.type != null) {
+    if (timeLeft <= 0) {
+      const onTimeout = async () => {
         try {
-            return QuestionType.valueOf(qdto.type.trim().toUpperCase());
-        } catch (IllegalArgumentException ignored) {}
+          // รวมคำตอบของข้อล่าสุดด้วย หากผู้ใช้เลือกไว้แต่ยังไม่กด Continue
+          let nextAnswers = answers;
+          if (selectedChoiceId) {
+            nextAnswers = pushAnswerForCurrent();
+          }
+          if (nextAnswers.length > 0) {
+            await submitAnswers(nextAnswers);
+          } else {
+            // ไม่มีคำตอบเลย → backend จะ 400 ถ้าส่ง list ว่าง
+            setFinalScore(0);
+            setPercentScore(0);
+            setShowSummary(true);
+          }
+        } catch (e) {
+          console.error("❌ submit on timeout:", e);
+          setShowSummary(true);
+        } finally {
+          navigate("/lesson");
+        }
+      };
+      onTimeout();
+      return;
     }
-    if (qdto.choices != null && !qdto.choices.isEmpty()) {
-        return QuestionType.MULTIPLE;
+
+    const t = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
+    return () => clearInterval(t);
+  }, [timeLeft, showSummary, answers, selectedChoiceId]);
+
+  // ---------- redirect after summary ----------
+  useEffect(() => {
+    if (!showSummary) return;
+    const t = setTimeout(() => navigate("/lesson"), REDIRECT_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [showSummary, navigate]);
+
+  const handleContinue = async () => {
+    // รวมคำตอบของข้อนี้ก่อน
+    let nextAnswers = answers;
+    if (selectedChoiceId) {
+      nextAnswers = pushAnswerForCurrent();
     }
-    if (qdto.correctAnswer != null && !qdto.correctAnswer.isBlank()) {
-        return QuestionType.FILL_BLANK;
+
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex((i) => i + 1);
+      setSelectedChoiceId(null);
+      setTimeLeft(TIME_PER_QUESTION);
+    } else {
+      // ข้อสุดท้าย → ส่ง "nextAnswers" ทันที (กันคำตอบหล่น)
+      try {
+        await submitAnswers(nextAnswers);
+      } catch (e) {
+        console.error("❌ Error submitting answers:", e);
+        setShowSummary(true);
+      }
     }
-    return QuestionType.MULTIPLE;
-}
+  };
+
+  // ---------- UI ----------
+  if (!token) return <Navigate to="/" replace />;
+  if (loading) return <div className="p-10 text-gray-500">Loading questions...</div>;
+
+  if (hasTakenQuiz)
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-white text-center p-10">
+        <div>
+          <h2 className="text-2xl font-bold text-red-600 mb-4">⚠️ Quiz Unavailable</h2>
+          <p className="text-gray-600 mb-4">
+            You have used {attempts} / {maxAttempts} attempts.
+          </p>
+          <button
+            onClick={() => navigate("/lesson")}
+            className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Back to Lessons
+          </button>
+        </div>
+      </div>
+    );
+
+  const currentQuestion = questions[currentQuestionIndex];
+  if (!currentQuestion) return <div className="p-10 text-red-500">No questions found.</div>;
+
+  return (
+    <div className="flex min-h-screen bg-white">
+      <div className="flex-1 px-16 py-10 relative">
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">Welcome, {displayName}</h1>
+        <p className="text-sm text-gray-400 mb-6">Let’s get started!</p>
+
+        {showSummary ? (
+          <div className="text-center mt-20">
+            <h2 className="text-2xl font-bold text-green-600 mb-4">🎉 Quiz Completed!</h2>
+            <p className="text-gray-600 mb-2">
+              {finalScore !== null ? (
+                <>
+                  You scored: <strong>{finalScore}</strong> point(s)
+                  {typeof percentScore === "number" && <> ({percentScore}%)</>}
+                </>
+              ) : (
+                <>Submitting result…</>
+              )}
+            </p>
+            {!!attemptId && (
+              <p className="text-gray-500 mb-1">
+                Attempt ID: <code className="text-xs">{attemptId}</code>
+              </p>
+            )}
+            <p className="text-gray-500">Redirecting to lessons...</p>
+          </div>
+        ) : (
+          <>
+            <h2 className="text-xl font-bold mb-6">{currentQuestion.questionText}</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              ประเภท: {currentQuestion.type} | คะแนน: {currentQuestion.points}
+            </p>
+            <QuestionWidget
+              type={currentQuestion.type}
+              choices={currentQuestion.choices}
+              // ต้องส่ง/รับเป็น choiceId
+              selectedOption={selectedChoiceId}
+              onSelect={handleOptionSelect}
+            />
+          </>
+        )}
+
+        {!showSummary && (
+          <div className="absolute bottom-8 left-0 right-0 flex justify-between items-center px-16">
+            <div className="flex items-center justify-center w-16 h-16 border-4 border-blue-400 rounded-full text-blue-600 text-lg font-bold">
+              {timeLeft}
+            </div>
+            <button
+              className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-full hover:bg-blue-700 disabled:opacity-50"
+              onClick={handleContinue}
+              disabled={!selectedChoiceId}
+            >
+              {currentQuestionIndex < questions.length - 1 ? "Continue" : "Finish Quiz"}
+            </button>
+          </div>
+        )}
+
+        {showSummary && finalScore === 0 && answers.length === 0 && (
+          <div className="text-center mt-20">
+            <h2 className="text-2xl font-bold text-red-600 mb-4">⏰ Time's Up!</h2>
+            <p className="text-gray-600 mb-2">
+              You missed the quiz for this attempt. Your score: <strong>0</strong>
+            </p>
+            <p className="text-gray-500">Redirecting to lessons...</p>
+          </div>
+        )}
+      </div>
+      <div className="w-64 hidden lg:block"></div>
+    </div>
+  );
+};
+
+export default QuizPageStyled;
