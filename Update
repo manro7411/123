@@ -1,376 +1,52 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-import { useState, useEffect, useContext, useMemo } from "react";
-import { useParams, Navigate, useNavigate } from "react-router-dom";
-import axios from "axios";
-import QuestionWidget from "./QuestionWidget";
-import { AuthContext } from "../../../Authentication/AuthContext";
-import type { Progress, Question } from "../../../types/user/types";
+package QuizService.DTOs;
 
-type AnswerPayload = {
-  questionId: string;
-  selectedChoiceId?: string; // for multiple choice
-  answerText?: string;       // for fill in the blank
-};
+import com.fasterxml.jackson.annotation.JsonProperty;
 
-const TIME_PER_QUESTION = 20; // วินาทีต่อข้อ
-const REDIRECT_DELAY_MS = 5000;
+public class ChoiceDTO {
+    private String choiceId;
+    private String text;
+    @JsonProperty("correct")
+    private boolean isCorrect;
+    private boolean isSelected;
 
-const QuizPageStyled = () => {
-  const { id: learningContentId } = useParams<{ id: string }>();
-  const { user, token: ctxToken } = useContext(AuthContext);
-  const navigate = useNavigate();
+    public ChoiceDTO() {}
 
-  const token = useMemo(
-    () => ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token"),
-    [ctxToken]
-  );
-
-  const displayName = user?.name || user?.upn || "User";
-
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-
-  // state สำหรับคำตอบของ "ข้อปัจจุบัน"
-  const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null);
-  const [answerText, setAnswerText] = useState<string>(""); // สำหรับ fill in the blank
-
-  const [timeLeft, setTimeLeft] = useState(TIME_PER_QUESTION);
-  const [showSummary, setShowSummary] = useState(false);
-
-  // attempts info
-  const [attempts, setAttempts] = useState(0);
-  const [maxAttempts, setMaxAttempts] = useState(1);
-  const [hasTakenQuiz, setHasTakenQuiz] = useState(false);
-
-  // เก็บคำตอบทุกข้อ
-  const [answers, setAnswers] = useState<AnswerPayload[]>([]);
-
-  // result
-  const [finalScore, setFinalScore] = useState<number | null>(null);
-  const [percentScore, setPercentScore] = useState<number | null>(null);
-  const [attemptId, setAttemptId] = useState<string | null>(null);
-
-  // ---------- fetch progress ----------
-  const fetchProgress = async () => {
-    try {
-      const res = await axios.get<Progress[]>("/api/user/progress", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const progress = res.data.find((p) => p.lessonId === learningContentId);
-      if (!progress) return;
-      setAttempts(progress.attempts || 0);
-      setMaxAttempts(progress.maxAttempts || 1);
-      if ((progress.attempts || 0) >= (progress.maxAttempts || 1)) {
-        setHasTakenQuiz(true);
-      }
-    } catch (err) {
-      console.error("❌ Failed to check progress:", err);
-    }
-  };
-
-  useEffect(() => {
-    if (!learningContentId || !token) return;
-    fetchProgress();
-  }, [learningContentId, token]);
-
-  // ---------- fetch questions ----------
-  useEffect(() => {
-    if (!learningContentId) return;
-    setLoading(true);
-    axios
-      .get<Question[]>(`/api/questions/by-learning/${learningContentId}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      })
-      .then((res) => setQuestions(res.data || []))
-      .catch((error) => console.error("❌ Failed to fetch questions:", error))
-      .finally(() => setLoading(false));
-  }, [learningContentId, token]);
-
-  // reset เมื่อเปลี่ยน lesson
-  useEffect(() => {
-    setCurrentQuestionIndex(0);
-    setSelectedChoiceId(null);
-    setAnswerText("");
-    setAnswers([]);
-    setTimeLeft(TIME_PER_QUESTION);
-    setShowSummary(false);
-    setFinalScore(null);
-    setPercentScore(null);
-    setAttemptId(null);
-  }, [learningContentId]);
-
-  // ---------- helpers ----------
-
-  const currentQuestion = questions[currentQuestionIndex];
-
-  const handleOptionSelect = (choiceId: string) => {
-    setSelectedChoiceId(choiceId);
-    setAnswerText(""); // กัน state ค้างข้าม type
-  };
-
-  const handleTextAnswerChange = (value: string) => {
-    setAnswerText(value);
-    setSelectedChoiceId(null); // กัน state ค้าง
-  };
-
-  const buildAnswerForCurrent = (): AnswerPayload | null => {
-    if (!currentQuestion) return null;
-
-    if (currentQuestion.type === "MULTIPLE" || currentQuestion.type === "multiple") {
-      if (!selectedChoiceId) return null;
-      return {
-        questionId: currentQuestion.id,
-        selectedChoiceId,
-      };
+    public ChoiceDTO(String choiceId, String text, boolean isCorrect, boolean isSelected) {
+        this.choiceId = choiceId;
+        this.text = text;
+        this.isCorrect = isCorrect;
+        this.isSelected = isSelected;
     }
 
-    if (
-      currentQuestion.type === "FILL_BLANK" ||
-      currentQuestion.type === "FILL_IN_THE_BLANK" ||
-      currentQuestion.type === "fill_blank"
-    ) {
-      const text = answerText.trim();
-      if (!text) return null;
-      return {
-        questionId: currentQuestion.id,
-        answerText: text,
-      };
+    public String getChoiceId() {
+        return choiceId;
     }
 
-    // default: treat as multiple
-    if (selectedChoiceId) {
-      return {
-        questionId: currentQuestion.id,
-        selectedChoiceId,
-      };
+    public void setChoiceId(String choiceId) {
+        this.choiceId = choiceId;
     }
 
-    return null;
-  };
-
-  /** push คำตอบของข้อปัจจุบันเข้า state และคืน array ใหม่ */
-  const pushAnswerForCurrent = (): AnswerPayload[] => {
-    const ans = buildAnswerForCurrent();
-    if (!ans) return answers;
-    const others = answers.filter((a) => a.questionId !== ans.questionId);
-    const next = [...others, ans];
-    setAnswers(next);
-    return next;
-  };
-
-  const submitAnswers = async (override?: AnswerPayload[]) => {
-    if (!learningContentId || !token) return;
-    const toSend = override ?? answers;
-
-    if (!toSend.length) {
-      setFinalScore(0);
-      setPercentScore(0);
-      setShowSummary(true);
-      return;
+    public String getText() {
+        return text;
     }
 
-    const payload = { answers: toSend };
-
-    const res = await axios.post(
-      `/api/questions/${learningContentId}/submit-answers`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const { score, percentScore, attemptId } = res.data || {};
-    setFinalScore(typeof score === "number" ? score : 0);
-    setPercentScore(
-      typeof percentScore === "number" ? percentScore : null
-    );
-    setAttemptId(attemptId ?? null);
-    setShowSummary(true);
-  };
-
-  // ---------- timer ----------
-  useEffect(() => {
-    if (showSummary) return;
-
-    if (timeLeft <= 0) {
-      const onTimeout = async () => {
-        try {
-          const nextAnswers = pushAnswerForCurrent();
-          if (nextAnswers.length > 0) {
-            await submitAnswers(nextAnswers);
-          } else {
-            setFinalScore(0);
-            setPercentScore(0);
-            setShowSummary(true);
-          }
-        } catch (e) {
-          console.error("❌ submit on timeout:", e);
-          setShowSummary(true);
-        } finally {
-          navigate("/lesson");
-        }
-      };
-      onTimeout();
-      return;
+    public void setText(String text) {
+        this.text = text;
     }
 
-    const t = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
-    return () => clearInterval(t);
-  }, [timeLeft, showSummary, currentQuestion, selectedChoiceId, answerText, answers]);
-
-  // ---------- redirect after summary ----------
-  useEffect(() => {
-    if (!showSummary) return;
-    const t = setTimeout(() => navigate("/lesson"), REDIRECT_DELAY_MS);
-    return () => clearTimeout(t);
-  }, [showSummary, navigate]);
-
-  const handleContinue = async () => {
-    const nextAnswers = pushAnswerForCurrent();
-
-    if (currentQuestionIndex < questions.length - 1) {
-      setCurrentQuestionIndex((i) => i + 1);
-      setSelectedChoiceId(null);
-      setAnswerText("");
-      setTimeLeft(TIME_PER_QUESTION);
-    } else {
-      try {
-        await submitAnswers(nextAnswers);
-      } catch (e) {
-        console.error("❌ Error submitting answers:", e);
-        setShowSummary(true);
-      }
+    public boolean isCorrect() {
+        return isCorrect;
     }
-  };
 
-  // ---------- UI ----------
+    public void setCorrect(boolean correct) {
+        isCorrect = correct;
+    }
 
-  if (!token) return <Navigate to="/" replace />;
-  if (loading) return <div className="p-10 text-gray-500">Loading questions...</div>;
+    public boolean isSelected() {
+        return isSelected;
+    }
 
-  if (hasTakenQuiz)
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-white text-center p-10">
-        <div>
-          <h2 className="text-2xl font-bold text-red-600 mb-4">⚠️ Quiz Unavailable</h2>
-          <p className="text-gray-600 mb-4">
-            You have used {attempts} / {maxAttempts} attempts.
-          </p>
-          <button
-            onClick={() => navigate("/lesson")}
-            className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            Back to Lessons
-          </button>
-        </div>
-      </div>
-    );
-
-  if (!currentQuestion) {
-    return <div className="p-10 text-red-500">No questions found.</div>;
-  }
-
-  const isFillBlank =
-    currentQuestion.type === "FILL_BLANK" ||
-    currentQuestion.type === "FILL_IN_THE_BLANK" ||
-    currentQuestion.type === "fill_blank";
-
-  // ปุ่มต้อง disabled ถ้ายังไม่ตอบตาม type
-  const canContinue = (() => {
-    if (showSummary) return false;
-    if (isFillBlank) return !!answerText.trim();
-    return !!selectedChoiceId;
-  })();
-
-  return (
-    <div className="flex min-h-screen bg-white">
-      <div className="flex-1 px-16 py-10 relative">
-        <h1 className="text-2xl font-bold text-gray-800 mb-2">
-          Welcome, {displayName}
-        </h1>
-        <p className="text-sm text-gray-400 mb-6">Let’s get started!</p>
-
-        {showSummary ? (
-          <div className="text-center mt-20">
-            <h2 className="text-2xl font-bold text-green-600 mb-4">
-              🎉 Quiz Completed!
-            </h2>
-            <p className="text-gray-600 mb-2">
-              {finalScore !== null ? (
-                <>
-                  You scored: <strong>{finalScore}</strong> point(s)
-                  {typeof percentScore === "number" && <> ({percentScore}%)</>}
-                </>
-              ) : (
-                <>Submitting result…</>
-              )}
-            </p>
-            {!!attemptId && (
-              <p className="text-gray-500 mb-1">
-                Attempt ID:{" "}
-                <code className="text-xs break-all">{attemptId}</code>
-              </p>
-            )}
-            <p className="text-gray-500">Redirecting to lessons...</p>
-          </div>
-        ) : (
-          <>
-            <h2 className="text-xl font-bold mb-4">
-              {currentQuestion.questionText}
-            </h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Type: {currentQuestion.type} | Points: {currentQuestion.points}
-            </p>
-
-            <QuestionWidget
-              type={currentQuestion.type}
-              choices={currentQuestion.choices}
-              selectedOption={selectedChoiceId}
-              answerText={answerText}
-              onSelect={handleOptionSelect}
-              onTextChange={handleTextAnswerChange}
-            />
-          </>
-        )}
-
-        {!showSummary && (
-          <div className="absolute bottom-8 left-0 right-0 flex justify-between items-center px-16">
-            <div className="flex items-center justify-center w-16 h-16 border-4 border-blue-400 rounded-full text-blue-600 text-lg font-bold">
-              {timeLeft}
-            </div>
-            <button
-              className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-full hover:bg-blue-700 disabled:opacity-50"
-              onClick={handleContinue}
-              disabled={!canContinue}
-            >
-              {currentQuestionIndex < questions.length - 1
-                ? "Continue"
-                : "Finish Quiz"}
-            </button>
-          </div>
-        )}
-
-        {showSummary && finalScore === 0 && answers.length === 0 && (
-          <div className="text-center mt-20">
-            <h2 className="text-2xl font-bold text-red-600 mb-4">
-              ⏰ Time's Up!
-            </h2>
-            <p className="text-gray-600 mb-2">
-              You missed the quiz for this attempt. Your score:{" "}
-              <strong>0</strong>
-            </p>
-            <p className="text-gray-500">Redirecting to lessons...</p>
-          </div>
-        )}
-      </div>
-      <div className="w-64 hidden lg:block" />
-    </div>
-  );
-};
-
-export default QuizPageStyled;
+    public void setSelected(boolean selected) {
+        isSelected = selected;
+    }
+}
