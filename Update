@@ -186,3 +186,34 @@ public LearningContentDto update(
                         em.remove(c);
                     }
                     question.getChoices().clear();
+                }
+            }
+
+            resultQuestionDtos.add(qdto);
+        }
+
+        // ลบคำถามที่ไม่มีใน DTO แล้ว
+        for (Iterator<QuestionEntity> it = lc.getQuestions().iterator(); it.hasNext(); ) {
+            QuestionEntity q = it.next();
+            if (!keepQuestionIds.contains(q.getId())) {
+                log.info("Removing question ID: {} from content {}", q.getId(), id);
+                // ลบ choices ด้วย
+                if (q.getChoices() != null) {
+                    for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
+                        em.remove(c);
+                    }
+                }
+                em.remove(q);
+                it.remove();
+            }
+        }
+
+    } else {
+        log.info("No questions in DTO, keeping existing quiz for content ID: {}", id);
+    }
+
+    em.flush();
+    log.info("Learning content with ID: {} updated successfully in method -> {}", id, methodName);
+
+    return LearningContentDto.withQuizInfo(lc, resultQuestionDtos);
+}
