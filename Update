@@ -1,293 +1,72 @@
-@PUT
-@Path("/{id}")
-@Transactional
-@RolesAllowed(Roles.ROLE_TRAINER)
-public LearningContentDto update(
-        @PathParam("id") String id,
-        LearningContentDto dto,
-        @Context SecurityContext securityContext
-) {
-    String currentUser = securityContext.getUserPrincipal().getName();
-    String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
-    log.info("User '{}' called method '{}' to update Learning content with ID: {}", currentUser, methodName, id);
+2025-11-07 10:35:22,039 ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-1) HTTP Request to /learning/04de603c4b264cea9dda8 failed, error id: a110cddb-c963-49d5-8f55-cfe2fd99a909-1
 
-    LearningContent lc = em.find(LearningContent.class, id);
-    if (lc == null) {
-        log.error("Learning content with ID: {} not found in method -> {}", id, methodName);
-        throw new NotFoundException();
-    }
+Exception in LearningContentResource.java:458y ''), [:] for the terminal, [h] for more options>
+          456                                  choice.setId(newCid);                                                                                                                                                                
+          457                                  choice.setQuestion(question);                                                                                                                                                        
+        ? 458                                  em.persist(choice);              // persist �� entity ����                                                                                                                           
+          459                                  existingChoices.add(choice);    // �١�Ѻ question                                                                                                                                     
+          460                                  log.info("Creating new choice ID: {} for question {}", newCid, question.getId());                                                                                                    
 
-    // อนุญาตเฉพาะเจ้าของ (ปรับตาม policy ได้)
-    if (lc.getAuthorEmail() != null && !lc.getAuthorEmail().equalsIgnoreCase(currentUser)) {
-        log.warn("User {} is not owner of content {} (owner: {}), forbidden", currentUser, id, lc.getAuthorEmail());
-        throw new ForbiddenException("You are not allowed to update this learning content");
-    }
-
-    /* ==================== อัปเดตข้อมูลพื้นฐาน ==================== */
-    if (dto.title() != null) {
-        lc.setTitle(dto.title());
-        log.info("Updating title to: {} in {}", dto.title(), methodName);
-    }
-    if (dto.description() != null) {
-        lc.setDescription(dto.description());
-        log.info("Updating description in {}", methodName);
-    }
-    if (dto.category() != null) {
-        lc.setCategory(dto.category());
-        log.info("Updating category to: {} in {}", dto.category(), methodName);
-    }
-    if (dto.thumbnailUrl() != null) {
-        lc.setThumbnailUrl(dto.thumbnailUrl());
-        log.info("Updating thumbnail URL in {}", methodName);
-    }
-    if (dto.authorAvatarUrl() != null) {
-        lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
-        log.info("Updating author avatar URL in {}", methodName);
-    }
-    if (dto.assignType() != null) {
-        lc.setAssignType(dto.assignType());
-        log.info("Updating assign type to: {} in {}", dto.assignType(), methodName);
-    }
-    if (dto.assignedUserIds() != null) {
-        var merged = new LinkedHashSet<>(
-                Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new)
-        );
-        merged.addAll(dto.assignedUserIds());
-        lc.setAssignedUserIds(new ArrayList<>(merged));
-    }
-    if (dto.assignedTeamIds() != null) {
-        var merged = new LinkedHashSet<>(
-                Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(ArrayList::new)
-        );
-        merged.addAll(dto.assignedTeamIds());
-        lc.setAssignedTeamIds(new ArrayList<>(merged));
-    }
-    if (dto.dueDate() != null) {
-        lc.setDueDate(dto.dueDate());
-        log.info("Current User -> {} set due date to: {} in {}", currentUser, dto.dueDate(), methodName);
-    }
-
-    /* ==================== อัปเดต Quiz (MULTIPLE + FILL_BLANK) ==================== */
-
-    List<QuestionDTO> dtoQuestions = dto.questions();
-    List<QuestionDTO> resultQuestions = new ArrayList<>();
-
-    if (dtoQuestions != null) {
-        // โหลดคำถามเดิมทั้งหมดของ content นี้
-        List<QuestionEntity> existingQuestions = em.createQuery(
-                        "SELECT q FROM QuestionEntity q WHERE q.learningContent.id = :contentId",
-                        QuestionEntity.class)
-                .setParameter("contentId", id)
-                .getResultList();
-
-        Map<String, QuestionEntity> existingById = existingQuestions.stream()
-                .filter(q -> q.getId() != null)
-                .collect(Collectors.toMap(QuestionEntity::getId, q -> q));
-
-        Set<String> keepQuestionIds = new HashSet<>();
-
-        for (QuestionDTO qdto : dtoQuestions) {
-
-            // ใช้ questionId จาก DTO (เพิ่ม field นี้ใน QuestionDTO)
-            String qId = qdto.questionId; // ถ้าใช้ชื่ออื่น เช่น id -> map ให้ตรง
-
-            QuestionEntity question;
-            boolean isNew = false;
-
-            if (qId != null && existingById.containsKey(qId)) {
-                // อัปเดตคำถามเดิม
-                question = existingById.get(qId);
-                log.info("Updating existing question ID: {} for content {}", qId, id);
-            } else {
-                // เพิ่มคำถามใหม่
-                question = new QuestionEntity();
-                String newId = generateId();
-                question.setId(newId);
-                question.setLearningContent(lc);
-                em.persist(question);
-                isNew = true;
-                log.info("Creating new question ID: {} for content {}", newId, id);
-            }
-
-            keepQuestionIds.add(question.getId());
-
-            // set ข้อมูลคำถาม
-            question.setQuestionText(qdto.questionText);
-            question.setPoints(qdto.points != null ? qdto.points : 1);
-
-            QuestionType type = resolveTypeFromDto(qdto);
-            question.setType(type);
-
-            /* ===== MULTIPLE CHOICE ===== */
-            if (type == QuestionType.MULTIPLE) {
-                if (question.getChoices() == null) {
-                    question.setChoices(new ArrayList<>());
-                }
-                List<QuestionChoiceEntity> existingChoices = question.getChoices();
-
-                Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
-                        .filter(c -> c.getId() != null)
-                        .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
-
-                Set<String> keepChoiceIds = new HashSet<>();
-
-                if (qdto.choices != null) {
-                    for (ChoiceDTO cdto : qdto.choices) {
-                        String cId = cdto.getChoiceId();
-                        QuestionChoiceEntity choice;
-
-                        if (cId != null && choiceById.containsKey(cId)) {
-                            // update ของเดิม
-                            choice = choiceById.get(cId);
-                            log.info("Updating existing choice ID: {} for question {}", cId, question.getId());
-                        } else {
-                            // new choice
-                            choice = new QuestionChoiceEntity();
-
-                            // ถ้า client ส่ง cId ที่ไม่ชนใน map ใช้ได้, ถ้า null หรือชน => gen ใหม่
-                            String newCid =
-                                    (cId != null && !choiceById.containsKey(cId))
-                                            ? cId
-                                            : generateId();
-
-                            choice.setId(newCid);
-                            choice.setQuestion(question);
-                            em.persist(choice);              // persist แค่ entity ใหม่
-                            existingChoices.add(choice);    // ผูกกับ question
-                            log.info("Creating new choice ID: {} for question {}", newCid, question.getId());
-                        }
-
-                        keepChoiceIds.add(choice.getId());
-                        choice.setChoiceText(cdto.getText());
-                        choice.setCorrect(cdto.isCorrect());
-                    }
-                }
-
-                // ลบ choices ที่ไม่อยู่ใน DTO แล้ว
-                for (var it = existingChoices.iterator(); it.hasNext(); ) {
-                    QuestionChoiceEntity c = it.next();
-                    if (!keepChoiceIds.contains(c.getId())) {
-                        log.info("Removing choice ID: {} from question {}", c.getId(), question.getId());
-                        em.remove(c);
-                        it.remove();
-                    }
-                }
-
-                // เคลียร์ fill-blank ถ้ามี (ป้องกัน type เปลี่ยน)
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", question)
-                        .executeUpdate();
-            }
-
-            /* ===== FILL IN THE BLANK ===== */
-            else if (type == QuestionType.FILL_BLANK) {
-                // ลบ choices ทั้งหมดถ้ามี เพราะใช้ correctAnswer แทน
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
-                    question.getChoices().clear();
-                }
-
-                // จัดการ QuestionFillBlankEntity (1:1)
-                List<QuestionFillBlankEntity> fbList = em.createQuery(
-                                "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
-                                QuestionFillBlankEntity.class)
-                        .setParameter("q", question)
-                        .getResultList();
-                QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
-
-                String answer = qdto.correctAnswer != null ? qdto.correctAnswer.trim() : "";
-
-                if (!answer.isEmpty()) {
-                    if (fb == null) {
-                        fb = new QuestionFillBlankEntity();
-                        fb.setId(generateId());
-                        fb.setQuestion(question);
-                        em.persist(fb);
-                        log.info("Creating fill-blank record ID: {} for question {}", fb.getId(), question.getId());
-                    }
-                    fb.setCorrectAnswer(answer);
-                } else if (fb != null) {
-                    // DTO ไม่ส่ง correctAnswer แล้ว -> ลบทิ้ง
-                    log.info("Removing fill-blank record ID: {} for question {}", fb.getId(), question.getId());
-                    em.remove(fb);
-                }
-            }
-
-            /* ===== อื่น ๆ (กันอนาคต) ===== */
-            else {
-                // เคลียร์ choices
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
-                    question.getChoices().clear();
-                }
-                // เคลียร์ fill-blank
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", question)
-                        .executeUpdate();
-            }
-
-            resultQuestions.add(qdto);
-
-            if (isNew) {
-                log.info("Question {} created for content {}", question.getId(), id);
-            } else {
-                log.info("Question {} updated for content {}", question.getId(), id);
-            }
-        }
-
-        // ลบคำถามที่ไม่ถูกส่งมาใน DTO
-        for (QuestionEntity q : new ArrayList<>(existingById.values())) {
-            if (!keepQuestionIds.contains(q.getId())) {
-                log.info("Removing question ID: {} from content {}", q.getId(), id);
-
-                // ลบ fill-blank ที่ผูกอยู่
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", q)
-                        .executeUpdate();
-
-                // ลบ choices (กัน case ไม่ได้ใช้ orphanRemoval)
-                if (q.getChoices() != null && !q.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
-                        em.remove(c);
-                    }
-                    q.getChoices().clear();
-                }
-
-                em.remove(q);
-            }
-        }
-
-    } else {
-        log.info("No quiz data provided for content {}, skipping quiz update", id);
-    }
-
-    em.flush();
-    log.info("Learning content with ID: {} updated successfully in {}", id, methodName);
-
-    return LearningContentDto.withQuizInfo(lc, resultQuestions);
-}
-
-/* ==================== Helpers ==================== */
-
-private static String generateId() {
-    return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-}
-
-private static QuestionType resolveTypeFromDto(QuestionDTO qdto) {
-    if (qdto.type != null) {
-        try {
-            return QuestionType.valueOf(qdto.type.trim().toUpperCase());
-        } catch (IllegalArgumentException ignored) { }
-    }
-    if (qdto.choices != null && !qdto.choices.isEmpty()) {
-        return QuestionType.MULTIPLE;
-    }
-    if (qdto.correctAnswer != null && !qdto.correctAnswer.isBlank()) {
-        return QuestionType.FILL_BLANK;
-    }
-    return QuestionType.MULTIPLE;
-}
+Exception in LearningContentResource.java:458
+          456                                  choice.setId(newCid);                                                                                                                                                                
+          457                                  choice.setQuestion(question);                                                                                                                                                        
+        ? 458                                  em.persist(choice);              // persist �� entity ����                                                                                                                           
+          459                                  existingChoices.add(choice);    // �١�Ѻ question                                                                                                                                     
+          460                                  log.info("Creating new choice ID: {} for question {}", newCid, question.getId());: jakarta.persistence.EntityExistsException: A different object with the same identifier value was already associated with the session: [QuizService.Entity.QuestionChoiceEntity#e1b6a10169a54fc39586a]                                                                                                                                 
+        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:126)                                                                                                                                   
+        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:167)                                                                                                                                   
+        at org.hibernate.internal.ExceptionConverterImpl.convert(ExceptionConverterImpl.java:173)                                                                                                                                   
+        at org.hibernate.internal.SessionImpl.firePersist(SessionImpl.java:767)                                                                                                                                                     
+        at org.hibernate.internal.SessionImpl.persist(SessionImpl.java:745)                                                                                                                                                         
+        at io.quarkus.hibernate.orm.runtime.session.TransactionScopedSession.persist(TransactionScopedSession.java:158)                                                                                                             
+        at org.hibernate.engine.spi.SessionLazyDelegator.persist(SessionLazyDelegator.java:282)                                                                                                                                     
+        at org.hibernate.Session_OpdLahisOZ9nWRPXMsEFQmQU03A_Synthetic_ClientProxy.persist(Unknown Source)                                                                                                                          
+        at Testing.LearningContentResource.update(LearningContentResource.java:458)                                                                                                                                                 
+        at Testing.LearningContentResource_Subclass.update$$superforward(Unknown Source)                                                                                                                                            
+        at Testing.LearningContentResource_Subclass$$function$$1.apply(Unknown Source)                                                                                                                                              
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
+        at io.quarkus.security.runtime.interceptor.SecurityHandler.handle(SecurityHandler.java:27)                                                                                                                                  
+        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor.intercept(RolesAllowedInterceptor.java:29)                                                                                                               
+        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                                                           
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
+        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor.intercept(StandardSecurityCheckInterceptor.java:44)                                                                                         
+        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor_RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                      
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:136)                                                                                            
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:107)                                                                                            
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.doIntercept(TransactionalInterceptorRequired.java:38)                                                                                       
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.intercept(TransactionalInterceptorBase.java:61)                                                                                                 
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.intercept(TransactionalInterceptorRequired.java:32)                                                                                         
+        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired_Bean.intercept(Unknown Source)                                                                                                              
+        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
+        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
+        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
+        at Testing.LearningContentResource_Subclass.update(Unknown Source)                                                                                                                                                          
+        at Testing.LearningContentResource$quarkusrestinvoker$update_32ea3203ec171cb8a5003760c7201533316078ec.invoke(Unknown Source)                                                                                                
+        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
+        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
+        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
+        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
+        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
+        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
+        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
+        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
+        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
+        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
+        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
+        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
+Caused by: org.hibernate.NonUniqueObjectException: A different object with the same identifier value was already associated with the session: [QuizService.Entity.QuestionChoiceEntity#e1b6a10169a54fc39586a]                       
+        at org.hibernate.event.internal.AbstractSaveEventListener.entityKey(AbstractSaveEventListener.java:237)                                                                                                                     
+        at org.hibernate.event.internal.AbstractSaveEventListener.performSave(AbstractSaveEventListener.java:219)                                                                                                                   
+        at org.hibernate.event.internal.AbstractSaveEventListener.saveWithGeneratedId(AbstractSaveEventListener.java:136)                                                                                                           
+        at org.hibernate.event.internal.DefaultPersistEventListener.entityIsTransient(DefaultPersistEventListener.java:177)                                                                                                         
+        at org.hibernate.event.internal.DefaultPersistEventListener.persist(DefaultPersistEventListener.java:95)                                                                                                                    
+        at org.hibernate.event.internal.DefaultPersistEventListener.onPersist(DefaultPersistEventListener.java:79)                                                                                                                  
+        at org.hibernate.event.internal.DefaultPersistEventListener.onPersist(DefaultPersistEventListener.java:55)                                                                                                                  
+        at org.hibernate.event.service.internal.EventListenerGroupImpl.fireEventOnEachListener(EventListenerGroupImpl.java:127)                                                                                                     
+        at org.hibernate.internal.Sessio
