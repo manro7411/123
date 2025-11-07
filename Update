@@ -1,302 +1,236 @@
-@PUT
-@Path("/{id}")
-@Transactional
-@RolesAllowed(Roles.ROLE_TRAINER)
-public LearningContentDto update(
-        @PathParam("id") String id,
-        LearningContentDto dto,
-        @Context SecurityContext securityContext
-) {
-    String currentUser = securityContext.getUserPrincipal().getName();
-    String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
-    log.info("User '{}' called method '{}' to update Learning content with ID: {}", currentUser, methodName, id);
+package QuizService.DTOs.Response;
 
-    LearningContent lc = em.find(LearningContent.class, id);
-    if (lc == null) {
-        log.error("Learning content with ID: {} not found in method -> {}", id, methodName);
-        throw new NotFoundException();
-    }
+import QuizService.DTOs.ChoiceDTO;
+import java.util.List;
 
-    // allow only owner (ปรับตาม policy ได้)
-    if (lc.getAuthorEmail() != null && !lc.getAuthorEmail().equalsIgnoreCase(currentUser)) {
-        log.warn("User {} is not owner of content {} (owner: {}), forbidden", currentUser, id, lc.getAuthorEmail());
-        throw new ForbiddenException("You are not allowed to update this learning content");
-    }
+public class AnswerDetailDTO {
+    public String questionId;
+    public String questionText;
 
-    /* ==================== อัปเดตข้อมูลพื้นฐาน ==================== */
-    if (dto.title() != null) lc.setTitle(dto.title());
-    if (dto.description() != null) lc.setDescription(dto.description());
-    if (dto.category() != null) lc.setCategory(dto.category());
-    if (dto.thumbnailUrl() != null) lc.setThumbnailUrl(dto.thumbnailUrl());
-    if (dto.authorAvatarUrl() != null) lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
-    if (dto.assignType() != null) lc.setAssignType(dto.assignType());
+    // "MULTIPLE" หรือ "FILL_BLANK"
+    public String type;
 
-    if (dto.assignedUserIds() != null) {
-        var merged = new LinkedHashSet<>(
-                Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new)
+    // สำหรับ MULTIPLE:
+    public List<ChoiceDTO> choices;
+    public String selectedChoiceId; // choice id ที่เลือก
+
+    // สำหรับ FILL_BLANK:
+    public String userAnswer;      // คำตอบที่ user กรอก
+    public String correctAnswer;   // เฉลย
+
+    public boolean isCorrect;
+}
+package QuizService.DTOs.Response;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+public class QuizAttemptDetailDTO {
+    public String attemptId;
+    public String userEmail;
+    public String lessonId;
+
+    public String learningContentTitle;
+    public String learningDescription;
+    public String learningCategories;
+
+    public Integer score;
+    public Integer maxScore;
+    public Integer percentScore;
+
+    public Integer attemptCount;
+    public Integer max_attempt;
+
+    public LocalDateTime attemptedAt;
+
+    public List<AnswerDetailDTO> answers;
+}
+
+
+package QuizService.Services;
+
+import QuizService.DTOs.ChoiceDTO;
+import QuizService.DTOs.Response.AnswerDetailDTO;
+import QuizService.DTOs.Response.QuizAttemptDetailDTO;
+import QuizService.Entity.QuestionChoiceEntity;
+import QuizService.Entity.QuestionEntity;
+import QuizService.Entity.QuestionFillBlankEntity;
+import QuizService.Entity.QuizAnswerEntity;
+import QuizService.Entity.QuizAttemptEntity;
+import QuizService.Resources.QuestionType;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.ws.rs.NotFoundException;
+import model.LearningContent;
+import model.UserLessonProgress;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@ApplicationScoped
+public class QuizServices {
+
+    @Inject
+    EntityManager em;
+
+    public QuizAttemptDetailDTO mapAttemptToDTO(QuizAttemptEntity attempt) {
+        QuizAttemptDetailDTO dto = new QuizAttemptDetailDTO();
+
+        dto.attemptId = attempt.getId().toString();
+        dto.attemptedAt = attempt.getAttemptedAt();
+        dto.userEmail = attempt.getUser().getEmail();
+        dto.score = attempt.getScore();
+        dto.maxScore = attempt.getMaxScore();
+        dto.percentScore = (int) Math.round(
+                attempt.getScore() * 100.0 / Math.max(attempt.getMaxScore(), 1)
         );
-        merged.addAll(dto.assignedUserIds());
-        lc.setAssignedUserIds(new ArrayList<>(merged));
-    }
 
-    if (dto.assignedTeamIds() != null) {
-        var merged = new LinkedHashSet<>(
-                Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(ArrayList::new)
-        );
-        merged.addAll(dto.assignedTeamIds());
-        lc.setAssignedTeamIds(new ArrayList<>(merged));
-    }
+        // lesson / content info
+        UserLessonProgress lp = attempt.getLessonProgress();
+        if (lp != null) {
+            dto.lessonId = lp.getLessonId();
+            LearningContent content = em.find(LearningContent.class, lp.getLessonId());
+            if (content != null) {
+                dto.learningContentTitle = content.getTitle();
+                dto.learningDescription = content.getDescription();
+                dto.learningCategories = content.getCategory();
+                dto.max_attempt = content.getMaxAttempts();
+            }
+            dto.attemptCount = attemptCount(dto.userEmail, dto.lessonId);
+        }
 
-    if (dto.dueDate() != null) {
-        lc.setDueDate(dto.dueDate());
-    }
-
-    // --- quizAvailable flag ---
-    if (dto.quizAvailable() != null) {
-        lc.setQuizAvailable(dto.quizAvailable());
-    } else if (dto.questions() != null && !dto.questions().isEmpty()) {
-        // ถ้า FE ลืมส่ง quizAvailable แต่มีคำถามมา แปลว่าต้องการเปิด quiz
-        lc.setQuizAvailable(true);
-    }
-
-    /* ==================== อัปเดต Quiz ==================== */
-
-    List<QuestionDTO> dtoQuestions = dto.questions();
-    List<QuestionDTO> resultQuestions = new ArrayList<>();
-
-    if (dtoQuestions != null && !dtoQuestions.isEmpty()) {
-
-        // โหลดคำถามเดิมของ content นี้ (managed)
-        List<QuestionEntity> existingQuestions = em.createQuery(
-                        "SELECT q FROM QuestionEntity q WHERE q.learningContent.id = :contentId",
-                        QuestionEntity.class)
-                .setParameter("contentId", id)
+        // ดึงคำตอบทั้งหมดของ attempt นี้
+        List<QuizAnswerEntity> answers = em.createQuery("""
+                SELECT qa FROM QuizAnswerEntity qa
+                JOIN FETCH qa.question q
+                WHERE qa.attempt = :attempt
+                """, QuizAnswerEntity.class)
+                .setParameter("attempt", attempt)
                 .getResultList();
 
-        Map<String, QuestionEntity> existingById = existingQuestions.stream()
-                .filter(q -> q.getId() != null)
-                .collect(Collectors.toMap(QuestionEntity::getId, q -> q));
+        List<AnswerDetailDTO> answerDetails = new ArrayList<>();
 
-        Set<String> keepQuestionIds = new HashSet<>();
+        for (QuizAnswerEntity qa : answers) {
+            QuestionEntity question = qa.getQuestion();
+            if (question == null) continue;
 
-        for (QuestionDTO qdto : dtoQuestions) {
-            String qId = qdto.questionId; // FE ส่งมาเมื่อเป็นคำถามเดิม
+            AnswerDetailDTO a = new AnswerDetailDTO();
+            a.questionId = question.getId();
+            a.questionText = question.getQuestionText();
+            a.type = question.getType() != null ? question.getType().name() : null;
 
-            QuestionEntity question;
-            boolean isNew = false;
+            // MULTIPLE CHOICE
+            if (question.getType() == QuestionType.MULTIPLE) {
+                a.selectedChoiceId = qa.getSelectedChoiceId();
+                a.isCorrect = qa.isCorrect(); // ตรงกับ selectedChoiceId → isCorrect=true
 
-            if (qId != null && existingById.containsKey(qId)) {
-                // อัปเดตคำถามเดิม
-                question = existingById.get(qId);
-                log.info("Updating existing question ID: {} for content {}", qId, id);
-            } else {
-                // เพิ่มคำถามใหม่ (รองรับเคสยังไม่เคยมี quiz มาก่อน)
-                question = new QuestionEntity();
-                String newId = generateId();
-                question.setId(newId);
-                question.setLearningContent(lc);
-                em.persist(question);
-                isNew = true;
-                log.info("Creating new question ID: {} for content {}", newId, id);
+                List<ChoiceDTO> choiceDTOs = new ArrayList<>();
+                for (QuestionChoiceEntity c : question.getChoices()) {
+                    ChoiceDTO cd = new ChoiceDTO();
+                    cd.setChoiceId(c.getId());
+                    cd.setText(c.getChoiceText());
+                    cd.setCorrect(c.isCorrect());
+                    cd.setSelected(c.getId().equals(qa.getSelectedChoiceId()));
+                    choiceDTOs.add(cd);
+                }
+                a.choices = choiceDTOs;
             }
 
-            keepQuestionIds.add(question.getId());
+            // FILL IN THE BLANK
+            else if (question.getType() == QuestionType.FILL_BLANK) {
+                // selectedChoiceId ใน qa = คำตอบที่ user กรอกมา
+                String userAnswer = qa.getSelectedChoiceId();
+                a.userAnswer = userAnswer;
 
-            // fields หลัก
-            question.setQuestionText(qdto.questionText);
-            question.setPoints(qdto.points != null ? qdto.points : 1);
-
-            QuestionType type = resolveTypeFromDto(qdto);
-            question.setType(type);
-
-            /* ========== MULTIPLE CHOICE ========== */
-            if (type == QuestionType.MULTIPLE) {
-                if (question.getChoices() == null) {
-                    question.setChoices(new ArrayList<>());
-                }
-                List<QuestionChoiceEntity> existingChoices = question.getChoices();
-
-                Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
-                        .filter(c -> c.getId() != null)
-                        .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
-
-                Set<String> keepChoiceIds = new HashSet<>();
-
-                if (qdto.choices != null) {
-                    for (ChoiceDTO cdto : qdto.choices) {
-                        String cId = cdto.getChoiceId();
-                        QuestionChoiceEntity choice = null;
-
-                        if (cId != null) {
-                            // ถ้ามีใน list เดิม
-                            choice = choiceById.get(cId);
-                            // หรือหาใน persistence context แล้ว belong กับ question นี้
-                            if (choice == null) {
-                                QuestionChoiceEntity found = em.find(QuestionChoiceEntity.class, cId);
-                                if (found != null && found.getQuestion() != null &&
-                                        question.getId().equals(found.getQuestion().getId())) {
-                                    choice = found;
-                                    if (!existingChoices.contains(found)) {
-                                        existingChoices.add(found);
-                                    }
-                                }
-                            }
-                        }
-
-                        if (choice == null) {
-                            // choice ใหม่
-                            String newCid =
-                                    (cId != null && em.find(QuestionChoiceEntity.class, cId) == null)
-                                            ? cId
-                                            : generateId();
-
-                            choice = new QuestionChoiceEntity();
-                            choice.setId(newCid);
-                            choice.setQuestion(question);
-                            existingChoices.add(choice); // cascade persist
-                            log.info("Creating new choice ID: {} for question {}", newCid, question.getId());
-                        }
-
-                        keepChoiceIds.add(choice.getId());
-                        choice.setChoiceText(cdto.getText());
-                        choice.setCorrect(cdto.isCorrect());
-                    }
-                }
-
-                // ลบ choice ที่ไม่ถูกส่งมาแล้ว
-                for (var it = existingChoices.iterator(); it.hasNext(); ) {
-                    QuestionChoiceEntity c = it.next();
-                    if (!keepChoiceIds.contains(c.getId())) {
-                        log.info("Removing choice ID: {} from question {}", c.getId(), question.getId());
-                        em.remove(c);
-                        it.remove();
-                    }
-                }
-
-                // กันข้อมูล fill-blank ค้าง ถ้า type เปลี่ยน
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
+                String correct = em.createQuery("""
+                        SELECT fb.correctAnswer FROM QuestionFillBlankEntity fb
+                        WHERE fb.question = :q
+                        """, String.class)
                         .setParameter("q", question)
-                        .executeUpdate();
+                        .setMaxResults(1)
+                        .getResultStream()
+                        .findFirst()
+                        .orElse(null);
+
+                a.correctAnswer = correct;
+                a.isCorrect = (correct != null && userAnswer != null
+                        && correct.trim().equalsIgnoreCase(userAnswer.trim()));
+
+                // ไม่จำเป็นต้องมี choices สำหรับ fill blank
+                a.choices = null;
             }
 
-            /* ========== FILL IN THE BLANK ========== */
-            else if (type == QuestionType.FILL_BLANK) {
-                // ลบ choices ทิ้งถ้ามี (กัน type เปลี่ยนจาก multiple)
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
-                    question.getChoices().clear();
-                }
-
-                // หา record เดิม
-                List<QuestionFillBlankEntity> fbList = em.createQuery(
-                                "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
-                                QuestionFillBlankEntity.class)
-                        .setParameter("q", question)
-                        .getResultList();
-                QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
-
-                String answer = qdto.correctAnswer != null ? qdto.correctAnswer.trim() : "";
-
-                if (!answer.isEmpty()) {
-                    if (fb == null) {
-                        fb = new QuestionFillBlankEntity();
-                        fb.setId(generateId());
-                        fb.setQuestion(question);
-                        log.info("Creating fill-blank record for question {}", question.getId());
-                    }
-                    fb.setCorrectAnswer(answer);
-                    if (!em.contains(fb)) {
-                        em.persist(fb);
-                    }
-                } else if (fb != null) {
-                    log.info("Removing fill-blank record ID: {} for question {}", fb.getId(), question.getId());
-                    em.remove(fb);
-                }
-            }
-
-            /* ========== TYPE อื่น (กันอนาคต) ========== */
+            // type อื่น ๆ
             else {
-                // ล้าง choices
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
-                    question.getChoices().clear();
-                }
-                // ล้าง fill-blank
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", question)
-                        .executeUpdate();
+                a.isCorrect = qa.isCorrect();
             }
 
-            resultQuestions.add(qdto);
-
-            if (isNew) {
-                log.info("Question {} created for content {}", question.getId(), id);
-            } else {
-                log.info("Question {} updated for content {}", question.getId(), id);
-            }
+            answerDetails.add(a);
         }
 
-        // ลบคำถามที่ไม่อยู่ใน DTO (ถ้าไม่มีคำตอบผูกใน quiz_answers)
-        for (QuestionEntity q : existingQuestions) {
-            if (!keepQuestionIds.contains(q.getId())) {
-                Number answerCount = (Number) em.createNativeQuery(
-                                "SELECT COUNT(*) FROM quiz_answers WHERE question_id = :qid")
-                        .setParameter("qid", q.getId())
-                        .getSingleResult();
-
-                if (answerCount != null && answerCount.longValue() > 0L) {
-                    log.warn("Skip deleting question {} because {} quiz_answers still reference it",
-                            q.getId(), answerCount.longValue());
-                    continue;
-                }
-
-                log.info("Removing question ID: {} from content {}", q.getId(), id);
-
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", q)
-                        .executeUpdate();
-
-                if (q.getChoices() != null && !q.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
-                        em.remove(c);
-                    }
-                    q.getChoices().clear();
-                }
-
-                em.remove(q);
-            }
-        }
-    } else {
-        log.info("No quiz data provided for content {}, skipping quiz update", id);
+        dto.answers = answerDetails;
+        return dto;
     }
 
-    em.flush();
-    log.info("Learning content with ID: {} updated successfully in {}", id, methodName);
+    public int attemptCount(String currentUser, String lessonId) {
+        Long attemptCount = em.createQuery("""
+                        SELECT COUNT(a) FROM QuizAttemptEntity a
+                        WHERE a.user.email = :userEmail AND a.lessonProgress.lessonId = :lessonId
+                        """, Long.class)
+                .setParameter("userEmail", currentUser)
+                .setParameter("lessonId", lessonId)
+                .getSingleResult();
+        return attemptCount.intValue();
+    }
 
-    return LearningContentDto.withQuizInfo(lc, resultQuestions);
+    public int DisplayPercentage(String lessonId, String currentUser) {
+        var progress = em.createQuery("""
+                        SELECT p FROM UserLessonProgress p
+                        WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
+                        """, UserLessonProgress.class)
+                .setParameter("lessonId", lessonId)
+                .setParameter("userEmail", currentUser)
+                .getResultStream()
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException("No progress found. Please watch the lesson first."));
+
+        return progress.getPercent();
+    }
 }
+{Array.isArray(attempt.answers) &&
+  attempt.answers.map((answer: any, idx: number) => {
+    const type = (answer.type || "").toUpperCase();
 
-/* ==================== Helpers ==================== */
+    if (type === "FILL_BLANK") {
+      const userAnswer = answer.userAnswer || answer.selectedChoiceId || "";
+      const correct = answer.correctAnswer || "";
+      const isCorrect = !!answer.isCorrect;
 
-private static String generateId() {
-    return UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-}
+      return (
+        <div key={answer.questionId || idx} className="border rounded p-4 bg-white">
+          <h4 className="font-semibold text-gray-800 mb-2">
+            {idx + 1}. {answer.questionText}
+          </h4>
+          <p>
+            <span className="font-semibold">Your answer: </span>
+            <span className={isCorrect ? "text-green-600" : "text-red-600"}>
+              {userAnswer || "-"}
+            </span>
+          </p>
+          <p>
+            <span className="font-semibold">Correct answer: </span>
+            <span className="text-green-700">
+              {correct || "-"}
+            </span>
+          </p>
+          <p className="text-xs text-gray-500">
+            Result: {isCorrect ? "Correct ✅" : "Incorrect ❌"}
+          </p>
+        </div>
+      );
+    }
 
-private static QuestionType resolveTypeFromDto(QuestionDTO qdto) {
-    if (qdto.type != null) {
-        try {
-            return QuestionType.valueOf(qdto.type.trim().toUpperCase());
-        } catch (IllegalArgumentException ignored) {}
-    }
-    if (qdto.choices != null && !qdto.choices.isEmpty()) {
-        return QuestionType.MULTIPLE;
-    }
-    if (qdto.correctAnswer != null && !qdto.correctAnswer.isBlank()) {
-        return QuestionType.FILL_BLANK;
-    }
-    return QuestionType.MULTIPLE;
-}
+    // MULTIPLE (เดิม)
+    ...
+  })}
