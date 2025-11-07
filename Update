@@ -1,295 +1,405 @@
-@PUT
-@Path("/{id}")
-@Transactional
-@RolesAllowed(Roles.ROLE_TRAINER)
-public LearningContentDto update(
-        @PathParam("id") String id,
-        LearningContentDto dto,
-        @Context SecurityContext securityContext
-) {
-    String currentUser = securityContext.getUserPrincipal().getName();
-    String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
-    log.info("User '{}' called method '{}' to update Learning content with ID: {}", currentUser, methodName, id);
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useContext, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { X, Save, Plus, Trash2 } from "lucide-react";
+import { TARGET_OPTION } from "../AdminUtil";
+import type { QuestionForm } from "../../../types/trainer/types";
+import { AuthContext } from "../../../Authentication/AuthContext";
 
-    LearningContent lc = em.find(LearningContent.class, id);
-    if (lc == null) {
-        log.error("Learning content with ID: {} not found in method -> {}", id, methodName);
-        throw new NotFoundException();
-    }
-
-    // ✅ ให้เฉพาะเจ้าของ content แก้ไขได้ (ถ้าต้องการ logic อื่น ค่อยปรับ)
-    if (lc.getAuthorEmail() != null && !lc.getAuthorEmail().equalsIgnoreCase(currentUser)) {
-        log.warn("User {} is not owner of content {} (owner: {}), forbidden", currentUser, id, lc.getAuthorEmail());
-        throw new ForbiddenException("You are not allowed to update this learning content");
-    }
-
-    /* ==================== อัปเดตข้อมูลพื้นฐาน ==================== */
-
-    if (dto.title() != null) {
-        lc.setTitle(dto.title());
-        log.info("Updating title to: {} in Method {}", dto.title(), methodName);
-    }
-    if (dto.description() != null) {
-        lc.setDescription(dto.description());
-        log.info("Updating description to: {} in Method {}", dto.description(), methodName);
-    }
-    if (dto.category() != null) {
-        lc.setCategory(dto.category());
-        log.info("Updating category to: {} in Method {}", dto.category(), methodName);
-    }
-    if (dto.thumbnailUrl() != null) {
-        lc.setThumbnailUrl(dto.thumbnailUrl());
-        log.info("Updating thumbnail URL to: {} in Method {}", dto.thumbnailUrl(), methodName);
-    }
-    if (dto.authorAvatarUrl() != null) {
-        lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
-        log.info("Updating author avatar URL to: {} in Method {}", dto.authorAvatarUrl(), methodName);
-    }
-    if (dto.assignType() != null) {
-        lc.setAssignType(dto.assignType());
-        log.info("Updating assign type to: {} in Method {}", dto.assignType(), methodName);
-    }
-
-    if (dto.assignedUserIds() != null) {
-        var merged = new LinkedHashSet<>(
-                Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new)
-        );
-        merged.addAll(dto.assignedUserIds());
-        lc.setAssignedUserIds(new ArrayList<>(merged));
-    }
-
-    if (dto.assignedTeamIds() != null) {
-        var merged = new LinkedHashSet<>(
-                Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(ArrayList::new)
-        );
-        merged.addAll(dto.assignedTeamIds());
-        lc.setAssignedTeamIds(new ArrayList<>(merged));
-    }
-
-    if (dto.dueDate() != null) {
-        lc.setDueDate(dto.dueDate());
-        log.info("Current User -> {} is setting due date to: {} in Method {}", currentUser, dto.dueDate(), methodName);
-    }
-
-    /* ==================== อัปเดต Quiz ==================== */
-
-    List<QuestionDTO> dtoQuestions = dto.questions();
-    List<QuestionDTO> resultQuestions = new ArrayList<>();
-
-    if (dtoQuestions != null) {
-        // ดึงคำถามเดิมทั้งหมดของ content นี้
-        List<QuestionEntity> existingQuestions = em.createQuery(
-                        "SELECT q FROM QuestionEntity q WHERE q.learningContent.id = :contentId",
-                        QuestionEntity.class)
-                .setParameter("contentId", id)
-                .getResultList();
-
-        Map<String, QuestionEntity> existingById = existingQuestions.stream()
-                .filter(q -> q.getId() != null)
-                .collect(Collectors.toMap(QuestionEntity::getId, q -> q));
-
-        Set<String> keepQuestionIds = new HashSet<>();
-
-        for (QuestionDTO qdto : dtoQuestions) {
-
-            // รองรับได้ทั้ง questionId และ id
-            String qId = null;
-            try {
-                var field = qdto.getClass().getField("questionId");
-                Object v = field.get(qdto);
-                if (v != null) qId = v.toString();
-            } catch (NoSuchFieldException | IllegalAccessException ignored) { }
-            if (qId == null) {
-                try {
-                    var field = qdto.getClass().getField("id");
-                    Object v = field.get(qdto);
-                    if (v != null) qId = v.toString();
-                } catch (NoSuchFieldException | IllegalAccessException ignored) { }
-            }
-
-            QuestionEntity question;
-            boolean isNew = false;
-
-            if (qId != null && existingById.containsKey(qId)) {
-                // ✅ อัปเดตคำถามเดิม
-                question = existingById.get(qId);
-                log.info("Updating existing question ID: {} for content {}", qId, id);
-            } else {
-                // ✅ เพิ่มคำถามใหม่
-                question = new QuestionEntity();
-                String newId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-                question.setId(newId);
-                question.setLearningContent(lc);
-                em.persist(question);
-                isNew = true;
-                log.info("Creating new question ID: {} for content {}", newId, id);
-            }
-
-            keepQuestionIds.add(question.getId());
-
-            // อัปเดตฟิลด์หลักของ question
-            question.setQuestionText(qdto.questionText);
-            question.setPoints(qdto.points != null ? qdto.points : 1);
-
-            // Resolve type
-            String rawType = (qdto.type != null ? qdto.type : "").toUpperCase();
-            QuestionType type;
-            try {
-                type = QuestionType.valueOf(rawType);
-            } catch (Exception e) {
-                // auto-detect
-                if (qdto.choices != null && !qdto.choices.isEmpty()) {
-                    type = QuestionType.MULTIPLE;
-                } else if (qdto.correctAnswer != null) {
-                    type = QuestionType.FILL_BLANK;
-                } else {
-                    type = QuestionType.MULTIPLE;
-                }
-            }
-            question.setType(type);
-
-            /* ---------- MULTIPLE CHOICE ---------- */
-            if (type == QuestionType.MULTIPLE) {
-                List<QuestionChoiceEntity> existingChoices =
-                        Optional.ofNullable(question.getChoices()).orElseGet(ArrayList::new);
-
-                Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
-                        .filter(c -> c.getId() != null)
-                        .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
-
-                Set<String> keepChoiceIds = new HashSet<>();
-
-                if (qdto.choices != null) {
-                    for (ChoiceDTO cdto : qdto.choices) {
-                        String cId = cdto.getChoiceId();
-                        QuestionChoiceEntity choice;
-
-                        if (cId != null && choiceById.containsKey(cId)) {
-                            // อัปเดต choice เดิม
-                            choice = choiceById.get(cId);
-                            log.info("Updating existing choice ID: {} for question {}", cId, question.getId());
-                        } else {
-                            // เพิ่ม choice ใหม่
-                            choice = new QuestionChoiceEntity();
-                            String newCid = (cId != null)
-                                    ? cId
-                                    : UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-                            choice.setId(newCid);
-                            choice.setQuestion(question);
-                            em.persist(choice);
-                            existingChoices.add(choice);
-                            log.info("Creating new choice ID: {} for question {}", newCid, question.getId());
-                        }
-
-                        keepChoiceIds.add(choice.getId());
-                        choice.setChoiceText(cdto.getText());
-                        choice.setCorrect(cdto.isCorrect());
-                    }
-                }
-
-                // ลบ choices ที่ไม่อยู่ใน DTO แล้ว
-                for (var it = existingChoices.iterator(); it.hasNext(); ) {
-                    QuestionChoiceEntity c = it.next();
-                    if (!keepChoiceIds.contains(c.getId())) {
-                        log.info("Removing choice ID: {} from question {}", c.getId(), question.getId());
-                        em.remove(c);
-                        it.remove();
-                    }
-                }
-
-                question.setChoices(existingChoices);
-
-                // เคลียร์ fill-blank เผื่อ type เปลี่ยนมาจาก FILL_BLANK
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", question)
-                        .executeUpdate();
-            }
-
-            /* ---------- FILL IN THE BLANK ---------- */
-            else if (type == QuestionType.FILL_BLANK) {
-                // ลบ choices ทิ้งถ้ามี
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
-                    question.getChoices().clear();
-                }
-
-                // จัดการ QuestionFillBlankEntity
-                List<QuestionFillBlankEntity> fbList = em.createQuery(
-                                "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
-                                QuestionFillBlankEntity.class)
-                        .setParameter("q", question)
-                        .getResultList();
-                QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
-
-                String correct = qdto.correctAnswer;
-                if (correct != null && !correct.isBlank()) {
-                    if (fb == null) {
-                        fb = new QuestionFillBlankEntity();
-                        fb.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 21));
-                        fb.setQuestion(question);
-                        em.persist(fb);
-                        log.info("Creating fill-blank record ID: {} for question {}", fb.getId(), question.getId());
-                    }
-                    fb.setCorrectAnswer(correct);
-                } else if (fb != null) {
-                    log.info("Removing fill-blank record ID: {} for question {}", fb.getId(), question.getId());
-                    em.remove(fb);
-                }
-            }
-
-            /* ---------- type อื่น (เผื่ออนาคต) ---------- */
-            else {
-                // ล้าง choices
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
-                    question.getChoices().clear();
-                }
-                // ล้าง fill-blank
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", question)
-                        .executeUpdate();
-            }
-
-            resultQuestions.add(qdto);
-
-            if (isNew) {
-                log.info("Question {} created for content {}", question.getId(), id);
-            } else {
-                log.info("Question {} updated for content {}", question.getId(), id);
-            }
-        }
-
-        // ลบคำถามที่ไม่ได้ส่งมาใน DTO
-        for (QuestionEntity q : existingQuestions) {
-            if (!keepQuestionIds.contains(q.getId())) {
-                log.info("Removing question ID: {} from content {}", q.getId(), id);
-
-                // ลบ fill-blank ที่ผูกอยู่
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", q)
-                        .executeUpdate();
-
-                // choices จะถูกลบตาม orphanRemoval ถ้าตั้งไว้; ถ้าไม่ตั้งก็ลบเอง
-                if (q.getChoices() != null && !q.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
-                        em.remove(c);
-                    }
-                }
-
-                em.remove(q);
-            }
-        }
-
-    } else {
-        log.info("No quiz data provided for content {}, skipping quiz update", id);
-    }
-
-    em.flush();
-    log.info("Learning content with ID: {} updated successfully in method -> {}", id, methodName);
-
-    return LearningContentDto.withQuizInfo(lc, resultQuestions);
+export interface Lesson {
+  id: number | string;
+  title: string;
+  thumbnailUrl?: string;
+  category: string;
+  description: string;
+  contentType: "video" | "document";
+  assignType: "all" | "team" | "specific";
+  quizAvailable?: boolean;
 }
+
+interface EditLessonModalProps {
+  open: boolean;
+  initial: Lesson;
+  onClose: () => void;
+  onSave: (data: {
+    title: string;
+    category: string;
+    description: string;
+    thumbnailUrl?: string;
+    video?: File | null;
+    contentType: "video" | "document";
+    assignType: "all" | "team" | "specific";
+    quizAvailable: boolean;
+    questions?: QuestionForm[];
+  }) => Promise<void> | void;
+}
+
+type Choice = { choiceId?: string; text: string; correct?: boolean };
+type Q = { questionId?: string; questionText: string; choices: Choice[]; isCorrect?: boolean };
+
+const emptyChoice = (): Choice => ({ text: "", correct: false });
+const emptyQuestion = (): Q => ({ questionText: "", choices: [emptyChoice(), emptyChoice()] });
+
+const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProps) => {
+  const { token } = useContext(AuthContext);
+
+  const [title, setTitle] = useState(initial.title);
+  const [category, setCategory] = useState(initial.category);
+  const [description, setDescription] = useState(initial.description);
+  const [thumbnailUrl, setThumbnailUrl] = useState(initial.thumbnailUrl ?? "");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [contentType, setContentType] = useState<"video" | "document">("video");
+  const [assignType, setAssignType] = useState<"all" | "specific" | "team">("all");
+  const [saving, setSaving] = useState(false);
+  const [quizAvailable, setQuizAvailable] = useState(initial.quizAvailable ?? false);
+  const [questions, setQuestions] = useState<Q[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    // reset when initial changes
+    setTitle(initial.title);
+    setCategory(initial.category);
+    setDescription(initial.description);
+    setThumbnailUrl(initial.thumbnailUrl ?? "");
+    setContentType(initial.contentType ?? "video");
+    setAssignType(initial.assignType ?? "all");
+    setQuizAvailable(initial.quizAvailable ?? false);
+    setQuestions([]);
+  }, [initial]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const fetchLessonDetails = async () => {
+      if (!initial?.id) return;
+      setLoading(true);
+      try {
+        const url = `/api/learning/${encodeURIComponent(String(initial.id))}`;
+        console.log("EditLessonModal: requesting", url);
+        const res = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          cache: "no-store",
+        });
+        console.log("EditLessonModal: response status:", res.status);
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          console.error("EditLessonModal: fetch failed:", res.status, text);
+          setLoading(false);
+          return;
+        }
+        const data = await res.json();
+        console.log("EditLessonModal: fetched lesson details:", data);
+
+        setTitle(data.title ?? "");
+        setCategory(data.category ?? "");
+        setDescription(data.description ?? "");
+        setThumbnailUrl(data.thumbnailUrl ?? "");
+        setContentType((data.contentType ?? "video").toLowerCase() === "document" ? "document" : "video");
+        setAssignType(data.assignType ?? "all");
+        setQuizAvailable(Boolean(data.quizAvailable));
+
+        // normalize questions from backend
+        const qs: Q[] = Array.isArray(data.questions)
+          ? data.questions.map((q: any) => ({
+              questionId: q.questionId ?? q.id,
+              questionText: q.questionText ?? q.text ?? q.title ?? "",
+              choices: Array.isArray(q.choices)
+                ? q.choices.map((c: any) => ({
+                    choiceId: c.choiceId ?? c.id,
+                    text: c.text ?? "",
+                    correct: Boolean(c.correct ?? c.isCorrect ?? false),
+                  }))
+                : [emptyChoice(), emptyChoice()],
+              isCorrect: q.isCorrect ?? undefined,
+            }))
+          : [];
+
+        setQuestions(qs.length ? qs : [emptyQuestion()]);
+      } catch (error) {
+        console.error("Failed to fetch lesson details:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLessonDetails();
+  }, [open, initial.id, token]);
+
+  const addQuestion = () => setQuestions((s) => [...s, emptyQuestion()]);
+  const removeQuestion = (idx: number) => setQuestions((s) => s.filter((_, i) => i !== idx));
+  const updateQuestionText = (idx: number, text: string) =>
+    setQuestions((s) => s.map((q, i) => (i === idx ? { ...q, questionText: text } : q)));
+
+  const addChoice = (qIdx: number) =>
+    setQuestions((s) => s.map((q, i) => (i === qIdx ? { ...q, choices: [...q.choices, emptyChoice()] } : q)));
+
+  const removeChoice = (qIdx: number, cIdx: number) =>
+    setQuestions((s) =>
+      s.map((q, i) => (i === qIdx ? { ...q, choices: q.choices.filter((_, ci) => ci !== cIdx) } : q))
+    );
+
+  const updateChoiceText = (qIdx: number, cIdx: number, text: string) =>
+    setQuestions((s) =>
+      s.map((q, i) => (i === qIdx ? { ...q, choices: q.choices.map((c, ci) => (ci === cIdx ? { ...c, text } : c)) } : q))
+    );
+
+  const toggleChoiceCorrect = (qIdx: number, cIdx: number) =>
+    setQuestions((s) =>
+      s.map((q, i) =>
+        i === qIdx
+          ? {
+              ...q,
+              choices: q.choices.map((c, ci) => (ci === cIdx ? { ...c, correct: !c.correct } : c)),
+            }
+          : q
+      )
+    );
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const payloadQuestions: QuestionForm[] = questions.map((q) => {
+        const options = q.choices.map((c) => ({ choiceId: c.choiceId, text: c.text }));
+        const correctAnswers = q.choices
+          .map((c, i) => (c.correct ? (c.choiceId ?? String(i)) : null))
+          .filter((v): v is string => v !== null);
+        const type = correctAnswers.length > 1 ? "multiple" : "single";
+
+        return {
+          questionId: q.questionId,
+          questionText: q.questionText,
+          type,
+          options,
+          correctAnswers,
+        } as unknown as QuestionForm;
+      });
+
+      const payload = {
+        title: title.trim(),
+        category: category.trim(),
+        description: description.trim(),
+        thumbnailUrl: thumbnailUrl.trim() || undefined,
+        video: videoFile,
+        contentType,
+        assignType: assignType as "all" | "team" | "specific",
+        quizAvailable,
+        questions: quizAvailable ? payloadQuestions : undefined,
+      };
+
+      // log full payload (mask file content)
+      const videoMeta = videoFile ? { name: videoFile.name, size: videoFile.size, type: videoFile.type } : null;
+      console.log("EditLessonModal: saving payload:", { ...payload, video: videoMeta });
+
+      await onSave(payload);
+
+      console.log("EditLessonModal: save completed for lesson id:", initial.id);
+    } catch (err) {
+      console.error("EditLessonModal: save failed:", err);
+      throw err;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) return null;
+
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+
+  const modal = (
+    <div
+      className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4"
+      onClick={onClose}
+      aria-modal="true"
+      role="dialog"
+    >
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-6 overflow-auto max-h-[90vh]" onClick={stop}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">Edit Learning Content</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700" type="button" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="p-6 text-sm text-gray-500">Loading lesson...</div>
+        ) : (
+          <form className="space-y-4" onSubmit={handleSubmit}>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Thumbnail URL</label>
+              <input
+                value={thumbnailUrl}
+                onChange={(e) => setThumbnailUrl(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2"
+                placeholder="https://..."
+                type="url"
+                disabled={saving}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2"
+                  placeholder="Lesson title"
+                  required
+                  disabled={saving}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <input
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2"
+                  placeholder="Category"
+                  required
+                  disabled={saving}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full h-28 border rounded-lg px-3 py-2"
+                placeholder="Description"
+                required
+                disabled={saving}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Content Type</label>
+                <div className="px-3 py-2 border rounded-lg bg-gray-100 text-gray-700">{contentType === "video" ? "Video" : "Document"}</div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Assign Type</label>
+                <select
+                  value={assignType}
+                  onChange={(e) => setAssignType(e.target.value as any)}
+                  className="w-full border rounded-lg px-3 py-2"
+                  disabled={saving}
+                >
+                  {TARGET_OPTION["Option"].map((option) => (
+                    <option key={option.index} value={option.index}>
+                      {option.option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {contentType === "video" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Upload Video</label>
+                <input
+                  type="file"
+                  accept="video/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setVideoFile(file);
+                  }}
+                  disabled={saving}
+                  className="w-full border rounded-lg px-3 py-2"
+                />
+              </div>
+            )}
+
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={quizAvailable} onChange={(e) => setQuizAvailable(e.target.checked)} />
+                <span className="text-sm">Quiz available</span>
+              </label>
+            </div>
+
+            {/* Quiz editor */}
+            {quizAvailable && (
+              <div className="border rounded-lg p-4 bg-gray-50">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold">Questions</h3>
+                  <button type="button" onClick={addQuestion} className="inline-flex items-center gap-2 px-3 py-1 bg-white border rounded text-sm">
+                    <Plus size={14} /> Add question
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {questions.map((q, qi) => (
+                    <div key={q.questionId ?? qi} className="bg-white border rounded p-3">
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="flex-1">
+                          <label className="text-xs text-gray-500">Question {qi + 1}</label>
+                          <input
+                            value={q.questionText}
+                            onChange={(e) => updateQuestionText(qi, e.target.value)}
+                            className="w-full mt-1 border rounded px-2 py-1"
+                          />
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <button type="button" onClick={() => removeQuestion(qi)} className="text-red-500">
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        {q.choices.map((c, ci) => (
+                          <div key={c.choiceId ?? ci} className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => toggleChoiceCorrect(qi, ci)}
+                              className={`px-2 py-1 rounded ${c.correct ? "bg-green-500 text-white" : "bg-gray-200 text-gray-700"}`}
+                            >
+                              {c.correct ? "✓" : "○"}
+                            </button>
+                            <input
+                              value={c.text}
+                              onChange={(e) => updateChoiceText(qi, ci, e.target.value)}
+                              className="flex-1 border rounded px-2 py-1"
+                            />
+                            {q.choices.length > 2 && (
+                              <button type="button" onClick={() => removeChoice(qi, ci)} className="text-red-500">
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+
+                        <div>
+                          <button type="button" onClick={() => addChoice(qi)} className="mt-2 inline-flex items-center gap-2 px-2 py-1 bg-white border rounded text-sm">
+                            <Plus size={12} /> Add choice
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border" disabled={saving}>
+                Cancel
+              </button>
+              <button type="submit" className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2 disabled:opacity-60" disabled={saving}>
+                <Save size={16} /> {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
+};
+
+export default EditLessonModal;
