@@ -1,52 +1,192 @@
-package QuizService.DTOs;
+@POST
+@Path("/{lessonId}/submit-answers")
+@Transactional
+@RolesAllowed({Roles.ROLE_USER, Roles.ROLE_TRAINER, Roles.ROLE_ADMINISTRATOR})
+@Consumes(MediaType.APPLICATION_JSON)
+@Produces(MediaType.APPLICATION_JSON)
+public Response submitAnswers(
+        @PathParam("lessonId") String lessonId,
+        QuizSubmissionDTO submission,
+        @Context SecurityContext securityContext
+) {
+    String currentUser = securityContext.getUserPrincipal().getName();
+    String method = Thread.currentThread().getStackTrace()[1].getMethodName();
+    log.info("User {} is calling {}() for lessonId: {}", currentUser, method, lessonId);
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
-public class ChoiceDTO {
-    private String choiceId;
-    private String text;
-    @JsonProperty("correct")
-    private boolean isCorrect;
-    private boolean isSelected;
-
-    public ChoiceDTO() {}
-
-    public ChoiceDTO(String choiceId, String text, boolean isCorrect, boolean isSelected) {
-        this.choiceId = choiceId;
-        this.text = text;
-        this.isCorrect = isCorrect;
-        this.isSelected = isSelected;
+    if (submission == null || submission.answers == null || submission.answers.isEmpty()) {
+        log.info("Answers are required.");
+        throw new BadRequestException("Answers are required.");
     }
 
-    public String getChoiceId() {
-        return choiceId;
+    // เช็ค progress (ต้องดูจบ)
+    UserLessonProgress progress = em.createQuery("""
+            SELECT p FROM UserLessonProgress p
+            WHERE p.lessonId = :lessonId AND p.userEmail = :userEmail
+            """, UserLessonProgress.class)
+            .setParameter("lessonId", lessonId)
+            .setParameter("userEmail", currentUser)
+            .getResultStream()
+            .findFirst()
+            .orElseThrow(() -> new NotFoundException("No progress found. Please watch the lesson first."));
+
+    if (progress.getPercent() < 100) {
+        log.info("User {} has not completed lesson {} yet.", currentUser, lessonId);
+        throw new BadRequestException("You must complete the lesson before submitting answers.");
     }
 
-    public void setChoiceId(String choiceId) {
-        this.choiceId = choiceId;
+    LearningContent lesson = em.find(LearningContent.class, lessonId);
+    if (lesson == null) {
+        log.info("Lesson {} not found", lessonId);
+        throw new NotFoundException("Lesson not found.");
     }
 
-    public String getText() {
-        return text;
+    int maxAttempts = Optional.ofNullable(lesson.getMaxAttempts()).orElse(1);
+    int currentAttempts = Optional.ofNullable(progress.getAttempts()).orElse(0);
+    if (currentAttempts >= maxAttempts) {
+        log.info("User {} reached max attempts for lesson {}", currentUser, lessonId);
+        throw new BadRequestException("You have reached the maximum number of attempts.");
     }
 
-    public void setText(String text) {
-        this.text = text;
+    // หา user
+    User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+            .setParameter("email", currentUser)
+            .getSingleResult();
+
+    // สร้าง attempt ใหม่
+    QuizAttemptEntity attempt = new QuizAttemptEntity();
+    attempt.setUser(user);
+    attempt.setLessonProgress(progress);
+    attempt.setAttemptedAt(LocalDateTime.now());
+    em.persist(attempt);
+
+    int score = 0;
+    int maxScore = 0;
+
+    for (AnswerDTO answer : submission.answers) {
+
+        if (answer.questionId == null || answer.questionId.isBlank()) {
+            log.warn("Skip answer with missing questionId");
+            continue;
+        }
+
+        QuestionEntity question = em.find(QuestionEntity.class, answer.questionId);
+        if (question == null || question.getLearningContent() == null ||
+                !lessonId.equals(question.getLearningContent().getId())) {
+            log.warn("Invalid question {} for lesson {}", answer.questionId, lessonId);
+            throw new BadRequestException("Invalid question or mismatched lesson.");
+        }
+
+        maxScore += question.getPoints();
+
+        boolean isCorrect = false;
+        String storedSelected = null; // ไว้เก็บใน QuizAnswerEntity
+
+        QuestionType type = question.getType();
+        if (type == null) {
+            // กัน null — ถ้าไม่มี type ถือเป็น multiple choice แบบเดิม
+            type = QuestionType.MULTIPLE;
+        }
+
+        switch (type) {
+            case MULTIPLE -> {
+                // ต้องส่ง selectedChoiceId มา
+                if (answer.selectedChoiceId == null || answer.selectedChoiceId.isBlank()) {
+                    log.info("No selectedChoiceId for MULTIPLE question {}", question.getId());
+                    isCorrect = false;
+                } else {
+                    QuestionChoiceEntity selectedChoice =
+                            em.find(QuestionChoiceEntity.class, answer.selectedChoiceId);
+
+                    if (selectedChoice == null ||
+                            selectedChoice.getQuestion() == null ||
+                            !selectedChoice.getQuestion().getId().equals(question.getId())) {
+                        log.info("Selected choice {} not valid for question {}",
+                                answer.selectedChoiceId, question.getId());
+                        isCorrect = false;
+                    } else {
+                        isCorrect = selectedChoice.isCorrect();
+                        storedSelected = selectedChoice.getId();
+                    }
+                }
+            }
+
+            case FILL_BLANK, FILL_IN_THE_BLANK -> {
+                // ใช้ answerText เทียบกับ QuestionFillBlankEntity.correctAnswer
+                String userText = Optional.ofNullable(answer.answerText)
+                        .orElse("")
+                        .trim();
+
+                storedSelected = userText; // เก็บคำตอบผู้ใช้ใน column นี้ (ถ้าอยาก audit)
+
+                if (!userText.isEmpty()) {
+                    QuestionFillBlankEntity fb = em.createQuery("""
+                                    SELECT fb FROM QuestionFillBlankEntity fb
+                                    WHERE fb.question = :q
+                                    """, QuestionFillBlankEntity.class)
+                            .setParameter("q", question)
+                            .getResultStream()
+                            .findFirst()
+                            .orElse(null);
+
+                    if (fb != null && fb.getCorrectAnswer() != null) {
+                        String correct = fb.getCorrectAnswer().trim();
+                        // เทียบแบบ case-insensitive + trim
+                        isCorrect = !correct.isEmpty()
+                                && userText.equalsIgnoreCase(correct);
+                    } else {
+                        log.warn("No correctAnswer configured for FILL_BLANK question {}", question.getId());
+                    }
+                } else {
+                    isCorrect = false;
+                }
+            }
+
+            default -> {
+                // ถ้ามี type อื่นในอนาคต ตอนนี้ treat เป็นผิด
+                log.warn("Unsupported question type {} for question {}", type, question.getId());
+                isCorrect = false;
+            }
+        }
+
+        // บันทึกคำตอบลง quiz_answers
+        QuizAnswerEntity qa = new QuizAnswerEntity();
+        qa.setAttempt(attempt);
+        qa.setQuestion(question);
+        qa.setSelectedChoiceId(storedSelected);
+        qa.setCorrect(isCorrect);
+        em.persist(qa);
+
+        if (isCorrect) {
+            score += question.getPoints();
+        }
     }
 
-    public boolean isCorrect() {
-        return isCorrect;
-    }
+    // อัปเดต attempt + progress
+    attempt.setScore(score);
+    attempt.setMaxScore(maxScore);
 
-    public void setCorrect(boolean correct) {
-        isCorrect = correct;
-    }
+    progress.setAttempts(currentAttempts + 1);
+    progress.setScore(score);
+    progress.setTotalQuestions(submission.answers.size());
+    progress.setUpdatedAt(LocalDateTime.now());
 
-    public boolean isSelected() {
-        return isSelected;
-    }
+    int percentScore = (int) Math.round((score * 100.0) / Math.max(maxScore, 1));
 
-    public void setSelected(boolean selected) {
-        isSelected = selected;
-    }
+    // (optional) อัปเดต LearningScoreEntity ให้ถูก logic ระบบคุณ
+    LearningScoreEntity learningScore = new LearningScoreEntity();
+    learningScore.setLessonId(lessonId);
+    learningScore.setUserEmail(currentUser);
+    learningScore.setOverallScore(percentScore);
+    learningScore.setUpdatedAt(LocalDateTime.now());
+    em.persist(learningScore);
+
+    log.info("Quiz submitted for user {} lesson {}: score={}/{} ({}%)",
+            currentUser, lessonId, score, maxScore, percentScore);
+
+    return Response.ok(Map.of(
+            "score", score,
+            "maxScore", maxScore,
+            "percentScore", percentScore,
+            "attemptId", attempt.getId()
+    )).build();
 }
