@@ -1,278 +1,132 @@
 @PUT
-@Path("/{id}")
-@Transactional
-@RolesAllowed(Roles.ROLE_TRAINER)
-public LearningContentDto update(
-        @PathParam("id") String id,
-        LearningContentDto dto,
-        @Context SecurityContext securityContext
-) {
-    String currentUser = securityContext.getUserPrincipal().getName();
-    String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
-    log.info("User '{}' called method '{}' to update Learning content with ID: {}", currentUser, methodName, id);
+    @Path("/{id}")
+    @Transactional
+    @RolesAllowed(Roles.ROLE_TRAINER)
+    public LearningContentDto update(@PathParam("id") String id, LearningContentDto dto ,@Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
+        log.info("User '{}' called method '{}' to update Learning content with ID: {}", currentUser, methodName, id);
+        LearningContent lc = em.find(LearningContent.class, id);
 
-    LearningContent lc = em.find(LearningContent.class, id);
-    if (lc == null) {
-        log.error("Learning content with ID: {} not found in method -> {}", id, methodName);
-        throw new NotFoundException();
-    }
+        if (lc == null){
+            log.error("Learning content with ID: {} not found in method -> {}", id, methodName);
+            throw new NotFoundException();
+        }
+//        Only Owner for current learning content can update it
+        if (lc.getAuthorEmail() != null && lc.getAuthorEmail().equalsIgnoreCase(currentUser)){
+            log.info("Current User -> {} is updating learning content owned by: {} in Method {}", currentUser,lc.getAuthorEmail(),methodName);
+            throw new ForbiddenException("You are not allowed to update your own learning content");
+        }
+        if (dto.title() != null){
+            lc.setTitle(dto.title());
+            log.info("Updating title to: {} in Method {}", dto.title(),methodName);
+        }
+        if (dto.description() != null){
+            lc.setDescription(dto.description());
+            log.info("Updating description to: {} in Method {}", dto.description(),methodName);
+        }
+        if (dto.category()!= null){
+            lc.setCategory(dto.category());
+            log.info("Updating category to: {} in Method {}", dto.category(),methodName);
+        }
+        if (dto.thumbnailUrl() != null){
+            lc.setThumbnailUrl(dto.thumbnailUrl());
+            log.info("Updating thumbnail URL to: {} in Method {}", dto.thumbnailUrl(),methodName);
+        }
+        if (dto.authorAvatarUrl() != null){
+            lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
+            log.info("Updating author avatar URL to: {} in Method {}", dto.authorAvatarUrl(),methodName);
+        }
+        if (dto.assignType() != null){
+            lc.setAssignType(dto.assignType());
+            log.info("Updating assign type to: {} in Method {}", dto.assignType(),methodName);
+        }
+        if (dto.assignedUserIds() != null){
+            var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new));
+            merged.addAll(dto.assignedUserIds());
+            lc.setAssignedUserIds(new ArrayList<>(merged));
+        }
+        if (dto.assignedTeamIds() != null){
+            var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(ArrayList::new));
+            merged.addAll(dto.assignedTeamIds());
+            lc.setAssignedTeamIds(new ArrayList<>(merged));
 
-    /* ==================== อัปเดตข้อมูลพื้นฐาน ==================== */
-    if (dto.title() != null) {
-        lc.setTitle(dto.title());
-        log.info("Updating title to: {} in Method {}", dto.title(), methodName);
-    }
-    if (dto.description() != null) {
-        lc.setDescription(dto.description());
-        log.info("Updating description to: {} in Method {}", dto.description(), methodName);
-    }
-    if (dto.category() != null) {
-        lc.setCategory(dto.category());
-        log.info("Updating category to: {} in Method {}", dto.category(), methodName);
-    }
-    if (dto.thumbnailUrl() != null) {
-        lc.setThumbnailUrl(dto.thumbnailUrl());
-        log.info("Updating thumbnail URL to: {} in Method {}", dto.thumbnailUrl(), methodName);
-    }
-    if (dto.authorAvatarUrl() != null) {
-        lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
-        log.info("Updating author avatar URL to: {} in Method {}", dto.authorAvatarUrl(), methodName);
-    }
-    if (dto.assignType() != null) {
-        lc.setAssignType(dto.assignType());
-        log.info("Updating assign type to: {} in Method {}", dto.assignType(), methodName);
-    }
+        }
+        lc.setAssignedTeamIds(dto.assignedTeamIds());
+        if (dto.dueDate() != null) {
+            lc.setDueDate(dto.dueDate());
+            log.info("Current User -> {} is setting due date to: {} in Method {}", currentUser,dto.dueDate(),methodName);
+        }
+        List<QuestionDTO> UpdatedQuestion = new ArrayList<>();
 
-    if (dto.assignedUserIds() != null) {
-        var merged = new LinkedHashSet<>(
-                Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new)
-        );
-        merged.addAll(dto.assignedUserIds());
-        lc.setAssignedUserIds(new ArrayList<>(merged));
-    }
+        List<QuestionDTO> returnedQuestions = new ArrayList<>();
 
-    if (dto.assignedTeamIds() != null) {
-        var merged = new LinkedHashSet<>(
-                Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(ArrayList::new)
-        );
-        merged.addAll(dto.assignedTeamIds());
-        lc.setAssignedTeamIds(new ArrayList<>(merged));
-    }
+        if (dto.questions() != null ){
+            List<QuestionEntity> existingQuestions = em.createQuery(
+                    "SELECT q FROM QuestionEntity q WHERE q.learningContent.id = :contentId",
+                    QuestionEntity.class
+            ).setParameter("contentId", id).getResultList();
+        }
+        if (dto.questions() != null){
+            for (QuestionDTO isUpdated : dto.questions()){
+                QuestionEntity question;
 
-    if (dto.dueDate() != null) {
-        lc.setDueDate(dto.dueDate());
-        log.info("Current User -> {} is setting due date to: {} in Method {}", currentUser, dto.dueDate(), methodName);
-    }
-
-    /* ==================== อัปเดต Quiz (Multiple + Fill Blank) ==================== */
-
-    List<QuestionDTO> dtoQuestions = dto.questions();
-    List<QuestionDTO> resultQuestionDtos = new ArrayList<>();
-
-    if (dtoQuestions != null) {
-        // ดึงคำถามเดิมทั้งหมดของ content นี้
-        List<QuestionEntity> existingQuestions =
-                Optional.ofNullable(lc.getQuestions()).orElseGet(ArrayList::new);
-
-        Map<String, QuestionEntity> existingById = existingQuestions.stream()
-                .filter(q -> q.getId() != null)
-                .collect(Collectors.toMap(QuestionEntity::getId, q -> q));
-
-        // questionIds ที่ควรเหลืออยู่หลังอัปเดต
-        Set<String> keepQuestionIds = new HashSet<>();
-
-        for (QuestionDTO qdto : dtoQuestions) {
-            // ใช้ qdto.id (ต้องเพิ่ม field นี้ใน DTO; ถ้ายังไม่มีให้เพิ่ม)
-            String qId = qdto.id; // ถ้า front ใช้ชื่ออื่น เช่น questionId ให้ map มาก่อน
-
-            QuestionEntity q;
-            boolean isNew = false;
-
-            if (qId != null && existingById.containsKey(qId)) {
-                // แก้ไขคำถามเดิม
-                q = existingById.get(qId);
-                log.info("Updating existing question ID: {} for content {}", qId, id);
-            } else {
-                // เพิ่มคำถามใหม่
-                q = new QuestionEntity();
-                String newId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-                q.setId(newId);
-                q.setLearningContent(lc);
-
-                if (lc.getQuestions() == null) {
-                    lc.setQuestions(new ArrayList<>());
+                if(isUpdated.questionId != null){
+                    question = em.find(QuestionEntity.class, isUpdated.questionId);
+                    if (question != null){
+                        log.info("Updating existing question ID: {} for learning content ID: {} in method -> {}", question.getId(), id, methodName);
+                    }else {
+                        log.info("Question ID: {} not found, creating new question for learning content ID: {} in method -> {}", isUpdated.questionId, id, methodName);
+                        question = new QuestionEntity();
+                    }
+                }else {
+                    log.info("Creating new question for learning content ID: {} in method -> {}", id, methodName);
+                    question = null;
                 }
-                lc.getQuestions().add(q);
-                em.persist(q);
-
-                isNew = true;
-                log.info("Creating new question ID: {} for content {}", newId, id);
-            }
-
-            keepQuestionIds.add(q.getId());
-
-            // อัปเดต fields พื้นฐานของ question
-            q.setQuestionText(qdto.questionText);
-            q.setPoints(qdto.points != null ? qdto.points : 1);
-
-            // ตีความ type จาก DTO
-            String rawType = (qdto.type != null ? qdto.type : "").toUpperCase();
-            QuestionType type;
-            try {
-                type = QuestionType.valueOf(rawType);
-            } catch (Exception e) {
-                // fallback: ถ้ามี choices -> MULTIPLE, ถ้ามี correctAnswer -> FILL_BLANK
-                if (qdto.choices != null && !qdto.choices.isEmpty()) {
-                    type = QuestionType.MULTIPLE;
-                } else if (qdto.correctAnswer != null) {
-                    type = QuestionType.FILL_BLANK;
-                } else {
-                    type = QuestionType.MULTIPLE; // ค่า default
+                if(question != null){
+                    log.info("Found existing question ID: {} for learning content ID: {} in method -> {}", question.getId(), id, methodName);
+                    question.setQuestionText(isUpdated.questionText);
+                    question.setPoints(isUpdated.points != null ? isUpdated.points : 1);
+                    question.setType(QuestionType.valueOf(isUpdated.type.toUpperCase()));
+                    question.setLearningContent(lc);
+                    em.merge(question);
+                }else{
+                    question = new QuestionEntity();
+                    question.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 21));
+                    question.setLearningContent(lc);
+                    question.setQuestionText(isUpdated.questionText);
+                    question.setPoints(isUpdated.points != null ? isUpdated.points : 1);
+                    question.setType(QuestionType.valueOf(isUpdated.type.toUpperCase()));
+                    em.persist(question);
+                    log.info("Created new question ID: {} for learning content ID: {} in method -> {}", question.getId(), id, methodName);
                 }
-            }
-            q.setType(type);
+                UpdatedQuestion.add(isUpdated);
+                if ("MULTIPLE".equals(isUpdated.type) && isUpdated.choices != null){
+                    log.info("Updating Multiple choice question with {} choices for question ID: {} in method -> {}", isUpdated.choices.size(), question.getId(), methodName);
+                    for (ChoiceDTO c : isUpdated.choices){
+                        QuestionChoiceEntity existingChoice = null;
 
-            /* ---------- Multiple Choice ---------- */
-            if (type == QuestionType.MULTIPLE) {
-                List<QuestionChoiceEntity> existingChoices =
-                        Optional.ofNullable(q.getChoices()).orElseGet(ArrayList::new);
-
-                Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
-                        .filter(c -> c.getId() != null)
-                        .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
-
-                Set<String> keepChoiceIds = new HashSet<>();
-
-                if (qdto.choices != null) {
-                    for (ChoiceDTO cdto : qdto.choices) {
-                        String cId = cdto.getChoiceId();
-                        QuestionChoiceEntity choice;
-
-                        if (cId != null && choiceById.containsKey(cId)) {
-                            // แก้ไขตัวเลือกเดิม
-                            choice = choiceById.get(cId);
-                            log.info("Updating existing choice ID: {} for question ID: {}", cId, q.getId());
-                        } else {
-                            // เพิ่มตัวเลือกใหม่
-                            choice = new QuestionChoiceEntity();
-                            String newCid = (cId != null)
-                                    ? cId
-                                    : UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-                            choice.setId(newCid);
-                            choice.setQuestion(q);
+                        if (c.getChoiceId() != null){ existingChoice = em.find(QuestionChoiceEntity.class, c.getChoiceId());}
+                        if (existingChoice != null) {
+                            log.info("Updating existing choice ID: {} for question ID: {} in method -> {}", existingChoice.getId(), question.getId(), methodName);
+                            existingChoice.setChoiceText(c.getText());
+                            existingChoice.setCorrect(c.isCorrect());
+                            em.merge(existingChoice);
+                        }else {
+                            log.info("Adding new choice to question ID: {} in method -> {}", question.getId(), methodName);
+                            QuestionChoiceEntity choice = new QuestionChoiceEntity();
+                            choice.setId(c.getChoiceId() != null ? c.getChoiceId() : UUID.randomUUID().toString().replace("-", "").substring(0, 21));
+                            choice.setChoiceText(c.getText());
+                            choice.setCorrect(c.isCorrect());
+                            choice.setQuestion(question);
                             em.persist(choice);
-                            existingChoices.add(choice);
-                            log.info("Creating new choice ID: {} for question ID: {}", newCid, q.getId());
                         }
-
-                        keepChoiceIds.add(choice.getId());
-                        choice.setChoiceText(cdto.getText());
-                        choice.setCorrect(cdto.isCorrect());
                     }
-                }
-
-                // ลบ choices ที่ไม่อยู่ใน DTO แล้ว
-                for (var it = existingChoices.iterator(); it.hasNext(); ) {
-                    QuestionChoiceEntity c = it.next();
-                    if (!keepChoiceIds.contains(c.getId())) {
-                        log.info("Removing choice ID: {} from question ID: {}", c.getId(), q.getId());
-                        em.remove(c);
-                        it.remove();
-                    }
-                }
-
-                q.setChoices(existingChoices);
-
-                // ลบ fill-blank record ถ้ามี (ป้องกันข้อมูลชนกันถ้า type เปลี่ยน)
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", q)
-                        .executeUpdate();
-            }
-
-            /* ---------- Fill in the Blank ---------- */
-            else if (type == QuestionType.FILL_BLANK) {
-                // ลบ choices ทิ้ง (ถ้ามีจากเดิม)
-                if (q.getChoices() != null && !q.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
-                        em.remove(c);
-                    }
-                    q.getChoices().clear();
-                }
-
-                // จัดการ QuestionFillBlankEntity
-                List<QuestionFillBlankEntity> fbList = em.createQuery(
-                                "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
-                                QuestionFillBlankEntity.class)
-                        .setParameter("q", q)
-                        .getResultList();
-                QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
-
-                if (qdto.correctAnswer != null && !qdto.correctAnswer.isBlank()) {
-                    if (fb == null) {
-                        fb = new QuestionFillBlankEntity();
-                        fb.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 21));
-                        fb.setQuestion(q);
-                        em.persist(fb);
-                        log.info("Creating fill-blank record ID: {} for question ID: {}", fb.getId(), q.getId());
-                    }
-                    fb.setCorrectAnswer(qdto.correctAnswer);
-                } else if (fb != null) {
-                    // ไม่มี correctAnswer แล้ว -> ลบ record เดิม
-                    log.info("Removing fill-blank record ID: {} for question ID: {}", fb.getId(), q.getId());
-                    em.remove(fb);
                 }
             }
-
-            /* ---------- Type อื่น ๆ (ถ้ามี) ---------- */
-            else {
-                // เคลียร์ choices ถ้าไม่ใช้
-                if (q.getChoices() != null && !q.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
-                        em.remove(c);
-                    }
-                    q.getChoices().clear();
-                }
-                // ลบ fill-blank ถ้ามี
-                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                        .setParameter("q", q)
-                        .executeUpdate();
-            }
-
-            // เก็บ DTO ไว้สำหรับ response (ตามโครงสร้าง withQuizInfo)
-            resultQuestionDtos.add(qdto);
-
-            if (isNew) {
-                log.info("Question ID: {} created/attached to content {}", q.getId(), id);
-            } else {
-                log.info("Question ID: {} updated for content {}", q.getId(), id);
-            }
+        }else{
+            log.info("Somethings went Wrong with Updated Quiz Info ");
         }
-
-        // ลบคำถามที่ไม่ถูกส่งมาใน DTO
-        if (lc.getQuestions() != null) {
-            for (var it = lc.getQuestions().iterator(); it.hasNext(); ) {
-                QuestionEntity q = it.next();
-                if (!keepQuestionIds.contains(q.getId())) {
-                    log.info("Removing question ID: {} from content {}", q.getId(), id);
-
-                    // ลบ fill-blank ที่ผูกอยู่
-                    em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                            .setParameter("q", q)
-                            .executeUpdate();
-
-                    // choices จะถูกลบด้วย orphanRemoval ถ้าตั้งไว้
-                    em.remove(q);
-                    it.remove();
-                }
-            }
-        }
-    } else {
-        log.info("No quiz data provided for content {}, skipping quiz update", id);
+        log.info("Learning content with ID: {} updated successfully in method -> {}", id, methodName);
+        return LearningContentDto.withQuizInfo(lc,UpdatedQuestion);
     }
-
-    em.flush();
-    log.info("Learning content with ID: {} updated successfully in method -> {}", id, methodName);
-
-    // ปรับให้ withQuizInfo รองรับ question DTO ที่มี id/choices/correctAnswer ตามใหม่
-    return LearningContentDto.withQuizInfo(lc, resultQuestionDtos);
-}
