@@ -6,7 +6,11 @@ import QuestionWidget from "./QuestionWidget";
 import { AuthContext } from "../../../Authentication/AuthContext";
 import type { Progress, Question } from "../../../types/user/types";
 
-type AnswerPayload = { questionId: string; selectedChoiceId: string };
+type AnswerPayload = {
+  questionId: string;
+  selectedChoiceId?: string; // for multiple choice
+  answerText?: string;       // for fill in the blank
+};
 
 const TIME_PER_QUESTION = 20; // วินาทีต่อข้อ
 const REDIRECT_DELAY_MS = 5000;
@@ -25,8 +29,13 @@ const QuizPageStyled = () => {
 
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
+
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+
+  // state สำหรับคำตอบของ "ข้อปัจจุบัน"
   const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null);
+  const [answerText, setAnswerText] = useState<string>(""); // สำหรับ fill in the blank
+
   const [timeLeft, setTimeLeft] = useState(TIME_PER_QUESTION);
   const [showSummary, setShowSummary] = useState(false);
 
@@ -35,10 +44,10 @@ const QuizPageStyled = () => {
   const [maxAttempts, setMaxAttempts] = useState(1);
   const [hasTakenQuiz, setHasTakenQuiz] = useState(false);
 
-  // answers accum
+  // เก็บคำตอบทุกข้อ
   const [answers, setAnswers] = useState<AnswerPayload[]>([]);
 
-  // result from backend
+  // result
   const [finalScore, setFinalScore] = useState<number | null>(null);
   const [percentScore, setPercentScore] = useState<number | null>(null);
   const [attemptId, setAttemptId] = useState<string | null>(null);
@@ -79,10 +88,11 @@ const QuizPageStyled = () => {
       .finally(() => setLoading(false));
   }, [learningContentId, token]);
 
-  // reset state เมื่อชุดคำถาม/lesson เปลี่ยน
+  // reset เมื่อเปลี่ยน lesson
   useEffect(() => {
     setCurrentQuestionIndex(0);
     setSelectedChoiceId(null);
+    setAnswerText("");
     setAnswers([]);
     setTimeLeft(TIME_PER_QUESTION);
     setShowSummary(false);
@@ -92,33 +102,76 @@ const QuizPageStyled = () => {
   }, [learningContentId]);
 
   // ---------- helpers ----------
-  const handleOptionSelect = (choiceId: string) => setSelectedChoiceId(choiceId);
 
-  /**
-   * รวมคำตอบของ "ข้อตอนนี้" เข้ากับ answers แล้วคืน array ชุดใหม่กลับมา
-   * (เพื่อใช้ส่งทันที โดยไม่รอ state)
-   */
+  const currentQuestion = questions[currentQuestionIndex];
+
+  const handleOptionSelect = (choiceId: string) => {
+    setSelectedChoiceId(choiceId);
+    setAnswerText(""); // กัน state ค้างข้าม type
+  };
+
+  const handleTextAnswerChange = (value: string) => {
+    setAnswerText(value);
+    setSelectedChoiceId(null); // กัน state ค้าง
+  };
+
+  const buildAnswerForCurrent = (): AnswerPayload | null => {
+    if (!currentQuestion) return null;
+
+    if (currentQuestion.type === "MULTIPLE" || currentQuestion.type === "multiple") {
+      if (!selectedChoiceId) return null;
+      return {
+        questionId: currentQuestion.id,
+        selectedChoiceId,
+      };
+    }
+
+    if (
+      currentQuestion.type === "FILL_BLANK" ||
+      currentQuestion.type === "FILL_IN_THE_BLANK" ||
+      currentQuestion.type === "fill_blank"
+    ) {
+      const text = answerText.trim();
+      if (!text) return null;
+      return {
+        questionId: currentQuestion.id,
+        answerText: text,
+      };
+    }
+
+    // default: treat as multiple
+    if (selectedChoiceId) {
+      return {
+        questionId: currentQuestion.id,
+        selectedChoiceId,
+      };
+    }
+
+    return null;
+  };
+
+  /** push คำตอบของข้อปัจจุบันเข้า state และคืน array ใหม่ */
   const pushAnswerForCurrent = (): AnswerPayload[] => {
-    const q = questions[currentQuestionIndex];
-    if (!q || !selectedChoiceId) return answers;
-    const next = [...answers, { questionId: q.id, selectedChoiceId }];
+    const ans = buildAnswerForCurrent();
+    if (!ans) return answers;
+    const others = answers.filter((a) => a.questionId !== ans.questionId);
+    const next = [...others, ans];
     setAnswers(next);
     return next;
   };
 
-  /**
-   * ส่งคำตอบขึ้น backend
-   * - ถ้ามี override ให้ใช้ชุดนั้น (เช่น ส่งชุดที่เพิ่งรวมข้อสุดท้าย) เพื่อไม่พลาดคำตอบ
-   */
   const submitAnswers = async (override?: AnswerPayload[]) => {
     if (!learningContentId || !token) return;
-
     const toSend = override ?? answers;
 
-    const payload = {
-      // lessonId: learningContentId, // จะตัดออกได้ ถ้า backend เช็คจาก path อย่างเดียว
-      answers: toSend, // [{ questionId, selectedChoiceId }]
-    };
+    if (!toSend.length) {
+      setFinalScore(0);
+      setPercentScore(0);
+      setShowSummary(true);
+      return;
+    }
+
+    const payload = { answers: toSend };
 
     const res = await axios.post(
       `/api/questions/${learningContentId}/submit-answers`,
@@ -133,7 +186,9 @@ const QuizPageStyled = () => {
 
     const { score, percentScore, attemptId } = res.data || {};
     setFinalScore(typeof score === "number" ? score : 0);
-    setPercentScore(typeof percentScore === "number" ? percentScore : null);
+    setPercentScore(
+      typeof percentScore === "number" ? percentScore : null
+    );
     setAttemptId(attemptId ?? null);
     setShowSummary(true);
   };
@@ -145,15 +200,10 @@ const QuizPageStyled = () => {
     if (timeLeft <= 0) {
       const onTimeout = async () => {
         try {
-          // รวมคำตอบของข้อล่าสุดด้วย หากผู้ใช้เลือกไว้แต่ยังไม่กด Continue
-          let nextAnswers = answers;
-          if (selectedChoiceId) {
-            nextAnswers = pushAnswerForCurrent();
-          }
+          const nextAnswers = pushAnswerForCurrent();
           if (nextAnswers.length > 0) {
             await submitAnswers(nextAnswers);
           } else {
-            // ไม่มีคำตอบเลย → backend จะ 400 ถ้าส่ง list ว่าง
             setFinalScore(0);
             setPercentScore(0);
             setShowSummary(true);
@@ -171,7 +221,7 @@ const QuizPageStyled = () => {
 
     const t = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
     return () => clearInterval(t);
-  }, [timeLeft, showSummary, answers, selectedChoiceId]);
+  }, [timeLeft, showSummary, currentQuestion, selectedChoiceId, answerText, answers]);
 
   // ---------- redirect after summary ----------
   useEffect(() => {
@@ -181,18 +231,14 @@ const QuizPageStyled = () => {
   }, [showSummary, navigate]);
 
   const handleContinue = async () => {
-    // รวมคำตอบของข้อนี้ก่อน
-    let nextAnswers = answers;
-    if (selectedChoiceId) {
-      nextAnswers = pushAnswerForCurrent();
-    }
+    const nextAnswers = pushAnswerForCurrent();
 
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex((i) => i + 1);
       setSelectedChoiceId(null);
+      setAnswerText("");
       setTimeLeft(TIME_PER_QUESTION);
     } else {
-      // ข้อสุดท้าย → ส่ง "nextAnswers" ทันที (กันคำตอบหล่น)
       try {
         await submitAnswers(nextAnswers);
       } catch (e) {
@@ -203,6 +249,7 @@ const QuizPageStyled = () => {
   };
 
   // ---------- UI ----------
+
   if (!token) return <Navigate to="/" replace />;
   if (loading) return <div className="p-10 text-gray-500">Loading questions...</div>;
 
@@ -224,18 +271,35 @@ const QuizPageStyled = () => {
       </div>
     );
 
-  const currentQuestion = questions[currentQuestionIndex];
-  if (!currentQuestion) return <div className="p-10 text-red-500">No questions found.</div>;
+  if (!currentQuestion) {
+    return <div className="p-10 text-red-500">No questions found.</div>;
+  }
+
+  const isFillBlank =
+    currentQuestion.type === "FILL_BLANK" ||
+    currentQuestion.type === "FILL_IN_THE_BLANK" ||
+    currentQuestion.type === "fill_blank";
+
+  // ปุ่มต้อง disabled ถ้ายังไม่ตอบตาม type
+  const canContinue = (() => {
+    if (showSummary) return false;
+    if (isFillBlank) return !!answerText.trim();
+    return !!selectedChoiceId;
+  })();
 
   return (
     <div className="flex min-h-screen bg-white">
       <div className="flex-1 px-16 py-10 relative">
-        <h1 className="text-2xl font-bold text-gray-800 mb-2">Welcome, {displayName}</h1>
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">
+          Welcome, {displayName}
+        </h1>
         <p className="text-sm text-gray-400 mb-6">Let’s get started!</p>
 
         {showSummary ? (
           <div className="text-center mt-20">
-            <h2 className="text-2xl font-bold text-green-600 mb-4">🎉 Quiz Completed!</h2>
+            <h2 className="text-2xl font-bold text-green-600 mb-4">
+              🎉 Quiz Completed!
+            </h2>
             <p className="text-gray-600 mb-2">
               {finalScore !== null ? (
                 <>
@@ -248,23 +312,28 @@ const QuizPageStyled = () => {
             </p>
             {!!attemptId && (
               <p className="text-gray-500 mb-1">
-                Attempt ID: <code className="text-xs">{attemptId}</code>
+                Attempt ID:{" "}
+                <code className="text-xs break-all">{attemptId}</code>
               </p>
             )}
             <p className="text-gray-500">Redirecting to lessons...</p>
           </div>
         ) : (
           <>
-            <h2 className="text-xl font-bold mb-6">{currentQuestion.questionText}</h2>
+            <h2 className="text-xl font-bold mb-4">
+              {currentQuestion.questionText}
+            </h2>
             <p className="text-sm text-gray-500 mb-4">
-              ประเภท: {currentQuestion.type} | คะแนน: {currentQuestion.points}
+              Type: {currentQuestion.type} | Points: {currentQuestion.points}
             </p>
+
             <QuestionWidget
               type={currentQuestion.type}
               choices={currentQuestion.choices}
-              // ต้องส่ง/รับเป็น choiceId
               selectedOption={selectedChoiceId}
+              answerText={answerText}
               onSelect={handleOptionSelect}
+              onTextChange={handleTextAnswerChange}
             />
           </>
         )}
@@ -277,24 +346,29 @@ const QuizPageStyled = () => {
             <button
               className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-full hover:bg-blue-700 disabled:opacity-50"
               onClick={handleContinue}
-              disabled={!selectedChoiceId}
+              disabled={!canContinue}
             >
-              {currentQuestionIndex < questions.length - 1 ? "Continue" : "Finish Quiz"}
+              {currentQuestionIndex < questions.length - 1
+                ? "Continue"
+                : "Finish Quiz"}
             </button>
           </div>
         )}
 
         {showSummary && finalScore === 0 && answers.length === 0 && (
           <div className="text-center mt-20">
-            <h2 className="text-2xl font-bold text-red-600 mb-4">⏰ Time's Up!</h2>
+            <h2 className="text-2xl font-bold text-red-600 mb-4">
+              ⏰ Time's Up!
+            </h2>
             <p className="text-gray-600 mb-2">
-              You missed the quiz for this attempt. Your score: <strong>0</strong>
+              You missed the quiz for this attempt. Your score:{" "}
+              <strong>0</strong>
             </p>
             <p className="text-gray-500">Redirecting to lessons...</p>
           </div>
         )}
       </div>
-      <div className="w-64 hidden lg:block"></div>
+      <div className="w-64 hidden lg:block" />
     </div>
   );
 };
