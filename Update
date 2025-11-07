@@ -1,3 +1,43 @@
+package QuizService.DTOs;
+
+import java.util.List;
+
+public class QuestionDTO {
+    public String id;              // ✅ ใช้สำหรับระบุข้อเดิม (optional)
+    public String questionText;
+    public String type;
+    public Integer points = 1;
+    public List<ChoiceDTO> choices;
+    public String correctAnswer;   // สำหรับ FILL_BLANK / SHORT_ANSWER ฯลฯ
+
+    public QuestionDTO() {
+    }
+
+    public QuestionDTO(String id, String questionText, String type, Integer points,
+                       List<ChoiceDTO> choices, String correctAnswer) {
+        this.id = id;
+        this.questionText = questionText;
+        this.type = type;
+        this.points = points;
+        this.choices = choices;
+        this.correctAnswer = correctAnswer;
+    }
+
+    public QuestionDTO(String questionText, String type, int points, List<ChoiceDTO> choices) {
+        this.questionText = questionText;
+        this.type = type;
+        this.points = points;
+        this.choices = choices;
+    }
+
+    public QuestionDTO(String questionText, String type, int points, String correctAnswer) {
+        this.questionText = questionText;
+        this.type = type;
+        this.points = points;
+        this.correctAnswer = correctAnswer;
+    }
+}
+
 @PUT
 @Path("/{id}")
 @Transactional
@@ -17,38 +57,13 @@ public LearningContentDto update(
         throw new NotFoundException();
     }
 
-    // ถ้าต้องการบังคับเฉพาะเจ้าของ
-    if (lc.getAuthorEmail() != null &&
-            !lc.getAuthorEmail().equalsIgnoreCase(currentUser)) {
-        log.warn("User '{}' is not owner of content {} in method {}", currentUser, id, methodName);
-        throw new ForbiddenException("You are not the owner of this content");
-    }
-
-    // ---------------- Basic fields ----------------
-    if (dto.title() != null) {
-        lc.setTitle(dto.title());
-        log.info("Updating title to: {} in Method {}", dto.title(), methodName);
-    }
-    if (dto.description() != null) {
-        lc.setDescription(dto.description());
-        log.info("Updating description to: {} in Method {}", dto.description(), methodName);
-    }
-    if (dto.category() != null) {
-        lc.setCategory(dto.category());
-        log.info("Updating category to: {} in Method {}", dto.category(), methodName);
-    }
-    if (dto.thumbnailUrl() != null) {
-        lc.setThumbnailUrl(dto.thumbnailUrl());
-        log.info("Updating thumbnailUrl to: {} in Method {}", dto.thumbnailUrl(), methodName);
-    }
-    if (dto.authorAvatarUrl() != null) {
-        lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
-        log.info("Updating authorAvatarUrl to: {} in Method {}", dto.authorAvatarUrl(), methodName);
-    }
-    if (dto.assignType() != null) {
-        lc.setAssignType(dto.assignType());
-        log.info("Updating assignType to: {} in Method {}", dto.assignType(), methodName);
-    }
+    // ===== basic fields (เหมือนเดิม) =====
+    if (dto.title() != null) lc.setTitle(dto.title());
+    if (dto.description() != null) lc.setDescription(dto.description());
+    if (dto.category() != null) lc.setCategory(dto.category());
+    if (dto.thumbnailUrl() != null) lc.setThumbnailUrl(dto.thumbnailUrl());
+    if (dto.authorAvatarUrl() != null) lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
+    if (dto.assignType() != null) lc.setAssignType(dto.assignType());
 
     if (dto.assignedUserIds() != null) {
         var merged = new LinkedHashSet<>(
@@ -68,153 +83,177 @@ public LearningContentDto update(
 
     if (dto.dueDate() != null) {
         lc.setDueDate(dto.dueDate());
-        log.info("Setting due date to: {} in Method {}", dto.dueDate(), methodName);
     }
 
-    // ---------------- Quiz update logic ----------------
-    List<QuestionDTO> resultQuestionDtos = new ArrayList<>();
+    // ===== QUIZ UPDATE (เวอร์ชันใหม่ตาม requirement) =====
+    List<QuestionDTO> returnedQuestionDtos = new ArrayList<>();
 
     if (dto.questions() != null) {
-        // ดึง questions เดิมของ content นี้
-        List<QuestionEntity> existingQuestions = Optional.ofNullable(lc.getQuestions())
-                .orElseGet(ArrayList::new);
+        // ดึงคำถามเดิมทั้งหมดของ content นี้
+        List<QuestionEntity> existingQuestions =
+                Optional.ofNullable(lc.getQuestions()).orElseGet(ArrayList::new);
 
         Map<String, QuestionEntity> existingById = existingQuestions.stream()
                 .filter(q -> q.getId() != null)
                 .collect(Collectors.toMap(QuestionEntity::getId, q -> q));
 
-        // จะเก็บ id ของคำถามที่ยังต้องอยู่หลังอัปเดต
+        // questionIds ที่จะเก็บไว้หลังจากอัปเดต (ไว้ลบของที่ไม่อยู่ใน DTO)
         Set<String> keepQuestionIds = new HashSet<>();
 
         for (QuestionDTO qdto : dto.questions()) {
-            // ปรับให้ตรง DTO จริง ถ้าใช้ field -> qdto.getId()
-            String incomingId = qdto.id();
+            // อ่านจาก public fields ของ QuestionDTO
+            String qId = qdto.id;
+            QuestionEntity q;
 
-            QuestionEntity question;
-
-            if (incomingId != null && existingById.containsKey(incomingId)) {
-                // ✅ แก้คำถามเดิม → ใช้ question เดิม id เดิม
-                question = existingById.get(incomingId);
-                log.info("Updating existing question ID: {} in Method {}", question.getId(), methodName);
+            if (qId != null && existingById.containsKey(qId)) {
+                // ✅ แก้ไขคำถามเดิม
+                q = existingById.get(qId);
+                log.info("Updating existing question ID: {}", qId);
             } else {
-                // ✅ คำถามใหม่ → gen id ใหม่
-                question = new QuestionEntity();
+                // ✅ เพิ่มคำถามใหม่ → gen id ใหม่
+                q = new QuestionEntity();
                 String newId = UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-                question.setId(newId);
-                question.setLearningContent(lc);
-                em.persist(question);
+                q.setId(newId);
+                q.setLearningContent(lc);
 
-                // ผูกกับ lc
                 if (lc.getQuestions() == null) {
                     lc.setQuestions(new ArrayList<>());
                 }
-                lc.getQuestions().add(question);
+                lc.getQuestions().add(q);
+                em.persist(q);
 
-                log.info("Creating new question ID: {} in Method {}", newId, methodName);
+                log.info("Creating new question ID: {}", newId);
             }
 
-            keepQuestionIds.add(question.getId());
+            keepQuestionIds.add(q.getId());
 
-            // อัปเดต field ของ question
-            question.setQuestionText(qdto.questionText());
-            question.setPoints(
-                    qdto.points() != null ? qdto.points() : 1
-            );
+            // อัปเดตข้อมูลคำถาม
+            q.setQuestionText(qdto.questionText);
+            q.setPoints(qdto.points != null ? qdto.points : 1);
 
             QuestionType type = QuestionType.valueOf(
-                    qdto.type() != null ? qdto.type().toUpperCase() : QuestionType.TEXT.name()
+                    (qdto.type != null ? qdto.type : QuestionType.TEXT.name()).toUpperCase()
             );
-            question.setType(type);
+            q.setType(type);
 
-            // ---------- Choices (สำหรับ Multiple choice) ----------
-            if (qdto.choices() != null &&
-                    (type == QuestionType.MULTIPLE || type == QuestionType.MULTIPLE_CHOICE)) {
-
+            // ----- Multiple choice -----
+            if (type == QuestionType.MULTIPLE || type == QuestionType.MULTIPLE_CHOICE) {
+                // จัดการ choices
                 List<QuestionChoiceEntity> existingChoices =
-                        Optional.ofNullable(question.getChoices()).orElseGet(ArrayList::new);
+                        Optional.ofNullable(q.getChoices()).orElseGet(ArrayList::new);
 
-                Map<String, QuestionChoiceEntity> existingChoiceById = existingChoices.stream()
+                Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
                         .filter(c -> c.getId() != null)
                         .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
 
                 Set<String> keepChoiceIds = new HashSet<>();
 
-                for (ChoiceDTO cdto : qdto.choices()) {
-                    // ปรับให้ตรงของจริง เช่น getId()/getChoiceId()
-                    String incomingChoiceId = cdto.getChoiceId();
+                if (qdto.choices != null) {
+                    for (ChoiceDTO cdto : qdto.choices) {
+                        String cId = cdto.getChoiceId();
+                        QuestionChoiceEntity choice;
 
-                    QuestionChoiceEntity choice;
-                    if (incomingChoiceId != null && existingChoiceById.containsKey(incomingChoiceId)) {
-                        // ✅ แก้ choice เดิม → ใช้ id เดิม
-                        choice = existingChoiceById.get(incomingChoiceId);
-                        log.info("Updating existing choice ID: {} for question ID: {}",
-                                choice.getId(), question.getId());
-                    } else {
-                        // ✅ choice ใหม่ → gen id ใหม่
-                        choice = new QuestionChoiceEntity();
-                        String newCid = incomingChoiceId != null
-                                ? incomingChoiceId
-                                : UUID.randomUUID().toString().replace("-", "").substring(0, 21);
-                        choice.setId(newCid);
-                        choice.setQuestion(question);
-                        em.persist(choice);
-                        existingChoices.add(choice);
-                        log.info("Creating new choice ID: {} for question ID: {}", newCid, question.getId());
+                        if (cId != null && choiceById.containsKey(cId)) {
+                            // ✅ update choice เดิม
+                            choice = choiceById.get(cId);
+                            log.info("Updating choice ID: {} for question ID: {}", cId, q.getId());
+                        } else {
+                            // ✅ choice ใหม่
+                            choice = new QuestionChoiceEntity();
+                            String newCid = (cId != null)
+                                    ? cId
+                                    : UUID.randomUUID().toString().replace("-", "").substring(0, 21);
+                            choice.setId(newCid);
+                            choice.setQuestion(q);
+                            em.persist(choice);
+                            existingChoices.add(choice);
+                            log.info("Creating new choice ID: {} for question ID: {}", newCid, q.getId());
+                        }
+
+                        keepChoiceIds.add(choice.getId());
+                        choice.setChoiceText(cdto.getText());
+                        choice.setCorrect(cdto.isCorrect());
                     }
-
-                    keepChoiceIds.add(choice.getId());
-                    choice.setChoiceText(cdto.getText());
-                    choice.setCorrect(cdto.isCorrect());
                 }
 
-                // ลบ choice ที่ไม่ถูกส่งมาแล้ว
+                // ลบ choice ที่ไม่อยู่ใน DTO แล้ว
                 for (Iterator<QuestionChoiceEntity> it = existingChoices.iterator(); it.hasNext(); ) {
                     QuestionChoiceEntity c = it.next();
                     if (!keepChoiceIds.contains(c.getId())) {
-                        log.info("Removing choice ID: {} from question ID: {}", c.getId(), question.getId());
+                        log.info("Removing choice ID: {} from question ID: {}", c.getId(), q.getId());
                         em.remove(c);
                         it.remove();
                     }
                 }
 
-                question.setChoices(existingChoices);
-
-            } else {
-                // ไม่ใช่ multiple choice → ลบ choices เดิมออก
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
-                    question.getChoices().clear();
-                }
+                q.setChoices(existingChoices);
             }
-
-            resultQuestionDtos.add(qdto);
-        }
-
-        // ลบคำถามที่ไม่มีใน DTO แล้ว
-        for (Iterator<QuestionEntity> it = lc.getQuestions().iterator(); it.hasNext(); ) {
-            QuestionEntity q = it.next();
-            if (!keepQuestionIds.contains(q.getId())) {
-                log.info("Removing question ID: {} from content {}", q.getId(), id);
-                // ลบ choices ด้วย
+            // ----- Fill in the blank / short answer -----
+            else if (type == QuestionType.FILL_BLANK || type == QuestionType.SHORT_ANSWER) {
+                // ตรงนี้ขึ้นกับโครงสร้างจริงของคุณ ว่าผูก QuestionFillBlankEntity ยังไง
+                // ตัวอย่าง: เก็บ/อัปเดต correctAnswer แยกตาราง
+                if (qdto.correctAnswer != null) {
+                    // หา fill blank เดิม
+                    QuestionFillBlankEntity fb = em.find(QuestionFillBlankEntity.class, q.getId());
+                    if (fb == null) {
+                        fb = new QuestionFillBlankEntity();
+                        fb.setId(q.getId());     // ผูกใช้ id เดียวกับ question
+                        fb.setQuestion(q);
+                        em.persist(fb);
+                    }
+                    fb.setCorrectAnswer(qdto.correctAnswer);
+                }
+                // ถ้าไม่ใช่ multiple → ลบ choices เดิม (กันหลงเหลือ)
                 if (q.getChoices() != null) {
                     for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
                         em.remove(c);
                     }
+                    q.getChoices().clear();
                 }
-                em.remove(q);
-                it.remove();
             }
+            // ----- Question type อื่น ๆ -----
+            else {
+                // เคลียร์ choices ถ้า type เปลี่ยนไปเป็นแบบที่ไม่ใช้ choices
+                if (q.getChoices() != null) {
+                    for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
+                        em.remove(c);
+                    }
+                    q.getChoices().clear();
+                }
+            }
+
+            returnedQuestionDtos.add(qdto);
         }
 
+        // ลบคำถามที่ไม่อยู่ใน DTO แล้ว
+        if (lc.getQuestions() != null) {
+            for (Iterator<QuestionEntity> it = lc.getQuestions().iterator(); it.hasNext(); ) {
+                QuestionEntity q = it.next();
+                if (!keepQuestionIds.contains(q.getId())) {
+                    log.info("Removing question ID: {} from content {}", q.getId(), id);
+                    // orphanRemoval=true ที่ choices จะช่วยลบ, แต่กันชัวร์:
+                    if (q.getChoices() != null) {
+                        for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
+                            em.remove(c);
+                        }
+                    }
+                    // ลบ fill_blank ถ้าผูกแบบใช้ question id
+                    QuestionFillBlankEntity fb = em.find(QuestionFillBlankEntity.class, q.getId());
+                    if (fb != null) {
+                        em.remove(fb);
+                    }
+
+                    em.remove(q);
+                    it.remove();
+                }
+            }
+        }
     } else {
-        log.info("No questions in DTO, keeping existing quiz for content ID: {}", id);
+        log.info("No questions provided in DTO, keep existing quiz for content {}", id);
     }
 
     em.flush();
     log.info("Learning content with ID: {} updated successfully in method -> {}", id, methodName);
 
-    return LearningContentDto.withQuizInfo(lc, resultQuestionDtos);
+    return LearningContentDto.withQuizInfo(lc, returnedQuestionDtos);
 }
-ห
