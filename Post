@@ -1,0 +1,856 @@
+/* eslint-disable react-hooks/rules-of-hooks */
+/* eslint-disable react-hooks/exhaustive-deps */
+import { useState, useEffect, useContext } from "react";
+import { Navigate } from "react-router-dom";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import SidebarWidget from "../../../widgets/SidebarWidget";
+import PostCardWidget from "./PostCardWidget";
+import AddPostWidget from "./AddPostWidget";
+import type { Post, Comment } from "../../../types/user/types";
+
+const formatAvatarUrl = (rawUrl?: string): string | undefined => {
+  if (!rawUrl) return undefined;
+  if (rawUrl.startsWith("http")) return rawUrl;
+
+  const parts = rawUrl.split("/");
+  const filename = parts[parts.length - 1];
+  return `/api/posts/avatars/${filename}`;
+};
+
+const KnowledgeForumLayout = () => {
+  const { token } = useContext(AuthContext);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [selectedAssignType, setSelectedAssignType] =
+    useState<string>("พูดคุยทั่วไป");
+
+  if (!token) {
+    return <Navigate to="/" replace />;
+  }
+
+  const fetchComments = async (postId: string): Promise<Comment[]> => {
+    try {
+      const res = await fetch(`/api/forum/posts/${postId}/comments`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return [];
+      return await res.json();
+    } catch (err) {
+      console.error("❌ Failed to fetch comments:", err);
+      return [];
+    }
+  };
+
+  const fetchPosts = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/posts`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) {
+        console.warn("⚠️ Failed to fetch posts");
+        setPosts([]);
+        return;
+      }
+
+      const basePosts: Omit<Post, "comments">[] = await res.json();
+
+      const enrichedPosts: Post[] = await Promise.all(
+        basePosts.map(async (p) => ({
+          ...p,
+          avatarUrl: formatAvatarUrl(p.avatarUrl),
+          comments: await fetchComments(p.id),
+        }))
+      );
+
+      setPosts(enrichedPosts);
+    } catch (err) {
+      console.error("❌ Error fetching posts:", err);
+      setPosts([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchPosts();
+  }, []);
+
+  const handlePostCreated = () => {
+    void fetchPosts();
+  };
+
+  // ✅ ถูกเรียกจาก PostCardWidget เมื่อโพสต์ถูกลบ -> เอาออกจาก state ทันที
+  const handlePostDeleted = (id: string) => {
+    setPosts((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const groupPosts = posts.reduce((acc, post) => {
+    const category = post.forumCategory || "Uncategorized";
+    if (!acc[category]) acc[category] = [];
+    acc[category].push(post);
+    return acc;
+  }, {} as Record<string, Post[]>);
+
+  const TAB_LABELS = ["พูดคุยทั่วไป", "ข่าวสาร IT", "พัฒนา & งานระบบ"];
+
+  return (
+    <div className="flex min-h-screen bg-gray-50">
+      <SidebarWidget />
+
+      <main className="flex-1 overflow-y-auto p-6">
+        {loading ? (
+          <p className="text-gray-500 text-sm">Loading posts…</p>
+        ) : posts.length === 0 ? (
+          <p className="text-gray-400 text-sm">No posts available.</p>
+        ) : (
+          <div className="space-y-4">
+            {/* Tabs filter */}
+            <div className="flex space-x-2 mb-2">
+              {TAB_LABELS.map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setSelectedAssignType(type)}
+                  className={`px-3 py-1 rounded-md text-sm ${
+                    selectedAssignType === type
+                      ? "bg-blue-500 text-white"
+                      : "bg-gray-200 hover:bg-gray-300"
+                  }`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+
+            {/* Grouped posts */}
+            {Object.entries(groupPosts)
+              .filter(([category]) => category === selectedAssignType)
+              .map(([category, postsInCategory]) => (
+                <div key={category} className="mb-8">
+                  <h2 className="text-xl font-semibold text-gray-700 mb-4">
+                    {category}
+                  </h2>
+                  <div className="space-y-4">
+                    {postsInCategory.map((post) => (
+                      <PostCardWidget
+                        key={post.id}
+                        post={post}
+                        onPostUpdated={fetchPosts}
+                        onPostDeleted={handlePostDeleted} // ✅ ลบแล้วหายทันที
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+      </main>
+
+      <aside className="w-80 p-6 hidden lg:block" />
+
+      <AddPostWidget onCreated={handlePostCreated} />
+    </div>
+  );
+};
+
+export default KnowledgeForumLayout;
+===============================
+import { useContext, useEffect, useState } from "react";
+import {
+  FaCommentDots,
+  FaEye,
+  FaHeart,
+  FaRegHeart,
+  FaFilePdf,
+  FaDownload,
+  FaExternalLinkAlt,
+  FaEdit,
+  FaTrash,
+} from "react-icons/fa";
+import { AuthContext } from "../../../Authentication/AuthContext.tsx";
+import { useUserProfile } from "../Lesson/hooks/useUserProfile.ts";
+import type { Post, Comment } from "../../../types/user/types";
+
+type Props = {
+  post: Post;
+  onPostUpdated?: () => void;
+  onPostDeleted?: (id: string) => void; // แจ้ง parent เวลาโพสต์ถูกลบ
+};
+
+const PostCardWidget = ({ post, onPostUpdated, onPostDeleted }: Props) => {
+  const { token } = useContext(AuthContext);
+
+  const [postState, setPostState] = useState<Post>(post);
+
+  const [showComments, setShowComments] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [comments, setComments] = useState<Comment[]>(post.comments || []);
+
+  const [likes, setLikes] = useState(post.likes || 0);
+  const [liked, setLiked] = useState(post.likedByUser ?? false);
+  const [liking, setLiking] = useState(false);
+
+  const { fullName, email } = useUserProfile(token);
+  const [userProfile, setUserProfile] = useState<{
+    name: string;
+    email: string;
+    avatarUrl?: string;
+  } | null>(null);
+
+  const isOwner =
+    !!email &&
+    !!postState.authorEmail &&
+    postState.authorEmail.toLowerCase() === email.toLowerCase();
+
+  // Edit modal state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(postState.title);
+  const [editMessage, setEditMessage] = useState(postState.message);
+  const [editCategory, setEditCategory] = useState(
+    postState.forumCategory || ""
+  );
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Delete state
+  const [deleting, setDeleting] = useState(false);
+
+  // Action error (edit/delete)
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Load user profile (for avatar in comment payload)
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch(`/api/profile`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error("Failed to fetch user profile");
+        const data = await res.json();
+        setUserProfile(data);
+      } catch (err) {
+        console.error("❌ Failed to fetch user profile:", err);
+      }
+    };
+    fetchUserProfile();
+  }, [token]);
+
+  // ===== Comments =====
+
+  const fetchComments = async () => {
+    try {
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("Failed to fetch comments");
+      const data = await res.json();
+      setComments(data);
+    } catch (err) {
+      console.error("❌ Failed to load comments:", err);
+    }
+  };
+
+  const handleCommentSubmit = async () => {
+    const trimmed = commentText.trim();
+    if (!trimmed) return;
+
+    try {
+      const payload = {
+        message: trimmed,
+        authorName: fullName || "Anonymous",
+        authorEmail: email || "unknown@example.com",
+        avatarUrl: userProfile?.avatarUrl || "",
+      };
+
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error("Failed to submit comment");
+
+      setCommentText("");
+      await fetchComments();
+    } catch (err) {
+      console.error("❌ Failed to submit comment:", err);
+    }
+  };
+
+  const handleToggleComments = async () => {
+    const willShow = !showComments;
+    setShowComments(willShow);
+    if (willShow && comments.length === 0) {
+      await fetchComments();
+    }
+  };
+
+  // ===== Likes =====
+
+  const handleToggleLike = async () => {
+    if (!email || liking) return;
+
+    setLiking(true);
+    const endpoint = liked ? "unlike" : "like";
+    const nextLiked = !liked;
+    const optimisticLikes = liked ? likes - 1 : likes + 1;
+
+    setLiked(nextLiked);
+    setLikes(optimisticLikes);
+
+    try {
+      const res = await fetch(`/api/posts/${post.id}/${endpoint}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) throw new Error("Failed to toggle like");
+
+      const data = await res.json();
+      if (typeof data.likes === "number") setLikes(data.likes);
+      if (typeof data.likedByUser === "boolean") {
+        setLiked(data.likedByUser);
+      }
+    } catch (err) {
+      console.error("❌ Failed to toggle like:", err);
+      // rollback
+      setLiked(!nextLiked);
+      setLikes(likes);
+    } finally {
+      setLiking(false);
+    }
+  };
+
+  // ===== Helpers =====
+
+  const linkify = (text: string): string => {
+    const urlRegex = /(\bhttps?:\/\/[^\s]+)/g;
+    return text.replace(urlRegex, (url) => {
+      const safeUrl = url.replace(/"/g, "&quot;");
+      return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">${url}</a>`;
+    });
+  };
+
+  const renderAvatar = () => {
+    if (postState.avatarUrl) {
+      const isFullUrl = postState.avatarUrl.startsWith("http");
+      const filename = postState.avatarUrl.split("/").pop();
+      const avatarUrl = isFullUrl
+        ? `/api/profile/avatars/${filename}`
+        : "";
+
+      return (
+        <img
+          src={avatarUrl}
+          alt="Avatar"
+          className="w-10 h-10 rounded-full object-cover border"
+          onError={(e) => (e.currentTarget.style.display = "none")}
+        />
+      );
+    }
+    return (
+      <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold text-sm">
+        {postState.authorName?.charAt(0)?.toUpperCase() || "?"}
+      </div>
+    );
+  };
+
+  // document field จาก backend (เช่น post.document)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fileNameFromBackend: string | undefined = (postState as any).document;
+  const documentUrl = fileNameFromBackend
+    ? `/api/posts/postDocument/${encodeURIComponent(fileNameFromBackend)}`
+    : undefined;
+
+  const docFileName = fileNameFromBackend || "";
+  const docExt = docFileName.includes(".")
+    ? docFileName.split(".").pop()!.toLowerCase()
+    : "";
+  const isPdf = docExt === "pdf";
+
+  // ===== Edit =====
+
+  const handleOpenEdit = () => {
+    setEditTitle(postState.title);
+    setEditMessage(postState.message);
+    setEditCategory(postState.forumCategory || "");
+    setActionError(null);
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = async () => {
+    const payload: Record<string, unknown> = {};
+    const newTitle = editTitle.trim();
+    const newMessage = editMessage.trim();
+    const newCategory = editCategory.trim();
+
+    if (newTitle && newTitle !== postState.title) payload.title = newTitle;
+    if (newMessage && newMessage !== postState.message)
+      payload.message = newMessage;
+    if (newCategory && newCategory !== (postState.forumCategory || ""))
+      payload.forumCategory = newCategory;
+
+    if (Object.keys(payload).length === 0) {
+      setIsEditing(false);
+      return;
+    }
+
+    try {
+      setSavingEdit(true);
+      setActionError(null);
+
+      const res = await fetch(`/api/posts/${post.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error("Update failed");
+
+      const updated = await res.json();
+      setPostState((prev) => ({
+        ...prev,
+        ...updated,
+      }));
+
+      setIsEditing(false);
+      onPostUpdated?.();
+    } catch (e) {
+      console.error(e);
+      setActionError("แก้ไขโพสต์ไม่สำเร็จ");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // ===== Delete (กดลบแล้วให้หายจากจอเลย) =====
+
+  const handleDelete = async () => {
+    if (!token) return;
+    if (!window.confirm("ต้องการลบโพสต์นี้หรือไม่?")) return;
+
+    try {
+      setDeleting(true);
+      setActionError(null);
+
+      const res = await fetch(`/api/posts/${post.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) throw new Error("Delete failed");
+
+      // ✅ แจ้ง parent ให้ลบออกจาก state -> การ์ดหายทันที
+      onPostDeleted?.(post.id);
+    } catch (e) {
+      console.error(e);
+      setActionError("ลบโพสต์ไม่สำเร็จ");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <>
+      <article className="bg-white rounded-lg shadow p-4 relative">
+        {/* Header */}
+        <header className="flex items-center gap-3 mb-3">
+          {renderAvatar()}
+          <div>
+            <p className="text-sm font-semibold text-gray-800">
+              {postState.authorName}
+            </p>
+            <p className="text-xs text-gray-500">{postState.authorEmail}</p>
+            <p className="text-xs text-gray-400">
+              {new Date(postState.createdAt).toLocaleString()}
+            </p>
+          </div>
+
+          {/* ปุ่มแก้ไข/ลบ เฉพาะเจ้าของโพสต์ */}
+          {isOwner && (
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleOpenEdit}
+                className="p-1.5 rounded-full hover:bg-blue-50 text-blue-600"
+                title="แก้ไขโพสต์"
+              >
+                <FaEdit />
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="p-1.5 rounded-full hover:bg-red-50 text-red-600 disabled:opacity-50"
+                title="ลบโพสต์"
+              >
+                <FaTrash />
+              </button>
+            </div>
+          )}
+        </header>
+
+        {/* Title & content */}
+        <h2 className="text-base font-semibold text-gray-800">
+          {postState.title}
+        </h2>
+        <p
+          className="text-sm text-gray-700 mt-1 whitespace-pre-line"
+          dangerouslySetInnerHTML={{ __html: linkify(postState.message) }}
+        />
+
+        {/* Picture */}
+        {postState.pictureUrl && (
+          <div className="mt-3">
+            {(() => {
+              const filename = postState.pictureUrl.split("/").pop();
+              return (
+                <img
+                  src={`/api/posts/picture/${filename}`}
+                  alt="Post Image"
+                  className="w-full max-h-96 object-cover rounded-md border"
+                />
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Document */}
+        {documentUrl && (
+          <div className="mt-3">
+            <div className="relative w-[200px] rounded-xl border bg-white shadow-sm overflow-hidden group hover:shadow-md transition-shadow">
+              <div
+                className={`absolute top-0 left-0 px-2 py-1 text-[10px] font-semibold text-white rounded-br-lg ${
+                  isPdf ? "bg-red-600" : "bg-gray-600"
+                }`}
+              >
+                {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
+              </div>
+              <div className="h-24 w-full bg-gray-50 flex items-center justify-center">
+                {isPdf ? (
+                  <FaFilePdf className="text-xl opacity-20" />
+                ) : (
+                  <div className="text-xs text-gray-500">Preview</div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 border-t">
+                <span
+                  className={`px-1.5 py-0.5 text-[10px] leading-none rounded-sm font-bold text-white ${
+                    isPdf ? "bg-red-600" : "bg-gray-600"
+                  }`}
+                >
+                  {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
+                </span>
+                <span
+                  className="text-sm font-semibold truncate"
+                  title={docFileName}
+                >
+                  {docFileName}
+                </span>
+              </div>
+
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
+              <div className="absolute inset-x-0 bottom-2 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <a
+                  href={documentUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="pointer-events-auto inline-flex items-center gap-1 text-xs px-3 py-1 rounded bg-white border hover:bg-gray-50"
+                  title="เปิดดู"
+                >
+                  <FaExternalLinkAlt /> เปิดดู
+                </a>
+                <a
+                  href={documentUrl}
+                  download={docFileName || true}
+                  className="pointer-events-auto inline-flex items-center gap-1 text-xs px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                  title="ดาวน์โหลด"
+                >
+                  <FaDownload /> ดาวน์โหลด
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Stats */}
+        <div className="flex gap-4 text-xs text-gray-500 mt-3 items-center">
+          <span className="flex items-center gap-1">
+            <FaEye /> {postState.views}
+          </span>
+
+          <button
+            type="button"
+            onClick={handleToggleComments}
+            className="hover:underline flex items-center gap-1"
+          >
+            <FaCommentDots /> {comments.length}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleToggleLike}
+            disabled={liking}
+            className={`hover:underline flex items-center gap-1 ${
+              liked ? "text-red-600 font-bold" : ""
+            }`}
+          >
+            {liked ? <FaHeart /> : <FaRegHeart />} {likes}
+          </button>
+        </div>
+
+        {actionError && (
+          <p className="mt-2 text-[10px] text-red-600">{actionError}</p>
+        )}
+
+        {/* Comments */}
+        {showComments && (
+          <section className="mt-4 space-y-2 border-t pt-4">
+            {comments.length === 0 ? (
+              <p className="text-xs text-gray-400">No comments yet.</p>
+            ) : (
+              comments.map((c) => (
+                <div key={c.id} className="flex items-start gap-2 text-xs">
+                  {c.avatarUrl ? (
+                    <img
+                      src={`/api/profile/avatars/${c.avatarUrl
+                        .split("/")
+                        .pop()}`}
+                      alt="User avatar"
+                      className="w-6 h-6 rounded-full object-cover border"
+                    />
+                  ) : (
+                    <div className="w-6 h-6 bg-gray-400 text-white rounded-full flex items-center justify-center text-[10px] font-bold">
+                      {c.authorName?.charAt(0)?.toUpperCase() || "?"}
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-medium">{c.authorName}</p>
+                    <p className="text-gray-700 whitespace-pre-line">
+                      {c.message}
+                    </p>
+                    <p className="text-[10px] text-gray-400">
+                      {new Date(c.createdAt).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
+
+            <div className="mt-3">
+              <textarea
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                className="w-full border border-gray-300 rounded p-2 text-xs focus:outline-none focus:ring focus:ring-blue-200"
+                rows={3}
+                placeholder="Add a comment..."
+              />
+              <div className="flex justify-end mt-2">
+                <button
+                  type="button"
+                  onClick={handleCommentSubmit}
+                  disabled={!commentText.trim()}
+                  className="bg-blue-600 text-white px-4 py-1 rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
+                >
+                  Submit
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+      </article>
+
+      {/* Edit Modal */}
+      {isEditing && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-lg p-5 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-3">แก้ไขโพสต์</h3>
+
+            <input
+              className="w-full border rounded px-3 py-2 mb-2 text-sm"
+              value={editTitle}
+              maxLength={255}
+              onChange={(e) => setEditTitle(e.target.value)}
+              placeholder="Title"
+            />
+
+            <input
+              className="w-full border rounded px-3 py-2 mb-2 text-sm"
+              value={editCategory}
+              onChange={(e) => setEditCategory(e.target.value)}
+              placeholder="Category"
+            />
+
+            <textarea
+              className="w-full border rounded px-3 py-2 mb-2 text-sm h-28"
+              value={editMessage}
+              onChange={(e) => setEditMessage(e.target.value)}
+              placeholder="Message"
+            />
+
+            {actionError && (
+              <div className="text-red-600 text-xs mb-2">{actionError}</div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="px-3 py-1.5 text-sm border rounded hover:bg-gray-100"
+              >
+                ยกเลิก
+              </button>
+
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={handleSaveEdit}
+                className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {savingEdit ? "กำลังบันทึก..." : "บันทึก"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+export default PostCardWidget;
+=====================
+package Forum;
+
+import com.aventrix.jnanoid.jnanoid.NanoIdUtils;
+import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
+import jakarta.json.bind.annotation.JsonbTransient;
+import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import model.CommentEntity;
+
+import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
+@Entity
+@Table(name = "posts")
+public class PostEntity extends PanacheEntityBase {
+    @Id
+    @Column(length = 21, nullable = false, updatable = false)
+    private String id;
+
+    @NotBlank
+    @Size(max = 100)
+    @Column(name = "author_name", nullable = false, length = 100)
+    private String authorName;
+
+    @NotBlank
+    @Column(name = "author_email", nullable = false, length = 150)
+    private String authorEmail;
+
+    @NotBlank
+    @Size(max = 255)
+    private String title;
+
+    @NotBlank
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String message;
+
+    @Column(nullable = false)
+    private long likes = 0;
+
+    @Column(nullable = false)
+    private long views = 0;
+
+    @Column(name = "forum_category")
+    private String forumCategory;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @Column(length = 512, name = "avatarurl")
+    private String avatarUrl;
+
+    @Transient
+
+    private boolean likedByUser;
+
+    @ElementCollection
+    @CollectionTable(name = "post_likes", joinColumns = @JoinColumn(name = "post_id"))
+    @Column(name = "user_email")
+    @JsonbTransient
+    private Set<String> likedBy = new HashSet<>();
+
+    @Column(name = "pictureUrl")
+    private String pictureUrl;
+
+    @Column(name = "documentUrl")
+    private String document;
+
+    @PrePersist
+    void prePersist() {
+        if (id == null || id.isBlank()) id = NanoIdUtils.randomNanoId();
+        createdAt  = LocalDateTime.now();
+        updatedAt  = createdAt;
+    }
+
+    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
+    private java.util.List<model.CommentEntity> comments = new java.util.ArrayList<>();
+
+    @PreUpdate
+    void preUpdate() { updatedAt = LocalDateTime.now(); }
+
+    public String getId()            { return id; }
+    public String getAuthorName()    { return authorName; }
+    public String getAuthorEmail()   { return authorEmail; }
+    public String getTitle()         { return title; }
+    public String getMessage()       { return message; }
+    public long   getLikes()         { return likes; }
+    public long   getViews()         { return views; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public Set<String> getLikedBy()  { return likedBy; }
+
+    public void setAuthorName(String n)     { this.authorName = n; }
+    public void setAuthorEmail(String e)    { this.authorEmail = e; }
+    public void setTitle(String t)          { this.title = t; }
+    public void setMessage(String m)        { this.message = m; }
+    public void setLikes(long l)            { this.likes = l; }
+    public void setViews(long v)            { this.views = v; }
+
+    public String getAvatarUrl() { return avatarUrl; }
+    public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
+
+    public void addLike(String email) {
+        likedBy.add(email);
+        this.likes = likedBy.size();
+    }
+
+    public void removeLike(String email) {
+        likedBy.remove(email);
+        this.likes = likedBy.size();
+    }
+
+    public boolean isLikedByUser() { return likedByUser; }
+    public void setLikedByUser(boolean likedByUser) { this.likedByUser = likedByUser; }
+
+    public String getForumCategory() { return forumCategory; }
+    public void setForumCategory(String forumCategory) { this.forumCategory = forumCategory; }
+
+    public String getPictureUrl() { return pictureUrl; }
+    public void setPictureUrl(String pictureUrl) { this.pictureUrl = pictureUrl; }
+    public void setDocument(String document) { this.document = document; }
+    public String getDocument() { return document; }
+
+}
