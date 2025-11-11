@@ -1,0 +1,661 @@
+import { useContext, useEffect, useState } from "react";
+import {FaCommentDots,FaEye,FaHeart,FaRegHeart,FaFilePdf,FaDownload, FaExternalLinkAlt,FaEdit,FaTrash} from "react-icons/fa";
+import { AuthContext } from "../../../Authentication/AuthContext.tsx";
+import { useUserProfile } from "../Lesson/hooks/useUserProfile.ts";
+import type { Post ,Comment } from "../../../types/user/types.ts";
+import { ENDPOINTS } from "../../../config/endpoints.ts";
+import { categories } from "../../../types/base/types.ts";
+
+type Props = {
+  post: Post;
+  onPostUpdated?: () => void;
+  onPostDeleted?: (id:string) => void;
+};
+
+const PostCardWidget = ({ post ,onPostDeleted,onPostUpdated}: Props) => {
+  const { token} = useContext(AuthContext);
+  const [showComments, setShowComments] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [postState, setPostState] = useState<Post>(post);
+
+  const [comments, setComments] = useState<Comment[]>(post.comments);
+
+  const [likes, setLikes] = useState(post.likes);
+  const [liked, setLiked] = useState(post.likedByUser ?? false);
+  const [liking, setLiking] = useState(false);
+
+  const {fullName,email} = useUserProfile(token)
+
+  const [userProfile, setUserProfile] = useState<{
+    name: string;
+    email: string;
+    avatarUrl?: string;
+  } | null>(null);
+
+  // ----- Edit section -----
+  const isOwner = !!email && !!postState.authorEmail && postState.authorEmail.toLowerCase() === email.toLowerCase();
+  const [isEditing,setIsEditing] = useState(false);
+  const [editTitle,setEditTitle] = useState(postState.title);
+  const [editMessage, setEditMessage] = useState(postState.message);
+  const [editCategory,setEditCategory] = useState(postState.forumCategory || "");
+
+  const [savingEdit,setSavingEdit] = useState(false);
+  const [deleting,setDeleting] = useState(false);
+
+  const [actionError,setActionError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch(ENDPOINTS.Profile, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error("Failed to fetch user profile");
+        const data = await res.json();
+        setUserProfile(data);
+      } catch (err) {
+        console.error("❌ Failed to fetch user profile:", err);
+      }
+    };
+    fetchUserProfile();
+  }, [token]);
+
+  const fetchComments = async () => {
+    try {
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("Failed to fetch comments");
+      const data = await res.json();
+      setComments(data);
+    } catch (err) {
+      console.error("❌ Failed to load comments:", err);
+    }
+  };
+
+  const handleCommentSubmit = async () => {
+    const trimmed = commentText.trim();
+    if (!trimmed) return;
+
+    try {
+      const payload = {
+        message: trimmed,
+        authorName: fullName || "Anonymous",
+        authorEmail: email || "unknown@example.com",
+        avatarUrl: userProfile?.avatarUrl || "",
+      };
+
+      const res = await fetch(`/api/forum/posts/${post.id}/comments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error("Failed to submit comment");
+
+      setCommentText("");
+      await fetchComments();
+    } catch (err) {
+      console.error("❌ Failed to submit comment:", err);
+    }
+  };
+
+  const handleToggleComments = async () => {
+    const willShow = !showComments;
+    setShowComments(willShow);
+    if (willShow && comments.length === 0) {
+      await fetchComments();
+    }
+  };
+
+  const handleToggleLike = async () => {
+    if (!email || liking) return;
+
+    setLiking(true);
+    const endpoint = liked ? "unlike" : "like";
+    const nextLiked = !liked;
+    const optimisticLikes = liked ? likes - 1 : likes + 1;
+
+    setLiked(nextLiked);
+    setLikes(optimisticLikes);
+
+    try {
+      const res = await fetch(`/api/posts/${post.id}/${endpoint}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) throw new Error("Failed to toggle like");
+
+      const data = await res.json();
+      if (typeof data.likes === "number") setLikes(data.likes);
+      if (typeof data.likedByUser === "boolean") setLiked(data.likedByUser ?? false);
+    } catch (err) {
+      console.error("❌ Failed to toggle like:", err);
+      setLiked(!nextLiked);
+      setLikes(likes);
+    } finally {
+      setLiking(false);
+    }
+  };
+
+  const linkify = (text: string): string => {
+    const urlRegex = /(\bhttps?:\/\/[^\s]+)/g;
+    return text.replace(urlRegex, (url) => {
+      const safeUrl = url.replace(/"/g, "&quot;");
+      return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">${url}</a>`;
+    });
+  };
+
+   const renderAvatar = () => {
+    if (post.avatarUrl) {
+      const isFullUrl = post.avatarUrl.startsWith("http") ;
+      const filename = post.avatarUrl.split("/").pop();
+      const avatarUrl = isFullUrl
+        ? `/api/profile/avatars/${filename}`
+        : "";
+
+      return (
+        <img
+          src={avatarUrl}
+          alt="Avatar"
+          className="w-10 h-10 rounded-full object-cover border"
+          onError={(e) => (e.currentTarget.style.display = "none")}
+        />
+      );
+    }
+    return (
+      <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold text-sm">
+        {post.authorName?.charAt(0)?.toUpperCase() || "?"}
+      </div>
+    );
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fileNameFromBackend: string | undefined = (post as any).document || undefined;
+  const documentUrl = fileNameFromBackend
+  ? `/api/posts/postDocument/${encodeURIComponent(fileNameFromBackend)}`
+  : undefined;
+
+  const docFileName = fileNameFromBackend || "";
+  const docExt = docFileName.includes(".") ? docFileName.split(".").pop()!.toLowerCase() : "";
+  const isPdf = docExt === "pdf";
+
+  //  ----- Edit section -----
+  const handleOpenEdit = () =>{
+    setEditTitle(postState.title);
+    setEditMessage(postState.message);
+    setEditCategory(postState.forumCategory);
+    setActionError(null);
+    setIsEditing(true);
+  }
+
+  const handleSaveEdit = async() => {
+    const payload: Record<string,unknown> = {};
+    const newTitle = editTitle.trim();
+    const newMessage = editMessage.trim();
+    const newCategory = editCategory.trim();
+
+    if (newTitle && newTitle !== postState.title) {
+      payload.title = newTitle
+    }
+    if (newMessage && newMessage !== postState.message) {
+      payload.message = newMessage;
+    }
+    if (newCategory && newCategory !== postState.forumCategory) {
+      payload.forumCategory = newCategory;
+    }
+    if (Object.keys(payload).length === 0) {
+      setIsEditing(false);
+      return;
+    }
+    try {
+      setSavingEdit(true)
+      setActionError(null)
+
+       const res = await fetch(`/api/posts/${post.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        throw new Error("Update failed");
+      }
+
+      const updated = await res.json();
+      setPostState((prev) => ({
+        ...prev,
+        ...updated
+      }))
+      setIsEditing(false);
+      onPostUpdated?.();
+    } catch (error) {
+      console.error(error)
+      setActionError("Can't edit post");
+    }finally{
+      setSavingEdit(false)
+    }
+
+  }
+
+  // ----- Delete post section ----- 
+  const handleDelete = async() => {
+    if (!token) { return}
+    if (!window.confirm("ต้องการลบโพสต์นี้หรือไม่?")) {return}
+
+    try {
+      setDeleting(true)
+      setActionError(null);
+
+      const res = await fetch(`/api/posts/${post.id}`,{
+        method:"DELETE",
+        headers: {Authorization : `Bearer ${token}`}
+      })
+
+      if (!res.ok) {
+        throw new Error("Delete failed");
+      }
+      onPostDeleted?.(post.id);
+    } catch (error) {
+      console.error(error)
+      setActionError("failed to delete post")
+    }finally{
+      setDeleting(false)
+    }
+  }
+
+  return (
+     <>
+    <article className="bg-white rounded-lg shadow p-4">
+      {/* Header */}
+      <header className="flex items-center gap-3 mb-3">
+        {renderAvatar()}
+        <div>
+          <p className="text-sm font-semibold text-gray-800">{post.authorName}</p>
+          <p className="text-xs text-gray-500">{post.authorEmail}</p>
+          <p className="text-xs text-gray-400">{new Date(post.createdAt).toLocaleString()}</p>
+        </div>
+        {isOwner &&(
+          <div className="ml-auto flex items-center gap-2">
+            <button type="button"onClick={handleOpenEdit} className="p-1.5 rounded-full hover:bg-blue-50 text-blue-600" title="edit post">
+              <FaEdit/>
+            </button>
+            <button type="button" onClick={handleDelete} disabled={deleting}  className="p-1.5 rounded-full hover:bg-red-50 text-red-600 disabled:opacity-50" title="deleted post">
+              <FaTrash/>
+            </button>
+          </div>
+        )}
+      </header>
+
+      <h2 className="text-base font-semibold text-gray-800">{post.title}</h2>
+      <p
+        className="text-sm text-gray-700 mt-1 whitespace-pre-line"
+        dangerouslySetInnerHTML={{ __html: linkify(post.message) }}
+      />
+
+      {post.pictureUrl && (
+        <div className="mt-3">
+          {(() => {
+            const filename = post.pictureUrl.split("/").pop();
+            return (
+              <img
+                src={`/api/posts/picture/${filename}`}
+                alt="Post Image"
+                className="w-full max-h-96 object-cover rounded-md border"
+              />
+            );
+          })()}
+        </div>
+      )}
+      {documentUrl && (
+        <div className="mt-3">
+          <div className="relative w-[200px] rounded-xl border bg-white shadow-sm overflow-hidden group hover:shadow-md transition-shadow">
+            <div
+              className={`absolute top-0 left-0 px-2 py-1 text-[10px] font-semibold text-white rounded-br-lg ${
+                isPdf ? "bg-red-600" : "bg-gray-600"
+              }`}
+            >
+              {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
+            </div>
+            <div className="h-24 w-full bg-gray-50 flex items-center justify-center">
+              {isPdf ? (
+                <FaFilePdf className="text-xl opacity-20" />
+              ) : (
+                <div className="text-xs text-gray-500">Preview</div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 border-t">
+              <span
+                className={`px-1.5 py-0.5 text-[10px] leading-none rounded-sm font-bold text-white ${
+                  isPdf ? "bg-red-600" : "bg-gray-600"
+                }`}
+              >
+                {isPdf ? "PDF" : (docExt || "FILE").toUpperCase()}
+              </span>
+              <span className="text-sm font-semibold truncate" title={docFileName}>
+                {docFileName}
+              </span>
+            </div>
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
+            <div className="absolute inset-x-0 bottom-2 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <a
+                href={documentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="pointer-events-auto inline-flex items-center gap-1 text-xs px-3 py-1 rounded bg-white border hover:bg-gray-50"
+                title="เปิดดู"
+              >
+                <FaExternalLinkAlt /> เปิดดู
+              </a>
+              <a
+                href={documentUrl}
+                download={docFileName || true}
+                className="pointer-events-auto inline-flex items-center gap-1 text-xs px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                title="ดาวน์โหลด"
+              >
+                <FaDownload /> ดาวน์โหลด
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-4 text-xs text-gray-500 mt-3 items-center">
+        <span className="flex items-center gap-1">
+          <FaEye /> {post.views}
+        </span>
+
+        <button
+          type="button"
+          onClick={handleToggleComments}
+          className="hover:underline flex items-center gap-1"
+        >
+          <FaCommentDots /> {comments.length}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleToggleLike}
+          disabled={liking}
+          className={`hover:underline flex items-center gap-1 ${
+            liked ? "text-red-600 font-bold" : ""
+          }`}
+        >
+          {liked ? <FaHeart /> : <FaRegHeart />} {likes}
+        </button>
+      </div>
+
+      {showComments && (
+        <section className="mt-4 space-y-2 border-t pt-4">
+          {comments.length === 0 ? (
+            <p className="text-xs text-gray-400">No comments yet.</p>
+          ) : (
+            comments.map((c) => (
+              <div key={c.id} className="flex items-start gap-2 text-xs">
+                {c.avatarUrl ? (
+                  <img
+                    src={`/api/profile/avatars/${c.avatarUrl.split("/").pop()}`}
+                    alt="User avatar"
+                    className="w-6 h-6 rounded-full object-cover border"
+                  />
+                ) : (
+                  <div className="w-6 h-6 bg-gray-400 text-white rounded-full flex items-center justify-center text-[10px] font-bold">
+                    {c.authorName?.charAt(0)?.toUpperCase() || "?"}
+                  </div>
+                )}
+                <div>
+                  <p className="font-medium">{c.authorName}</p>
+                  <p className="text-gray-700 whitespace-pre-line">{c.message}</p>
+                  <p className="text-[10px] text-gray-400">
+                    {new Date(c.createdAt).toLocaleString()}
+                  </p>
+                </div>
+                {isOwner &&(
+                <div className="ml-auto flex items-center gap-2">
+                  <button type="button"onClick={handleOpenEdit} className="p-1.5 rounded-full hover:bg-blue-50 text-blue-600" title="edit post">
+                    <FaEdit/>
+                  </button>
+                  <button type="button" onClick={handleDelete} disabled={deleting}  className="p-1.5 rounded-full hover:bg-red-50 text-red-600 disabled:opacity-50" title="deleted post">
+                    <FaTrash/>
+                  </button>
+                </div>
+              )}
+              </div>
+            ))
+          )}
+
+          <div className="mt-3">
+      <label htmlFor="commentText" className="block text-xs font-medium mb-1">
+        {isEditing ? "Edit Comment" : "Add a Comment"}
+      </label>
+      <textarea
+        id="commentText"
+        value={commentText}
+        onChange={(e) => setCommentText(e.target.value)}
+        className="w-full border border-gray-300 rounded p-2 text-xs focus:outline-none focus:ring focus:ring-blue-200"
+        rows={3}
+        placeholder={isEditing ? "Update your comment..." : "Write your comment..."}
+      />
+      <div className="flex justify-end mt-2 space-x-2">
+        <button
+          type="button"
+          onClick={handleCommentSubmit}
+          disabled={!commentText.trim()}
+          className="bg-blue-600 text-white px-4 py-1 rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
+        >
+          {isEditing ? "Save" : "Submit"}
+        </button>
+        {isEditing && (
+          <button
+            type="button"
+            // onClick={() => setCommentText(initialText)}
+            className="bg-gray-300 text-gray-700 px-4 py-1 rounded text-xs font-medium hover:bg-gray-400"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
+    </div>
+        </section>
+      )}
+    </article>
+    {isEditing && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-lg p-5 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-3">Edit post</h3>
+            
+            <label htmlFor="editTitle" className="block text-sm font-medium mb-1">
+              Title
+            </label>
+            <input
+              className="w-full border rounded px-3 py-2 mb-2 text-sm"
+              value={editTitle}
+              maxLength={255}
+              onChange={(e) => setEditTitle(e.target.value)}
+              placeholder="Title"
+            />
+            <label htmlFor="editTitle" className="block text-sm font-medium mb-1">
+              Cetegory
+            </label>
+            <select className="w-full border rounded px-3 py-2 mb-2" value={editCategory} onChange={(e)=> setEditCategory(e.target.value)}>
+              <option value={""} disabled>{editCategory}</option>
+              {categories.map((categories => (
+                <option key={categories} value={categories}>{categories}</option>
+              )))}
+            </select>
+            <label htmlFor="editTitle" className="block text-sm font-medium mb-1">
+              Description
+            </label>
+            <textarea
+              className="w-full border rounded px-3 py-2 mb-2 text-sm h-28"
+              value={editMessage}
+              onChange={(e) => setEditMessage(e.target.value)}
+              placeholder="Message"
+            />
+
+            {actionError && (
+              <div className="text-red-600 text-xs mb-2">{actionError}</div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="px-3 py-1.5 text-sm border rounded hover:bg-gray-100"
+              >
+                ยกเลิก
+              </button>
+
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={handleSaveEdit}
+                className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {savingEdit ? "กำลังบันทึก..." : "บันทึก"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+     </>
+  );
+};
+
+export default PostCardWidget;
+package Testing;
+import Forum.PostEntity;
+import dto.CommentDto;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
+import model.CommentEntity;
+import org.acme.security.jwt.Roles;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.management.relation.Role;
+import java.net.URI;
+import java.util.List;
+
+@Path("/forum/posts/{postId}/comments")
+@Consumes(MediaType.APPLICATION_JSON)
+@Produces(MediaType.APPLICATION_JSON)
+public class CommentResource {
+
+    public static final Logger log = LoggerFactory.getLogger(CommentResource.class);
+
+    @Inject EntityManager em;
+    @Inject JsonWebToken jwt;
+
+    @GET
+    @RolesAllowed(Roles.ROLE_USER)
+    public List<CommentDto> list(@PathParam("postId") String postId) {
+        return em.createQuery("""
+                    SELECT c FROM CommentEntity c
+                    WHERE c.post.id = :pid
+                    ORDER BY c.createdAt ASC
+                """, CommentEntity.class)
+                .setParameter("pid", postId)
+                .getResultStream()
+                .map(CommentDto::fromEntity)
+                .toList();
+    }
+
+    @POST
+    @Transactional
+    @RolesAllowed(Roles.ROLE_USER)
+    public Response create(@PathParam("postId") String postId, CommentDto dto, @Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        String method = Thread.currentThread().getStackTrace()[1].getMethodName();
+        log.info("User {} is calling {}()", currentUser, method);
+        PostEntity post = em.find(PostEntity.class, postId);
+        if (post == null){
+            log.error("Post with ID {} not found", postId);
+            throw new NotFoundException("Post not found");
+        }
+        CommentEntity comment = dto.toEntity(post);
+        if (comment.getAuthorName() == null || comment.getAuthorName().isBlank()) {
+            comment.setAuthorName(jwt.getClaim("name"));
+            log.warn("Author name not provided, using name from JWT: {}", comment.getAuthorName());
+        }
+        if (comment.getAuthorEmail() == null || comment.getAuthorEmail().isBlank()){
+            comment.setAuthorEmail(jwt.getSubject());
+            log.warn("Author email not provided, using email from JWT: {}", comment.getAuthorEmail());
+        }
+        log.info("Author email after setting: {}", comment.getAuthorEmail());
+        if (comment.getAvatarUrl() == null || comment.getAvatarUrl().isBlank()) {
+            String avatar = jwt.getClaim("avatar");
+            log.warn("Avatar URL not provided, using avatar from JWT: {}", avatar);
+            if (avatar != null && !avatar.isBlank()) {
+                log.info("Setting avatar URL from JWT claim");
+                comment.setAvatarUrl(avatar);
+            }
+        }
+        log.info("Creating comment for post {}", postId);
+        log.info("Comment author: {} <{}>", comment.getAuthorName(), comment.getAuthorEmail());
+        log.info("Comment avatar: {}", comment.getAvatarUrl());
+        log.info("Comment content: {}", comment.getMessage());
+        em.persist(comment);
+        return Response
+                .created(URI.create("/forum/posts/" + postId + "/comments/" + comment.getId()))
+                .entity(CommentDto.fromEntity(comment))
+                .build();
+    }
+
+    @PUT
+    @Path("Update-comment/{commentId}")
+    @Transactional
+    @RolesAllowed(Roles.ROLE_USER)
+    public Response updateComment(@PathParam("postId") String postId,
+                                  @PathParam("commentId")String commentId,
+                                  @Context SecurityContext securityContext,
+                                  CommentDto dto
+                                  ){
+        String currentUser = securityContext.getUserPrincipal().getName();
+        String method = Thread.currentThread().getStackTrace()[1].getMethodName();
+        log.info("Current User: {} is calling method : {}", currentUser, method);
+
+        CommentEntity comment = em.find(CommentEntity.class, commentId);
+        if (comment == null){
+            log.error("Comment with ID {} not found", commentId);
+            throw new NotFoundException("Comment not found");
+        }
+        if (!comment.getAuthorEmail().equalsIgnoreCase(currentUser)){
+            log.error("User {} is not the author of comment {}", currentUser, commentId);
+            return Response.status(Response.Status.FORBIDDEN).entity("You are not the author of this comment").build();
+        }
+        if (dto.message() != null && !dto.message().isBlank()){
+            log.info("Updated comment message to: {}", dto.message());
+            comment.setMessage(dto.message());
+        }
+        return Response.ok(CommentDto.fromEntity(comment)).build();
+    }
+
+
+    @DELETE
+    @Path("/{commentId}")
+    @Transactional
+    @RolesAllowed(Roles.ROLE_USER)
+    public void delete(@PathParam("commentId") String commentId,@Context SecurityContext securityContext) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        String method = Thread.currentThread().getStackTrace()[1].getMethodName();
+        log.info("User -> {} is calling {}()", currentUser, method);
+        CommentEntity c = em.find(CommentEntity.class, commentId);
+        if (c != null) em.remove(c);
+    }
+}
