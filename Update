@@ -1,1 +1,40 @@
-2025-11-12 14:43:02,741 INFO  [Tes.LearningContentResource] (executor-thread-6) Question DTOs in method -> getOne : {"id":"2f9970a80a6544589f26a","title":"testttttt","description":"test","category":"Technical Skills > Programming & Development","thumbnailUrl":null,"authorName":"Nattida Kraisikaj","contentType":"document","authorEmail":"user2@gmail.com","videoUrl":null,"documentUrl":"uploads/documents/850935759e814aa1ac32d07bf6b15d65.png","authorAvatarUrl":"uploads/avatars/avatar_UeJ5XJf6np3VVCJcRx_FI.jpg","progressPercent":0,"clickCount":1,"assignType":"all","assignedUserIds":[],"assignedTeamIds":[],"dueDate":null,"quizAvailable":true,"questions":[{"questionId":null,"questionText":"test1","type":"MULTIPLE","points":1,"choices":[],"correctAnswer":null}]}  
+package QuizService.DTOs;
+
+import java.util.List;
+
+public class QuestionDTO {
+    public String questionId;
+    public String questionText;
+    public String type;
+    public Integer points = 1;
+    public List<ChoiceDTO> choices;
+    public String correctAnswer;
+
+    public QuestionDTO() {
+    }
+
+    public QuestionDTO(String questionId,String questionText, String type, int points, List<ChoiceDTO> choices,String correctAnswer) {
+        this.questionId = questionId;
+        this.questionText = questionText;
+        this.type = type;
+        this.points = points;
+        this.choices = choices;
+        this.correctAnswer = correctAnswer;
+
+    }
+
+    public QuestionDTO(String questionText, String type, int points, List<ChoiceDTO> choices) {
+
+        this.questionText = questionText;
+        this.type = type;
+        this.points = points;
+        this.choices = choices;
+    }
+
+    public QuestionDTO(String questionText, String type, int points, String correctAnswer) {
+        this.questionText = questionText;
+        this.type = type;
+        this.points = points;
+        this.correctAnswer = correctAnswer;
+    }
+}
