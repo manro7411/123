@@ -1,331 +1,75 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useContext, useEffect, useState } from "react";
-import axios from "axios";
 import { AuthContext } from "../../../Authentication/AuthContext";
-import AdminSidebarWidget from "../Widgets/AdminSideBar";
-import { useNavigate } from "react-router-dom";
-import { Pencil } from "lucide-react";
-import EditLessonModal, { type Lesson } from "./EditLessonModal";
-import { sendLessonNotification } from "../Widgets/notificationServices";
-import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
-import type { QuestionAnswer, UserProgress } from "../../../types/trainer/types";
-import { ENDPOINTS } from "../../../config/endpoints";
+import axios from "axios";
+import { Loader2 } from "lucide-react";
 
-const AdminTaskManagementPage = () => {
-  const { token } = useContext(AuthContext);
-  const { email, fullName, avatarUrl } = useUserProfile(token);
-  const navigate = useNavigate();
+interface QuizHistoryProps {
+    lessonId:string;
+    userEmail:string;
+    onClose: ()=> void
+}
+const TrainerQuizHistory :React.FC<QuizHistoryProps>= ({lessonId,userEmail,onClose}) => {
+    const {token} = useContext(AuthContext);
+    const [quizAttempts,setQuizAttempts] = useState<any[]>([])
+    const [loading, setLoading] = useState(true);
 
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
-  const [progressList, setProgressList] = useState<UserProgress[]>([]);
-  const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [feedback, setFeedback] = useState("");
-  const [trainerReply, setTrainerReply] = useState("");
-  const [replyLoading, setReplyLoading] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [userLessonQuestion, setUserLessonQuestion] = useState<QuestionAnswer[] | undefined>();
-
-  const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
-
-  const fmtDate = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "");
-
-  // ---------- fetchers ----------
-  const fetchLessons = async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get<Lesson[]>("/api/learning?mine=true", { headers: authHeader });
-      setLessons(res.data);
-    } catch (err) {
-      console.error("❌ Failed to load lessons:", err);
-      alert("Failed to fetch lessons.");
-    } finally {
-      setLoading(false);
+    useEffect(()=> {
+        if (lessonId && userEmail) {
+      axios
+        .get(`/api/questions/trainer/attempts/${lessonId}/${userEmail}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        .then((res) => {
+          setQuizAttempts(res.data || []);
+          setLoading(false);
+        })
+        .catch((err) => {
+          console.error("Failed to fetch quiz history:", err);
+          setLoading(false);
+        });
     }
-  };
+    },[lessonId,userEmail,token])
 
-  const fetchUserIdByEmail = async (userEmail: string) => {
-    try {
-      const res = await axios.get("/api/profile/users", {
-        params: { email: userEmail },
-        headers: authHeader,
-      });
-      const users = res.data;
-      if (Array.isArray(users) && users.length > 0) {
-        const user = users.find((u: any) => u.email === userEmail);
-        return user?.id || null;
-      }
-      return null;
-    } catch (err) {
-      console.error("❌ Failed to fetch userId:", err);
-      return null;
-    }
-  };
-
-  const fetchUserLessonQuestion = async (userEmail: string, lessonId: string | number) => {
-    try {
-      const emailPath = encodeURIComponent(userEmail);
-      const res = await axios.get<QuestionAnswer | QuestionAnswer[]>(
-        `/api/trainer-question-answer/get-answer-reply-by-question-id/${emailPath}/${lessonId}`,
-        { headers: authHeader }
-      );
-      const data = res.data;
-      if (!data) {
-        setUserLessonQuestion([]);
-      } else if (Array.isArray(data)) {
-        setUserLessonQuestion(data);
-      } else {
-        setUserLessonQuestion([data]);
-      }
-    } catch (err) {
-      console.error("❌ Failed to fetch user lesson question:", err);
-      setUserLessonQuestion([]);
-    }
-  };
-
-  useEffect(() => {
-    if (!token) {
-      navigate("/");
-      return;
-    }
-    fetchLessons();
-  }, [token, navigate]);
-
-  useEffect(() => {
-    if (selectedUser && selectedLesson) {
-      fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
-    } else {
-      setUserLessonQuestion(undefined);
-    }
-  }, [selectedUser, selectedLesson]);
-
-  // ---------- handlers ----------
-  const handleSelectLesson = async (lesson: Lesson) => {
-    setSelectedLesson(lesson);
-    setSelectedUser(null);
-    setUserLessonQuestion(undefined);
-    setTrainerReply("");
-
-    try {
-      const res = await axios.get<UserProgress[]>(ENDPOINTS.AlluserProgress, { headers: authHeader });
-      const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
-      const latestByUser = new Map<string, UserProgress>();
-      lessonProgress.forEach((entry) => latestByUser.set(entry.userEmail, entry));
-      setProgressList(Array.from(latestByUser.values()));
-    } catch (err) {
-      console.error("❌ Failed to fetch progress:", err);
-      alert("Failed to load progress data.");
-    }
-  };
-
-  const handleDeleteLesson = async (id: string) => {
-    if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
-
-    try {
-      await axios.delete(ENDPOINTS.DeleteContent(Number(id)), { headers: authHeader });
-      setLessons((prev) => prev.filter((l) => String(l.id) !== id));
-      if (selectedLesson?.id === id) {
-        setSelectedLesson(null);
-        setProgressList([]);
-        setSelectedUser(null);
-        setUserLessonQuestion(undefined);
-      }
-      alert("✅ Lesson deleted");
-    } catch (err) {
-      console.error("❌ Delete failed:", err);
-      alert("Failed to delete lesson.");
-    }
-  };
-
-  const handleOpenEdit = (lesson: Lesson) => {
-    setSelectedLesson(lesson);
-    setShowEditModal(true);
-  };
-
-  const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
-    if (!selectedLesson) return;
-    try {
-      const payload: Lesson = { ...selectedLesson, ...data };
-      await axios.put(`/api/learning/${selectedLesson.id}`, payload, { headers: authHeader });
-
-      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
-      setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
-
-      setShowEditModal(false);
-      alert("✅ Lesson updated");
-    } catch (err) {
-      console.error("❌ Update failed:", err);
-      alert("Failed to update lesson information.");
-    }
-  };
-
-  if (!token) return null;
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <AdminSidebarWidget />
-
-      <main className="flex-1 p-10 space-y-6">
-        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">🧙 Learning Management</h1>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Lesson List */}
-          <section className="col-span-1 space-y-4">
-            {loading ? (
-              <p className="text-gray-500">Loading lessons...</p>
-            ) : (
-              lessons.map((lesson) => (
-                <div
-                  key={lesson.id}
-                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all ${
-                    selectedLesson?.id === lesson.id ? "bg-blue-50 border-blue-500" : "bg-white hover:border-blue-500"
-                  }`}
-                >
-                  <div onClick={() => handleSelectLesson(lesson)} title="คลิกเพื่อดูรายละเอียดบทเรียน">
-                    <h3 className="font-semibold text-lg text-gray-800">{lesson.title}</h3>
-                    <p className="text-sm text-gray-500 opacity-60">คลิกเพื่อดูรายละเอียดบทเรียน</p>
-                    <p className="text-xs text-purple-600 font-semibold uppercase">{lesson.category}</p>
-                  </div>
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenEdit(lesson);
-                    }}
-                    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
-                    title="Edit lesson"
-                  >
-                    <Pencil size={18} />
-                  </button>
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteLesson(String(lesson.id));
-                    }}
-                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
-                    title="Delete lesson"
-                  >
-                    🗑
-                  </button>
-                </div>
-              ))
-            )}
-          </section>
-
-          {/* User Progress */}
-          <section className="col-span-1 space-y-4">
-            <div className="max-h-[60vh] overflow-auto pr-2 space-y-3">
-              {progressList.length === 0 && selectedLesson && <p className="text-gray-400">No progress yet…</p>}
-              {progressList.map((user) => (
-                <div
-                  key={`${user.lessonId}-${user.userEmail}`}
-                  className="p-4 bg-white rounded-xl shadow flex justify-between items-center"
-                >
-                  <div>
-                    <p className="font-medium text-gray-800">{user.userEmail}</p>
-                  </div>
-                  <button
-                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
-                    onClick={() => setSelectedUser(user)}
-                  >
-                    View
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* User Overview */}
-          <section className="col-span-1 bg-white p-6 rounded-xl shadow">
-            <h2 className="text-lg font-semibold mb-4 text-gray-700">Quick overview of employee progress</h2>
-            <button
-              onClick={() => {
-                if (!selectedLesson) {
-                  alert("Please select a lesson first.");
-                  return;
-                }
-                const lessonId = encodeURIComponent(String(selectedLesson.id));
-                const userEmail = selectedUser ? encodeURIComponent(selectedUser.userEmail) : "";
-                // ✅ Use absolute path under /admin
-                if (userEmail) {
-                  navigate(`/admin/trainer/quiz-history/${lessonId}/${userEmail}`);
-                } else {
-                  navigate(`/admin/trainer/quiz-history/${lessonId}`);
-                }
-              }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow"
-            >
-              📜 Quiz History
-            </button>
-
-            {selectedUser ? (
-              <div className="space-y-6 mt-4">
-                <p className="text-sm text-gray-600">{selectedUser.userEmail}</p>
-                <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
-                <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
-              </div>
-            ) : (
-              <p className="text-gray-400 mt-4">← Select a user to see details</p>
-            )}
-          </section>
+    return(
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl p-6 space-y-6">
+        <div className="flex justify-between items-center border-b pb-4">
+          <h2 className="text-xl font-bold text-gray-800">
+            📜 Quiz History for {userEmail}
+          </h2>
+          <button
+            onClick={onClose}
+            className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm"
+          >
+            Close
+          </button>
         </div>
-      </main>
 
-      {showEditModal && selectedLesson && (
-        <EditLessonModal
-          open={showEditModal}
-          initial={selectedLesson}
-          onClose={() => setShowEditModal(false)}
-          onSave={handleSaveLesson}
-        />
-      )}
-    </div>
-  );
-};
-
-export default AdminTaskManagementPage;
-
-
-
-
-=========
-
-import { lazy, Suspense } from "react";
-import { Routes, Route } from "react-router-dom";
-
-const AdminDashboard = lazy(() => import("../pages/Admin/Dashboard/AdminDashboard"));
-const AdminAddLessonPage = lazy(() => import("../pages/Admin/Coursemanagement/AdminAddLessonPage"));
-const AdminTaskManagementPage = lazy(() => import("../pages/Admin/Taskmanagement/AdminTaskManagementPage"));
-const AdminSettingPage = lazy(() => import("../pages/Admin/AdminSetting/AdminSettingPage"));
-const AdminCreateNotificationPage = lazy(() => import("../pages/Admin/AdminNotification/AdminCreateNotificationPage"));
-const SystemLogging = lazy(() => import("../pages/Admin/Systemlog/Systemlogging"));
-const TeamManagement = lazy(() => import("../pages/Admin/Teammanagement/Teammanagement"));
-const AdminDashboard_overall = lazy(() => import("../pages/Admin/Dashboard/AdminDashboard_overall"));
-const TrainerQuizHistory = lazy(() => import("../pages/Admin/Taskmanagement/TrainerQuizHistory"));
-
-const AdminRoutes = () => (
-  <Suspense
-    fallback={
-      <div className="fixed inset-0 flex items-center justify-center bg-gray-100">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500"></div>
+        {loading ? (
+          <div className="flex justify-center items-center py-10">
+            <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+            <span className="ml-2 text-gray-600">กำลังโหลดข้อมูล…</span>
+          </div>
+        ) : !quizAttempts.length ? (
+          <p className="text-red-500 text-center">No quiz attempts found.</p>
+        ) : (
+          quizAttempts.map((attempt, index) => (
+            <div key={attempt.attemptId || index} className="border-t pt-6 space-y-4">
+              <h3 className="text-lg font-semibold text-gray-700">
+                🧠 Attempt {index + 1} —{" "}
+                {attempt.attemptedAt ? new Date(attempt.attemptedAt).toLocaleString() : "N/A"}
+              </h3>
+              <div className="text-sm text-gray-700 space-y-1">
+                <p><strong>Lesson:</strong> {attempt.learningContentTitle}</p>
+                <p><strong>Score:</strong> {attempt.score} / {attempt.maxScore} ({attempt.percentScore}%)</p>
+              </div>
+              {/* Render answers similar to your existing logic */}
+            </div>
+          ))
+        )}
       </div>
-    }
-  >
-    <Routes>
-      <Route path="/" element={<AdminDashboard />} />
-      <Route path="lesson/create" element={<AdminAddLessonPage />} />
-      <Route path="lesson/management" element={<AdminTaskManagementPage />} />
-      <Route path="setting" element={<AdminSettingPage />} />
-      <Route path="notifications" element={<AdminCreateNotificationPage />} />
-      <Route path="trainer/quiz-history/:lessonId/:userEmail" element={<TrainerQuizHistory />} />
-      <Route path="trainer/quiz-history/:lessonId" element={<TrainerQuizHistory />} />
-      <Route path="logs" element={<SystemLogging />} />
-      <Route path="team" element={<TeamManagement />} />
-      <Route path="dashboard-overall" element={<AdminDashboard_overall />} />
-    </Routes>
-  </Suspense>
-);
-
-export default AdminRoutes;
+    </div>
+    )
+}
+export default TrainerQuizHistory
