@@ -1,155 +1,557 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable react-hooks/exhaustive-deps */
 import { useContext, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import { AuthContext } from "../../../Authentication/AuthContext";
-import { Loader2, ArrowLeft } from "lucide-react";
+import AdminSidebarWidget from "../Widgets/AdminSideBar";
+import { useNavigate } from "react-router-dom";
+import { Pencil } from "lucide-react";
+import EditLessonModal, { type Lesson } from "./EditLessonModal";
+import { sendLessonNotification } from "../Widgets/notificationServices";
+import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
+import type { QuestionAnswer, UserProgress } from "../../../types/trainer/types";
+import { ENDPOINTS } from "../../../config/endpoints";
 
-interface QuizAttempt {
-  attemptId?: string;
-  learningContentTitle?: string;
-  score?: number;
-  maxScore?: number;
-  percentScore?: number;
-  attemptedAt?: string;
-  answers?: {
-    question: string;
-    userAnswer: string;
-    correctAnswer: string;
-    isCorrect: boolean;
-  }[];
-}
-
-const TrainerQuizHistory = () => {
-  const { lessonId, userEmail } = useParams<{ lessonId: string; userEmail?: string }>();
+const AdminTaskManagementPage = () => {
   const { token } = useContext(AuthContext);
+  const { email } = useUserProfile(token);
   const navigate = useNavigate();
 
-  const [quizAttempts, setQuizAttempts] = useState<QuizAttempt[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
+  const [progressList, setProgressList] = useState<UserProgress[]>([]);
+  const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const [feedback, setFeedback] = useState<string>("");
+
+  const [trainerReply, setTrainerReply] = useState<string>("");
+  const [replyLoading, setReplyLoading] = useState(false);
+
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [userLessonQuestion, setUserLessonQuestion] = useState<QuestionAnswer[] | undefined>();
+  const { fullName ,avatarUrl} = useUserProfile(token);
+
+
+  const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+  // ---------- helpers ----------
+  const fmtDate = (iso?: string) => {
+    if (!iso) return "";
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
+  };
+
+  // ---------- fetchers ----------
+  const fetchLessons = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get<Lesson[]>("/api/learning?mine=true", { headers: authHeader });
+      setLessons(res.data);
+    } catch (err) {
+      console.error("❌ Failed to load lessons:", err);
+      alert("Failed to fetch lessons.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchUserIdByEmail = async (userEmail: string) => {
+    try {
+      const res = await axios.get("/api/profile/users", {
+        params: { email: userEmail },
+        headers: authHeader,
+      });
+
+      const users = res.data;
+      if (Array.isArray(users) && users.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const user = users.find((u: any) => u.email === userEmail);
+        return user?.id || null;
+      }
+      console.error("❌ No matching user found for email:", userEmail);
+      return null;
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        console.error("❌ Failed to fetch userId:", err.response?.data || err.message);
+      } else {
+        console.error("❌ Failed to fetch userId:", err);
+      }
+      return null;
+    }
+  };
+
+  const fetchUserLessonQuestion = async (userEmail: string, lessonId: string | number) => {
+    try {
+      // ✅ encode email ป้องกัน + และอักขระพิเศษ
+      const emailPath = encodeURIComponent(userEmail);
+      // ✅ รองรับทั้ง object เดี่ยวและ array
+      const res = await axios.get<QuestionAnswer | QuestionAnswer[]>(
+        `/api/trainer-question-answer/get-answer-reply-by-question-id/${emailPath}/${lessonId}`,
+        { headers: authHeader }
+      );
+      const data = res.data;
+      if (!data) {
+        setUserLessonQuestion([]);
+      } else if (Array.isArray(data)) {
+        setUserLessonQuestion(data);
+      } else {
+        setUserLessonQuestion([data]);
+      }
+    } catch (err) {
+      console.error("❌ Failed to fetch user lesson question:", err);
+      setUserLessonQuestion([]);
+    }
+  };
 
   useEffect(() => {
-    const fetchQuizHistory = async () => {
-      if (!lessonId) return;
+    if (!token) {
+      navigate("/");
+      return;
+    }
+    fetchLessons();
+  }, [token, navigate]);
 
-      try {
-        const url = userEmail
-          ? `/api/questions/trainer/attempts/${lessonId}/${userEmail}`
-          : `/api/questions/trainer/attempts/${lessonId}`;
+  useEffect(() => {
+    if (selectedUser && selectedLesson) {
+      fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
+    } else {
+      setUserLessonQuestion(undefined);
+    }
+  }, [selectedUser, selectedLesson]);
 
-        const res = await axios.get(url, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+  // ---------- handlers ----------
+  const handleSelectLesson = async (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setSelectedUser(null);
+    setUserLessonQuestion(undefined);
+    setTrainerReply("");
 
-        setQuizAttempts(res.data || []);
-      } catch (err) {
-        console.error("❌ Failed to fetch quiz history:", err);
-        alert("Failed to load quiz history.");
-      } finally {
-        setLoading(false);
-      }
-    };
+    try {
+      const res = await axios.get<UserProgress[]>(ENDPOINTS.AlluserProgress, { headers: authHeader });
+      const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
 
-    fetchQuizHistory();
-  }, [lessonId, userEmail, token]);
+      // keep last entry per user
+      const latestByUser = new Map<string, UserProgress>();
+      lessonProgress.forEach((entry) => {
+        latestByUser.set(entry.userEmail, entry);
+      });
+
+      setProgressList(Array.from(latestByUser.values()));
+    } catch (err) {
+      console.error("❌ Failed to fetch progress:", err);
+      alert("Failed to load progress data.");
+    }
+  };
+
+  // const handleDeleteLesson = async (id: string | number) => {
+  //   console.log("Deleting lesson with id:", id, typeof id);
+  //   if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
+
+  //   const idNum = Number(id);
+  //   if (Number.isNaN(idNum)) {
+  //     console.error("❌ Invalid lesson id:", id);
+  //     alert("Invalid lesson id.");
+  //     return;
+  //   }
+
+  //   try {
+  //     await axios.delete(ENDPOINTS.DeleteContent(idNum), { headers: authHeader });
+  //     setLessons((prev) => prev.filter((l) => Number(l.id) !== idNum));
+  //     if (selectedLesson && Number(selectedLesson.id) === idNum) {
+  //       setSelectedLesson(null);
+  //       setProgressList([]);
+  //       setSelectedUser(null);
+  //       setUserLessonQuestion(undefined);
+  //     }
+  //     alert("✅ Lesson deleted");
+  //   } catch (err) {
+  //     console.error("❌ Delete failed:", err);
+  //     alert("Failed to delete lesson.");
+  //   }
+  // };
+
+  const handleDeleteLesson = async (id: string ) => {
+  if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
+
+  try {
+    await axios.delete(ENDPOINTS.DeleteContent(Number(id)), { headers: authHeader });
+    setLessons((prev) => prev.filter((l) => l.id !== id));
+
+    if (selectedLesson?.id === id) {
+      setSelectedLesson(null);
+      setProgressList([]);
+      setSelectedUser(null);
+      setUserLessonQuestion(undefined);
+    }
+
+      alert("✅ Lesson deleted");
+    } catch (err) {
+      console.error("❌ Delete failed:", err);
+      alert("Failed to delete lesson.");
+    }
+  };
+
+  const handleOpenEdit = (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setShowEditModal(true);
+  };
+
+  const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
+    if (!selectedLesson) return;
+    try {
+      const payload: Lesson = { ...selectedLesson, ...data };
+      await axios.put(`/api/learning/${selectedLesson.id}`, payload, { headers: authHeader });
+
+      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
+      setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
+
+      setShowEditModal(false);
+      alert("✅ Lesson updated");
+    } catch (err) {
+      console.error("❌ Update failed:", err);
+      alert("Failed to update lesson information.");
+    }
+  };
+
+  if (!token) return null;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <button
-          onClick={() => navigate(-1)}
-          className="flex items-center gap-2 text-gray-600 hover:text-blue-700 transition"
-        >
-          <ArrowLeft className="w-5 h-5" />
-          Back
-        </button>
+    <div className="min-h-screen bg-gray-50 flex">
+      <AdminSidebarWidget />
 
-        <h1 className="text-2xl font-bold text-blue-800">
-          📜 Quiz History {userEmail ? `for ${userEmail}` : ""}
-        </h1>
+      <main className="flex-1 p-10 space-y-6">
+        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">🧙 Learning Management</h1>
 
-        <div />
-      </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Lesson List */}
+          <section className="col-span-1 space-y-4">
+            {loading ? (
+              <p className="text-gray-500">Loading lessons...</p>
+            ) : (
+              lessons.map((lesson) => (
+                <div
+                  key={lesson.id}
+                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all ${
+                    selectedLesson?.id === lesson.id ? "bg-blue-50 border-blue-500" : "bg-white hover:border-blue-500"
+                  }`}
+                >
+                  <div onClick={() => handleSelectLesson(lesson) }  title="คลิกเพื่อดูรายละเอียดบทเรียน">
+                    <h3 className="font-semibold text-lg text-gray-800">{lesson.title}</h3>
+                    {/* <p className="text-sm text-gray-500">ID: {lesson.id}</p> */}
+                    <p className="text-sm text-gray-500 opacity-60">คลิกเพื่อดูรายละเอียดบทเรียน</p>
+                    <p className="text-xs text-purple-600 font-semibold uppercase">{lesson.category}</p>
+                  </div>
 
-      {/* Content */}
-      {loading ? (
-        <div className="flex justify-center items-center py-20">
-          <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-          <span className="ml-2 text-gray-600">Loading quiz history…</span>
-        </div>
-      ) : quizAttempts.length === 0 ? (
-        <p className="text-center text-gray-500 mt-20">No quiz attempts found.</p>
-      ) : (
-        <div className="space-y-6">
-          {quizAttempts.map((attempt, index) => (
-            <div
-              key={attempt.attemptId || index}
-              className="bg-white rounded-xl shadow p-6 border border-gray-200"
-            >
-              <h2 className="text-lg font-semibold text-gray-800 mb-2">
-                🧠 Attempt {index + 1}
-              </h2>
-              <p className="text-sm text-gray-500 mb-4">
-                {attempt.attemptedAt
-                  ? new Date(attempt.attemptedAt).toLocaleString()
-                  : "Unknown date"}
-              </p>
+                  {/* Edit button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenEdit(lesson);
+                    }}
+                    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
+                    title="Edit lesson"
+                    type="button"
+                    aria-label="Edit lesson"
+                  >
+                    <Pencil size={18} />
+                  </button>
 
-              <div className="text-sm text-gray-700 space-y-1 mb-4">
-                <p>
-                  <strong>Lesson:</strong> {attempt.learningContentTitle || "N/A"}
-                </p>
-                <p>
-                  <strong>Score:</strong> {attempt.score ?? 0} / {attempt.maxScore ?? 0}{" "}
-                  ({attempt.percentScore ?? 0}%)
-                </p>
+                  {/* Delete button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteLesson(String(lesson.id));
+                    }}
+                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                    title="Delete lesson"
+                    type="button"
+                    aria-label="Delete lesson"
+                  >
+                    🗑
+                  </button>
+                </div>
+              ))
+            )}
+          </section>
+
+          {/* User Progress List */}
+          <section className="col-span-1 space-y-4">
+            <div className="max-h-[60vh] overflow-auto pr-2 space-y-3">
+               {progressList.length === 0 && selectedLesson && <p className="text-gray-400">No progress yet…</p>}
+            {progressList.map((user) => (
+              <div
+                key={`${user.lessonId}-${user.userEmail}`}
+                className="p-4 bg-white rounded-xl shadow flex justify-between items-center"
+              >
+                <div>
+                  <p className="font-medium text-gray-800">{user.userEmail}</p>
+                  <p className="text-sm text-gray-400"></p>
+                  {/* Lesson ID: {user.lessonId} */}
+                </div>
+                <button
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
+                  onClick={() => setSelectedUser(user)}
+                >
+                  View
+                </button>
               </div>
+            ))}
+            </div>
+          </section>
 
-              {attempt.answers && attempt.answers.length > 0 && (
-                <div className="mt-4 border-t pt-4">
-                  <h3 className="text-md font-semibold text-gray-800 mb-2">
-                    📝 Answers:
-                  </h3>
-                  <div className="space-y-3">
-                    {attempt.answers.map((ans, i) => (
-                      <div
-                        key={i}
-                        className={`p-3 rounded-lg border ${
-                          ans.isCorrect
-                            ? "border-green-300 bg-green-50"
-                            : "border-red-300 bg-red-50"
-                        }`}
-                      >
-                        <p className="font-medium text-gray-800">
-                          {i + 1}. {ans.question}
-                        </p>
-                        <p className="text-sm mt-1">
-                          <strong>Your Answer:</strong>{" "}
-                          <span
-                            className={`${
-                              ans.isCorrect ? "text-green-700" : "text-red-700"
-                            }`}
-                          >
-                            {ans.userAnswer}
-                          </span>
-                        </p>
-                        {!ans.isCorrect && (
-                          <p className="text-sm text-gray-600">
-                            <strong>Correct Answer:</strong> {ans.correctAnswer}
-                          </p>
-                        )}
-                      </div>
-                    ))}
+          {/* Right pane: selected user overview */}
+          <section className="col-span-1 bg-white p-6 rounded-xl shadow">
+            <h2 className="text-lg font-semibold mb-4 text-gray-700">Quick overview of employee progress</h2>
+           <button
+              onClick={() => {
+                if (!selectedLesson) {
+                  alert("Please select a lesson first.");
+                  return;
+                }
+                // If you want to view a specific user's quiz history, include selectedUser
+                const lessonId = encodeURIComponent(String(selectedLesson.id));
+                const userEmail = selectedUser ? encodeURIComponent(selectedUser.userEmail) : "";
+                // navigate to trainer quiz history page (you may adjust the route as needed)
+                navigate(`/trainer/quiz-history/${lessonId}/${userEmail}`);
+              }}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow"
+              type="button"
+            >
+              📜 Quiz History
+            </button>
+            {selectedUser ? (
+              <div className="space-y-6">
+                <div className="flex items-center gap-3">
+                  {selectedUser.authorAvatarUrl ? (
+                    <img
+                      src={selectedUser.authorAvatarUrl}
+                      alt={`${selectedUser.userEmail}'s avatar`}
+                      className="w-10 h-10 rounded-full"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                  )}
+                  <div>
+                    <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
+                    {/* <p className="text-sm text-gray-500">Lesson ID: {selectedUser.lessonId}</p> */}
                   </div>
                 </div>
-              )}
-            </div>
-          ))}
+
+                <div>
+                  <p className="text-sm text-gray-500">Progress</p>
+                  <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
+                  <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
+                </div>
+
+                <p className="text-sm text-gray-500">
+                  Quiz:{" "}
+                  {selectedUser?.score > 0 ? (
+                    <span className="text-green-600 font-semibold">
+                      Finished ({selectedUser.score} pts)
+                    </span>
+                  ) : (
+                    <span className="text-red-500">Not yet</span>
+                  )}
+                </p>
+
+                {/* Q&A thread for this user+lesson */}
+                <div className="border-t pt-4">
+                  <h3 className="font-semibold text-gray-800 mb-2">User Question for this Learning Content</h3>
+                  {userLessonQuestion === undefined ? (
+                    <p className="text-sm text-gray-400">Loading…</p>
+                  ) : userLessonQuestion.length === 0 ? (
+                    <p className="text-sm text-gray-400">No questions from this user for this lesson.</p>
+                  ) : (
+                    userLessonQuestion.map((qa) => {
+                      const askedAt = qa.createdAt || qa.createAt || "";
+                      return (
+                        <div key={qa.id} className="space-y-3">
+                          <div className="p-3 rounded-lg bg-gray-50 border">
+                            <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                              {qa.question || <span className="text-gray-400">No question text</span>}
+                            </p>
+                            <p className="mt-1 text-xs text-gray-400">Asked: {askedAt ? fmtDate(askedAt) : "-"}</p>
+                          </div>
+
+                          {qa.answerReplies && qa.answerReplies.length > 0 && (
+                            <div className="space-y-2">
+                              <p className="text-sm font-medium text-gray-700">Trainer Replies</p>
+                              {qa.answerReplies.map((r) => (
+                                <div key={r.id} className="p-3 rounded-lg bg-blue-50 border">
+                                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{r.trainerReply}</p>
+                                  <p className="mt-1 text-xs text-gray-500">
+                                    by {r.trainerName} • {r.trainerEmail} • {fmtDate(r.createdAt)}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Feedback Section (ให้เฉพาะตอนจบ 100%) */}
+                {selectedUser?.percent === 100 && (
+                  <div className="border-t pt-4 space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Feedback for {selectedUser.userEmail}
+                    </label>
+
+                    {selectedUser.feedback ? (
+                      <div className="p-4 bg-gray-100 border rounded-lg">
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedUser.feedback}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <textarea
+                          value={feedback}
+                          onChange={(e) => setFeedback(e.target.value)}
+                          className="h-32 w-full border rounded-lg px-3 py-2"
+                          placeholder="Write your feedback here..."
+                        />
+                        <button
+                          onClick={async () => {
+                            if (!feedback.trim()) {
+                              alert("❌ Feedback cannot be empty.");
+                              return;
+                            }
+                            try {
+                              await axios.post(
+                                `/api/user/feedback`,
+                                {
+                                  userEmail: selectedUser.userEmail,
+                                  lessonId: selectedUser.lessonId,
+                                  feedback,
+                                  email,
+                                },
+                                { headers: authHeader }
+                              );
+
+                              const uid = await fetchUserIdByEmail(selectedUser.userEmail);
+                              if (uid) {
+                                await sendLessonNotification({
+                                  token,
+                                  message: `You have received feedback for lesson ${selectedLesson?.title}.`,
+                                  userIds: [uid],
+                                  target: "USER",
+                                });
+                              }
+
+                              alert("✅ Feedback sent successfully!");
+                              setFeedback("");
+                              setSelectedUser((prev) => (prev ? { ...prev, feedback } : prev));
+                            } catch (err) {
+                              console.error("❌ Failed to send feedback:", err);
+                              alert("Failed to send feedback.");
+                            }
+                          }}
+                          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                        >
+                          Send Feedback
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Trainer Reply Section (ย้ายเงื่อนไข: แสดงเมื่อมีคำถาม ไม่ต้องรอ 100%) */}
+                {userLessonQuestion && userLessonQuestion.length > 0 && (
+                  <div className="mt-2 border-t pt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Reply to this question</label>
+                    <textarea
+                      value={trainerReply}
+                      onChange={(e) => setTrainerReply(e.target.value)}
+                      className="h-24 w-full border rounded-lg px-3 py-2"
+                      placeholder="Write your answer here..."
+                      disabled={replyLoading}
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!trainerReply.trim()) {
+                          alert("❌ Answer cannot be empty.");
+                          return;
+                        }
+                        const qa = userLessonQuestion?.[0];
+                        if (!qa) {
+                          alert("❌ No question context to reply to.");
+                          return;
+                        }
+                        setReplyLoading(true);
+                        try {
+                          const payload = {
+                            // ✅ ผูกกับคำถามที่ถูกต้อง (ไม่ใช่ selectedLesson)
+                            questionAnswerId: qa.id,
+                            // เผื่อ backend ตรวจสอบ
+                            lessonId: selectedLesson?.id,
+                            trainerReply,
+                            trainerEmail: email,
+                            avatarUrl:avatarUrl,
+                            trainerName:  fullName || "Trainer",
+                            createdAt: new Date().toISOString(),
+                          };
+
+                          console.log("POST reply payload:", payload);
+
+                          await axios.post(
+                            "/api/trainer-question-answer/Update-answer-to-learning-content",
+                            payload,
+                            { headers: authHeader }
+                          );
+
+                          // refresh thread
+                          if (selectedUser && selectedLesson) {
+                            await fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
+                          }
+
+                          alert("✅ Trainer answer sent successfully!");
+                          setTrainerReply("");
+                        } catch (err) {
+                          if (axios.isAxiosError(err)) {
+                            console.error("❌ Failed to send trainer answer:", err.response?.status, err.response?.data || err.message);
+                            alert(`Failed to send trainer answer: ${err.response?.status ?? ""} ${JSON.stringify(err.response?.data ?? err.message)}`);
+                          } else {
+                            console.error("❌ Failed to send trainer answer:", err);
+                            alert("Failed to send trainer answer.");
+                          }
+                        } finally {
+                          setReplyLoading(false);
+                        }
+                      }}
+                      className={`mt-2 px-4 py-2 rounded-lg ${
+                        replyLoading || !trainerReply.trim()
+                          ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                          : "bg-green-600 text-white hover:bg-green-700"
+                      }`}
+                      disabled={replyLoading || !trainerReply.trim()}
+                    >
+                      {replyLoading ? "Sending..." : "Send Trainer Answer"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-gray-400">← Select a user to see details</p>
+            )}
+          </section>
         </div>
+      </main>
+
+      {/* Edit Lesson Modal */}
+      {showEditModal && selectedLesson && (
+        <EditLessonModal
+          open={showEditModal}
+          initial={selectedLesson}
+          onClose={() => setShowEditModal(false)}
+          onSave={handleSaveLesson}
+        />
       )}
     </div>
   );
 };
 
-export default TrainerQuizHistory;
+export default AdminTaskManagementPage;
