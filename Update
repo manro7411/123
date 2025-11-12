@@ -1,75 +1,155 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useContext, useEffect, useState } from "react";
-import { AuthContext } from "../../../Authentication/AuthContext";
+import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
-import { Loader2 } from "lucide-react";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import { Loader2, ArrowLeft } from "lucide-react";
 
-interface QuizHistoryProps {
-    lessonId:string;
-    userEmail:string;
-    onClose: ()=> void
+interface QuizAttempt {
+  attemptId?: string;
+  learningContentTitle?: string;
+  score?: number;
+  maxScore?: number;
+  percentScore?: number;
+  attemptedAt?: string;
+  answers?: {
+    question: string;
+    userAnswer: string;
+    correctAnswer: string;
+    isCorrect: boolean;
+  }[];
 }
-const TrainerQuizHistory :React.FC<QuizHistoryProps>= ({lessonId,userEmail,onClose}) => {
-    const {token} = useContext(AuthContext);
-    const [quizAttempts,setQuizAttempts] = useState<any[]>([])
-    const [loading, setLoading] = useState(true);
 
-    useEffect(()=> {
-        if (lessonId && userEmail) {
-      axios
-        .get(`/api/questions/trainer/attempts/${lessonId}/${userEmail}`, {
+const TrainerQuizHistory = () => {
+  const { lessonId, userEmail } = useParams<{ lessonId: string; userEmail?: string }>();
+  const { token } = useContext(AuthContext);
+  const navigate = useNavigate();
+
+  const [quizAttempts, setQuizAttempts] = useState<QuizAttempt[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchQuizHistory = async () => {
+      if (!lessonId) return;
+
+      try {
+        const url = userEmail
+          ? `/api/questions/trainer/attempts/${lessonId}/${userEmail}`
+          : `/api/questions/trainer/attempts/${lessonId}`;
+
+        const res = await axios.get(url, {
           headers: { Authorization: `Bearer ${token}` },
-        })
-        .then((res) => {
-          setQuizAttempts(res.data || []);
-          setLoading(false);
-        })
-        .catch((err) => {
-          console.error("Failed to fetch quiz history:", err);
-          setLoading(false);
         });
-    }
-    },[lessonId,userEmail,token])
 
-    return(
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl p-6 space-y-6">
-        <div className="flex justify-between items-center border-b pb-4">
-          <h2 className="text-xl font-bold text-gray-800">
-            📜 Quiz History for {userEmail}
-          </h2>
-          <button
-            onClick={onClose}
-            className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm"
-          >
-            Close
-          </button>
-        </div>
+        setQuizAttempts(res.data || []);
+      } catch (err) {
+        console.error("❌ Failed to fetch quiz history:", err);
+        alert("Failed to load quiz history.");
+      } finally {
+        setLoading(false);
+      }
+    };
 
-        {loading ? (
-          <div className="flex justify-center items-center py-10">
-            <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-            <span className="ml-2 text-gray-600">กำลังโหลดข้อมูล…</span>
-          </div>
-        ) : !quizAttempts.length ? (
-          <p className="text-red-500 text-center">No quiz attempts found.</p>
-        ) : (
-          quizAttempts.map((attempt, index) => (
-            <div key={attempt.attemptId || index} className="border-t pt-6 space-y-4">
-              <h3 className="text-lg font-semibold text-gray-700">
-                🧠 Attempt {index + 1} —{" "}
-                {attempt.attemptedAt ? new Date(attempt.attemptedAt).toLocaleString() : "N/A"}
-              </h3>
-              <div className="text-sm text-gray-700 space-y-1">
-                <p><strong>Lesson:</strong> {attempt.learningContentTitle}</p>
-                <p><strong>Score:</strong> {attempt.score} / {attempt.maxScore} ({attempt.percentScore}%)</p>
-              </div>
-              {/* Render answers similar to your existing logic */}
-            </div>
-          ))
-        )}
+    fetchQuizHistory();
+  }, [lessonId, userEmail, token]);
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-8">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8">
+        <button
+          onClick={() => navigate(-1)}
+          className="flex items-center gap-2 text-gray-600 hover:text-blue-700 transition"
+        >
+          <ArrowLeft className="w-5 h-5" />
+          Back
+        </button>
+
+        <h1 className="text-2xl font-bold text-blue-800">
+          📜 Quiz History {userEmail ? `for ${userEmail}` : ""}
+        </h1>
+
+        <div />
       </div>
+
+      {/* Content */}
+      {loading ? (
+        <div className="flex justify-center items-center py-20">
+          <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+          <span className="ml-2 text-gray-600">Loading quiz history…</span>
+        </div>
+      ) : quizAttempts.length === 0 ? (
+        <p className="text-center text-gray-500 mt-20">No quiz attempts found.</p>
+      ) : (
+        <div className="space-y-6">
+          {quizAttempts.map((attempt, index) => (
+            <div
+              key={attempt.attemptId || index}
+              className="bg-white rounded-xl shadow p-6 border border-gray-200"
+            >
+              <h2 className="text-lg font-semibold text-gray-800 mb-2">
+                🧠 Attempt {index + 1}
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                {attempt.attemptedAt
+                  ? new Date(attempt.attemptedAt).toLocaleString()
+                  : "Unknown date"}
+              </p>
+
+              <div className="text-sm text-gray-700 space-y-1 mb-4">
+                <p>
+                  <strong>Lesson:</strong> {attempt.learningContentTitle || "N/A"}
+                </p>
+                <p>
+                  <strong>Score:</strong> {attempt.score ?? 0} / {attempt.maxScore ?? 0}{" "}
+                  ({attempt.percentScore ?? 0}%)
+                </p>
+              </div>
+
+              {attempt.answers && attempt.answers.length > 0 && (
+                <div className="mt-4 border-t pt-4">
+                  <h3 className="text-md font-semibold text-gray-800 mb-2">
+                    📝 Answers:
+                  </h3>
+                  <div className="space-y-3">
+                    {attempt.answers.map((ans, i) => (
+                      <div
+                        key={i}
+                        className={`p-3 rounded-lg border ${
+                          ans.isCorrect
+                            ? "border-green-300 bg-green-50"
+                            : "border-red-300 bg-red-50"
+                        }`}
+                      >
+                        <p className="font-medium text-gray-800">
+                          {i + 1}. {ans.question}
+                        </p>
+                        <p className="text-sm mt-1">
+                          <strong>Your Answer:</strong>{" "}
+                          <span
+                            className={`${
+                              ans.isCorrect ? "text-green-700" : "text-red-700"
+                            }`}
+                          >
+                            {ans.userAnswer}
+                          </span>
+                        </p>
+                        {!ans.isCorrect && (
+                          <p className="text-sm text-gray-600">
+                            <strong>Correct Answer:</strong> {ans.correctAnswer}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
-    )
-}
-export default TrainerQuizHistory
+  );
+};
+
+export default TrainerQuizHistory;
