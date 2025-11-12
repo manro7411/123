@@ -1,879 +1,670 @@
+import { lazy, Suspense } from "react";
+import { Routes, Route } from "react-router-dom";
+
+const AdminDashboard = lazy(() => import("../pages/Admin/Dashboard/AdminDashboard"));
+const AdminAddLessonPage = lazy(() => import("../pages/Admin/Coursemanagement/AdminAddLessonPage"));
+const AdminTaskManagementPage = lazy(() => import("../pages/Admin/Taskmanagement/AdminTaskManagementPage"));
+const AdminSettingPage = lazy(() => import("../pages/Admin/AdminSetting/AdminSettingPage"));
+const AdminCreateNotificationPage = lazy(() => import("../pages/Admin/AdminNotification/AdminCreateNotificationPage"));
+const SystemLogging = lazy(() => import("../pages/Admin/Systemlog/Systemlogging"));
+const TeamManagement = lazy(() => import("../pages/Admin/Teammanagement/Teammanagement"));
+const AdminDashboard_overall = lazy(() => import("../pages/Admin/Dashboard/AdminDashboard_overall"));
+const TrainerQuizHistory = lazy(() => import("../pages/Admin/Taskmanagement/TrainerQuizHistory"));
+
+
+const AdminRoutes = () => (
+  <Suspense fallback={
+  <div className="fixed inste-0 flex items-centet justify-center bg-gray">
+    <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500"></div>
+  </div>
+}>
+    <Routes>
+      <Route path="/" element={<AdminDashboard />} />
+      <Route path="lesson/create" element={<AdminAddLessonPage />} />
+      <Route path="lesson/management" element={<AdminTaskManagementPage />} />
+      <Route path="setting" element={<AdminSettingPage />} />
+      <Route path="notifications" element={<AdminCreateNotificationPage />} />
+      <Route path="trainer/quiz-history/:lessonId/:userEmail" element={<TrainerQuizHistory />} />
+      <Route path="trainer/quiz-history/:lessonId" element={<TrainerQuizHistory />} />
+      <Route path="logs" element={<SystemLogging />} />
+      <Route path="team" element={<TeamManagement />} />
+      <Route path="AdminDashboard_overall" element={<AdminDashboard_overall/>} />
+    </Routes>
+  </Suspense>
+);
+
+export default AdminRoutes;
+
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useMemo, useState, useRef, useContext } from "react";
-import SupervisorSidebarWidget from "../Widgets/SupervisorSideBar";
-import {
-  CalendarDays,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Filter,
-  Search,
-  Send,
-  Users,
-  BookOpen,
-  X,
-  Loader2,
-} from "lucide-react";
-import { ENDPOINTS } from "../../../config/endpoints";
-import { sendLessonNotification } from "../../Admin/Widgets/notificationServices";
-import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
+import { useContext, useEffect, useState } from "react";
 import { AuthContext } from "../../../Authentication/AuthContext";
+import axios from "axios";
+import { Loader2 } from "lucide-react";
 
-// ----------------------
-// Types (UI)
-// ----------------------
-export type Team = { id: string; name: string; supervisorId?: string };
-export type Member = { userId: string; name: string; role?: string };
-export type Course = {
-  id: string;
-  title: string;
-  category?: string;
-  level?: "Beginner" | "Intermediate" | "Advanced";
-  durationMin?: number;
-  tags?: string[];
-};
-
-export type AssignmentDraft = {
-  assignees: string[]; // userIds
-  courseIds: string[];
-  dueDate?: string; // YYYY-MM-DD
-  defaultTitle: string;
-  defaultCategory: string;
-  createIfMissing: boolean;
-};
-
-// ----------------------
-// Mock (fallback)
-// ----------------------
-const MOCK_TEAMS: Team[] = [
-  { id: "T-001", name: "Onboarding Squad", supervisorId: "svp@gmail.com" },
-  { id: "T-002", name: "Sales Enablement", supervisorId: "svp@gmail.com" },
-];
-
-function mkMember(userId: string): Member {
-  const base = userId.split("@")[0];
-  const name = base.charAt(0).toUpperCase() + base.slice(1);
-  return { userId, name, role: "member" };
+interface QuizHistoryProps {
+    lessonId:string;
+    userEmail:string;
+    onClose: ()=> void
 }
+const TrainerQuizHistory :React.FC<QuizHistoryProps>= ({lessonId,userEmail,onClose}) => {
+    const {token} = useContext(AuthContext);
+    const [quizAttempts,setQuizAttempts] = useState<any[]>([])
+    const [loading, setLoading] = useState(true);
 
-const MOCK_MEMBERS: Record<string, Member[]> = {
-  "T-001": [
-    "alice@example.com",
-    "bob@example.com",
-    "charlie@example.com",
-    "daisy@example.com",
-    "ethan@example.com",
-  ].map(mkMember),
-  "T-002": [
-    "fiona@example.com",
-    "george@example.com",
-    "hana@example.com",
-    "ivan@example.com",
-  ].map(mkMember),
-};
-
-const MOCK_CATALOG: Course[] = [
-  {
-    id: "C-101",
-    title: "Company Onboarding 101",
-    category: "Onboarding",
-    level: "Beginner",
-    durationMin: 45,
-    tags: ["policy", "intro"],
-  },
-  {
-    id: "C-201",
-    title: "Security Basics",
-    category: "Compliance",
-    level: "Beginner",
-    durationMin: 30,
-    tags: ["security", "policy"],
-  },
-  {
-    id: "C-310",
-    title: "Effective Sales Pitch",
-    category: "Sales",
-    level: "Intermediate",
-    durationMin: 60,
-    tags: ["sales", "presentation"],
-  },
-  {
-    id: "C-330",
-    title: "CRM for Sales",
-    category: "Sales",
-    level: "Beginner",
-    durationMin: 50,
-    tags: ["crm"],
-  },
-  {
-    id: "C-405",
-    title: "Advanced Data Privacy",
-    category: "Compliance",
-    level: "Advanced",
-    durationMin: 70,
-    tags: ["privacy"],
-  },
-  {
-    id: "C-420",
-    title: "Coaching Skills for Trainers",
-    category: "Leadership",
-    level: "Intermediate",
-    durationMin: 55,
-    tags: ["trainer", "leadership"],
-  },
-];
-
-// ----------------------
-// Helpers
-// ----------------------
-function getToken(): string | null {
-  return (
-    localStorage.getItem("token") || sessionStorage.getItem("token") || null
-  );
-}
-
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
-  const res = await fetch(url, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers || {}),
-    },
-    ...init,
-  });
-
-  if (!res.ok) {
-    if (res.status === 401) {
-      const text = await res.text().catch(() => "");
-      throw new Error(text || "401 Unauthorized — กรุณาเข้าสู่ระบบใหม่");
+    useEffect(()=> {
+        if (lessonId && userEmail) {
+      axios
+        .get(`/api/questions/trainer/attempts/${lessonId}/${userEmail}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        .then((res) => {
+          setQuizAttempts(res.data || []);
+          setLoading(false);
+        })
+        .catch((err) => {
+          console.error("Failed to fetch quiz history:", err);
+          setLoading(false);
+        });
     }
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `HTTP ${res.status} - ${res.statusText}`);
-  }
+    },[lessonId,userEmail,token])
 
-  try {
-    return (await res.json()) as T;
-  } catch {
-    // handle empty body
-    return {} as T;
-  }
-}
+    return(
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl p-6 space-y-6">
+        <div className="flex justify-between items-center border-b pb-4">
+          <h2 className="text-xl font-bold text-gray-800">
+            📜 Quiz History for {userEmail}
+          </h2>
+          <button
+            onClick={onClose}
+            className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm"
+          >
+            Close
+          </button>
+        </div>
 
-// ----------------------
-// API mapping (with userId support)
-// ----------------------
-const FallbackEndpoints = {
-  // ✅ ใช้ /api/team/my-team?userId=<id> ตามที่ต้องการ
-  teamsMine: (id?: string) =>
-    `/api/team/my-team${id ? `?userId=${encodeURIComponent(id)}` : ""}`,
-  teamsAll: "/api/teams",
-  teamMembers: (id: string) => `/api/teams/${id}/members`,
-  catalog: "/api/learning/all",
-  bulkAssign: "/api/assignments/updateAssignTypeToSpecific", // PUT
-};
-
-const API = {
-  // ถ้า ENDPOINTS.teamsMine เป็นฟังก์ชัน ให้ใช้ตามนั้น
-  // ถ้าเป็น string จะเติม ?userId= ต่อให้
-  teamsMine: (userId?: string) => {
-    const tm = (ENDPOINTS as any)?.teamsMine;
-    if (typeof tm === "function") {
-      return tm(userId);
-    }
-    if (typeof tm === "string" && tm.length > 0) {
-      if (userId) {
-        const joinChar = tm.includes("?") ? "&" : "?";
-        return `${tm}${joinChar}userId=${encodeURIComponent(userId)}`;
-      }
-      return tm;
-    }
-    // fallback
-    return FallbackEndpoints.teamsMine(userId);
-  },
-  teamsAll: (ENDPOINTS as any)?.teamsAll || FallbackEndpoints.teamsAll,
-  teamMembers:
-    (ENDPOINTS as any)?.teamMembers ||
-    ((id: string) => FallbackEndpoints.teamMembers(id)),
-  catalog: (ENDPOINTS as any)?.catalog || FallbackEndpoints.catalog,
-  bulkAssign: (ENDPOINTS as any)?.bulkAssign || FallbackEndpoints.bulkAssign,
-};
-
-// ✅ Notification helper
-function buildNotificationMessage(opts: {
-  teamName?: string;
-  courses: Course[];
-  defaultTitle?: string;
-  dueDate?: string;
-}) {
-  const { teamName, courses, defaultTitle, dueDate } = opts;
-  const duePart = dueDate ? ` (กำหนดส่ง: ${dueDate})` : "";
-  let courseSummary = "";
-
-  if (courses.length === 0 && defaultTitle) {
-    courseSummary = defaultTitle;
-  } else if (courses.length === 1) {
-    courseSummary = courses[0].title;
-  } else if (courses.length > 1) {
-    courseSummary = `${courses.length} รายการ`;
-  } else {
-    courseSummary = "1 รายการ";
-  }
-
-  return `[IT Learning Hub] คุณได้รับมอบหมายคอร์ส ${courseSummary} โดยทีม ${
-    teamName || "-"
-  }${duePart}`;
-}
-
-// ----------------------
-// Component
-// ----------------------
-export default function SvpAssignCoursesV2() {
-  const { token } = useContext(AuthContext);
-  const { userId } = useUserProfile(token);
-
-  // data states
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [catalog, setCatalog] = useState<Course[]>([]);
-
-  // selections & form
-  const [selectedTeamId, setSelectedTeamId] = useState<string>("");
-  const [draft, setDraft] = useState<AssignmentDraft>({
-    assignees: [],
-    courseIds: [],
-    dueDate: "",
-    defaultTitle: "Mock Course - Safety 101",
-    defaultCategory: "General",
-    createIfMissing: true,
-  });
-
-  // UI & filters
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<string>("All");
-  const [level] = useState<string>("All");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [toast, setToast] = useState<string | null>(null);
-
-  // overlay flags
-  const [initLoading, setInitLoading] = useState(true);
-  const [teamsLoaded, setTeamsLoaded] = useState(false);
-  const [membersLoaded, setMembersLoaded] = useState(false);
-  const [catalogLoaded, setCatalogLoaded] = useState(false);
-  const firstMembersLoadDoneRef = useRef(false);
-
-  // ---------- load teams (wait for userId) ----------
-  useEffect(() => {
-    if (!userId) return;
-
-    (async () => {
-      try {
-        setInitLoading(true);
-
-        const teamsMineUrl = API.teamsMine(userId);
-        const list = await fetchJson<any[]>(teamsMineUrl);
-
-        const mapped: Team[] = list
-          .map((t) => ({
-            id: t.id || t.teamId || t.uuid,
-            name: t.name || t.teamName || "Untitled Team",
-            supervisorId: t.supervisorId || t.owner || undefined,
-          }))
-          .filter((t) => !!t.id);
-
-        if (!mapped.length) throw new Error("No team found");
-
-        setTeams(mapped);
-        setSelectedTeamId((prev) => prev || mapped[0].id);
-      } catch (e) {
-        console.error(e);
-        setTeams(MOCK_TEAMS);
-        setSelectedTeamId(MOCK_TEAMS[0].id);
-        setToast("⚠️ โหลดรายชื่อทีมไม่สำเร็จ — แสดงข้อมูลจำลองแทน");
-      } finally {
-        setTeamsLoaded(true);
-      }
-    })();
-  }, [userId]);
-
-  // ---------- load members when team changes ----------
-  useEffect(() => {
-    if (!selectedTeamId) return;
-
-    (async () => {
-      try {
-        const list = await fetchJson<any[]>(API.teamMembers(selectedTeamId));
-        const mapped: Member[] = list
-          .map((m) => ({
-            userId: m.userId || m.email || m.id,
-            name: m.name || m.displayName || m.email || "Unnamed",
-            role: m.role,
-          }))
-          .filter((m) => !!m.userId);
-
-        setMembers(mapped);
-      } catch (e) {
-        console.error(e);
-        setMembers(MOCK_MEMBERS[selectedTeamId] || []);
-        setToast("⚠️ โหลดสมาชิกทีมไม่สำเร็จ — แสดงข้อมูลจำลองแทน");
-      } finally {
-        // reset assignees เมื่อเปลี่ยนทีม
-        setDraft((prev) => ({ ...prev, assignees: [] }));
-
-        // mark members loaded (ครั้งแรกพอ)
-        if (!firstMembersLoadDoneRef.current) {
-          setMembersLoaded(true);
-          firstMembersLoadDoneRef.current = true;
-        }
-      }
-    })();
-  }, [selectedTeamId]);
-
-  // ---------- load catalog once ----------
-  useEffect(() => {
-    (async () => {
-      try {
-        const list = await fetchJson<any[]>(API.catalog);
-        const mapped: Course[] = list
-          .map((c) => ({
-            id: c.id,
-            title: c.title || "Untitled",
-            category: c.category || c.contentType || "General",
-            level: (c.level as Course["level"]) || "Beginner",
-            durationMin: c.durationMin,
-            tags: c.tags || [],
-          }))
-          .filter((c) => !!c.id);
-
-        if (!mapped.length) throw new Error("No courses");
-        setCatalog(mapped);
-      } catch (e) {
-        console.error(e);
-        setCatalog(MOCK_CATALOG);
-        setToast("⚠️ โหลดคอร์สไม่สำเร็จ — แสดงข้อมูลจำลองแทน");
-      } finally {
-        setCatalogLoaded(true);
-      }
-    })();
-  }, []);
-
-  // ---------- hide init overlay when all ready ----------
-  useEffect(() => {
-    if (teamsLoaded && membersLoaded && catalogLoaded) {
-      setInitLoading(false);
-    }
-  }, [teamsLoaded, membersLoaded, catalogLoaded]);
-
-  // ---------- computed ----------
-  const categories = useMemo(() => {
-    const allCats = catalog.map((c) => c.category || "General");
-    return Array.from(new Set(["All", ...allCats]));
-  }, [catalog]);
-
-  const filteredCatalog = useMemo(() => {
-    return catalog.filter(
-      (c) =>
-        (category === "All" || (c.category || "General") === category) &&
-        (level === "All" || (c.level || "Beginner") === level) &&
-        (query.trim() === "" ||
-          c.title.toLowerCase().includes(query.toLowerCase()) ||
-          (c.tags || []).some((t) =>
-            t.toLowerCase().includes(query.toLowerCase())
+        {loading ? (
+          <div className="flex justify-center items-center py-10">
+            <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+            <span className="ml-2 text-gray-600">กำลังโหลดข้อมูล…</span>
+          </div>
+        ) : !quizAttempts.length ? (
+          <p className="text-red-500 text-center">No quiz attempts found.</p>
+        ) : (
+          quizAttempts.map((attempt, index) => (
+            <div key={attempt.attemptId || index} className="border-t pt-6 space-y-4">
+              <h3 className="text-lg font-semibold text-gray-700">
+                🧠 Attempt {index + 1} —{" "}
+                {attempt.attemptedAt ? new Date(attempt.attemptedAt).toLocaleString() : "N/A"}
+              </h3>
+              <div className="text-sm text-gray-700 space-y-1">
+                <p><strong>Lesson:</strong> {attempt.learningContentTitle}</p>
+                <p><strong>Score:</strong> {attempt.score} / {attempt.maxScore} ({attempt.percentScore}%)</p>
+              </div>
+              {/* Render answers similar to your existing logic */}
+            </div>
           ))
-    );
-  }, [catalog, category, level, query]);
+        )}
+      </div>
+    </div>
+    )
+}
+export default TrainerQuizHistory
+/* eslint-disable react-hooks/exhaustive-deps */
+import { useContext, useEffect, useState } from "react";
+import axios from "axios";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import AdminSidebarWidget from "../Widgets/AdminSideBar";
+import { useNavigate } from "react-router-dom";
+import { Pencil } from "lucide-react";
+import EditLessonModal, { type Lesson } from "./EditLessonModal";
+import { sendLessonNotification } from "../Widgets/notificationServices";
+import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
+import type { QuestionAnswer, UserProgress } from "../../../types/trainer/types";
+import { ENDPOINTS } from "../../../config/endpoints";
 
-  // ---------- actions ----------
-  const toggleAssignee = (userId: string) => {
-    setDraft((prev) => {
-      const has = prev.assignees.includes(userId);
-      const next = has
-        ? prev.assignees.filter((id) => id !== userId)
-        : [...prev.assignees, userId];
-      return { ...prev, assignees: next };
-    });
+const AdminTaskManagementPage = () => {
+  const { token } = useContext(AuthContext);
+  const { email } = useUserProfile(token);
+  const navigate = useNavigate();
+
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
+  const [progressList, setProgressList] = useState<UserProgress[]>([]);
+  const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const [feedback, setFeedback] = useState<string>("");
+
+  const [trainerReply, setTrainerReply] = useState<string>("");
+  const [replyLoading, setReplyLoading] = useState(false);
+
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [userLessonQuestion, setUserLessonQuestion] = useState<QuestionAnswer[] | undefined>();
+  const { fullName ,avatarUrl} = useUserProfile(token);
+
+
+  const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+  // ---------- helpers ----------
+  const fmtDate = (iso?: string) => {
+    if (!iso) return "";
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
   };
 
-  const toggleCourse = (courseId: string) => {
-    setDraft((prev) => {
-      const has = prev.courseIds.includes(courseId);
-      const next = has
-        ? prev.courseIds.filter((id) => id !== courseId)
-        : [...prev.courseIds, courseId];
-      return { ...prev, courseIds: next };
-    });
-  };
-
-  const setAllTeam = () =>
-    setDraft((prev) => ({ ...prev, assignees: members.map((m) => m.userId) }));
-
-  const clearAssignees = () =>
-    setDraft((prev) => ({ ...prev, assignees: [] }));
-
-  const clearCourses = () =>
-    setDraft((prev) => ({ ...prev, courseIds: [] }));
-
-  const doBulkAssign = async () => {
-    if (!selectedTeamId) {
-      setToast("กรุณาเลือกทีม");
-      return;
-    }
-
-    // ถ้าไม่มี assignees แปลว่าให้ทั้งทีมได้ (backend ต้องรองรับ)
-    const usingCreate = draft.courseIds.length === 0;
-
-    if (usingCreate && !draft.createIfMissing) {
-      setToast(
-        "กรุณาเลือกคอร์สอย่างน้อย 1 รายการ หรือเปิด Create If Missing"
-      );
-      return;
-    }
-
-    if (usingCreate && draft.defaultTitle.trim().length === 0) {
-      setToast(
-        "กรุณากรอกชื่อคอร์ส (Default Title) เมื่อสร้างคอร์สใหม่"
-      );
-      return;
-    }
-
+  // ---------- fetchers ----------
+  const fetchLessons = async () => {
     setLoading(true);
     try {
-      const payload = {
-        courseIds: draft.courseIds,
-        teamId: selectedTeamId,
-        assignees: draft.assignees,
-        dueDate: draft.dueDate || undefined,
-        createIfMissing: draft.createIfMissing,
-        defaultTitle: draft.defaultTitle || undefined,
-        defaultCategory: draft.defaultCategory || undefined,
-      };
-
-      const selectedTeam = teams.find((t) => t.id === selectedTeamId);
-      const selectedCourses = catalog.filter((c) =>
-        draft.courseIds.includes(c.id)
-      );
-
-      const resp = await fetchJson<{
-        requestId?: string;
-        updatedCourses?: number;
-        affectedUsers?: number;
-      }>(API.bulkAssign, {
-        method: "PUT",
-        body: JSON.stringify(payload),
-      });
-
-      const authToken = getToken();
-      if (authToken) {
-        const message = buildNotificationMessage({
-          teamName: selectedTeam?.name,
-          courses: selectedCourses,
-          defaultTitle: draft.defaultTitle,
-          dueDate: draft.dueDate,
-        });
-
-        if (draft.assignees.length > 0) {
-          await sendLessonNotification({
-            token: authToken,
-            message,
-            userIds: draft.assignees,
-            teamIds: [],
-            target: "USER",
-          });
-        } else {
-          await sendLessonNotification({
-            token: authToken,
-            message,
-            userIds: [],
-            teamIds: [selectedTeamId],
-            target: "TEAM",
-          });
-        }
-      }
-
-      setToast(
-        `✅ สำเร็จ • อัปเดตคอร์ส: ${
-          resp.updatedCourses ??
-          (usingCreate ? 1 : draft.courseIds.length || 0)
-        } • ผู้ได้รับมอบหมาย: ${
-          resp.affectedUsers ??
-          (draft.assignees.length || members.length || 0)
-        }`
-      );
-      setDraft((prev) => ({ ...prev, courseIds: [] }));
-    } catch (e: any) {
-      console.error(e);
-      const msg =
-        typeof e?.message === "string"
-          ? e.message
-          : "Bulk assign failed";
-      console.log(msg);
-      setToast(
-        "❌ ไม่สามารถกำหนดวันที่ครบกำหนดย้อนหลังได้"
-      );
+      const res = await axios.get<Lesson[]>("/api/learning?mine=true", { headers: authHeader });
+      setLessons(res.data);
+    } catch (err) {
+      console.error("❌ Failed to load lessons:", err);
+      alert("Failed to fetch lessons.");
     } finally {
       setLoading(false);
     }
   };
 
-  // ---------- chips ----------
-  const AssigneeChip = ({ id, name }: { id: string; name: string }) => (
-    <div className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm bg-white">
-      <Users className="w-3.5 h-3.5" />
-      <span className="truncate max-w-[140px]">{name}</span>
-      <button
-        className="opacity-60 hover:opacity-100"
-        onClick={() => toggleAssignee(id)}
-        title="Remove"
-      >
-        <X className="w-3.5 h-3.5" />
-      </button>
-    </div>
-  );
+  const fetchUserIdByEmail = async (userEmail: string) => {
+    try {
+      const res = await axios.get("/api/profile/users", {
+        params: { email: userEmail },
+        headers: authHeader,
+      });
 
-  const CourseChip = ({ id, title }: { id: string; title: string }) => (
-    <div className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm bg-white">
-      <BookOpen className="w-3.5 h-3.5" />
-      <span className="truncate max-w-[160px]">{title}</span>
-      <button
-        className="opacity-60 hover:opacity-100"
-        onClick={() => toggleCourse(id)}
-        title="Remove"
-      >
-        <X className="w-3.5 h-3.5" />
-      </button>
-    </div>
-  );
+      const users = res.data;
+      if (Array.isArray(users) && users.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const user = users.find((u: any) => u.email === userEmail);
+        return user?.id || null;
+      }
+      console.error("❌ No matching user found for email:", userEmail);
+      return null;
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        console.error("❌ Failed to fetch userId:", err.response?.data || err.message);
+      } else {
+        console.error("❌ Failed to fetch userId:", err);
+      }
+      return null;
+    }
+  };
 
-  const selectedTeam = teams.find((t) => t.id === selectedTeamId);
-  const selectedMembers = members.filter((m) =>
-    draft.assignees.includes(m.userId)
-  );
-  const selectedCourses = catalog.filter((c) =>
-    draft.courseIds.includes(c.id)
-  );
+  const fetchUserLessonQuestion = async (userEmail: string, lessonId: string | number) => {
+    try {
+      // ✅ encode email ป้องกัน + และอักขระพิเศษ
+      const emailPath = encodeURIComponent(userEmail);
+      // ✅ รองรับทั้ง object เดี่ยวและ array
+      const res = await axios.get<QuestionAnswer | QuestionAnswer[]>(
+        `/api/trainer-question-answer/get-answer-reply-by-question-id/${emailPath}/${lessonId}`,
+        { headers: authHeader }
+      );
+      const data = res.data;
+      if (!data) {
+        setUserLessonQuestion([]);
+      } else if (Array.isArray(data)) {
+        setUserLessonQuestion(data);
+      } else {
+        setUserLessonQuestion([data]);
+      }
+    } catch (err) {
+      console.error("❌ Failed to fetch user lesson question:", err);
+      setUserLessonQuestion([]);
+    }
+  };
 
-  // ---------- render ----------
+  useEffect(() => {
+    if (!token) {
+      navigate("/");
+      return;
+    }
+    fetchLessons();
+  }, [token, navigate]);
+
+  useEffect(() => {
+    if (selectedUser && selectedLesson) {
+      fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
+    } else {
+      setUserLessonQuestion(undefined);
+    }
+  }, [selectedUser, selectedLesson]);
+
+  // ---------- handlers ----------
+  const handleSelectLesson = async (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setSelectedUser(null);
+    setUserLessonQuestion(undefined);
+    setTrainerReply("");
+
+    try {
+      const res = await axios.get<UserProgress[]>(ENDPOINTS.AlluserProgress, { headers: authHeader });
+      const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
+
+      // keep last entry per user
+      const latestByUser = new Map<string, UserProgress>();
+      lessonProgress.forEach((entry) => {
+        latestByUser.set(entry.userEmail, entry);
+      });
+
+      setProgressList(Array.from(latestByUser.values()));
+    } catch (err) {
+      console.error("❌ Failed to fetch progress:", err);
+      alert("Failed to load progress data.");
+    }
+  };
+
+  // const handleDeleteLesson = async (id: string | number) => {
+  //   console.log("Deleting lesson with id:", id, typeof id);
+  //   if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
+
+  //   const idNum = Number(id);
+  //   if (Number.isNaN(idNum)) {
+  //     console.error("❌ Invalid lesson id:", id);
+  //     alert("Invalid lesson id.");
+  //     return;
+  //   }
+
+  //   try {
+  //     await axios.delete(ENDPOINTS.DeleteContent(idNum), { headers: authHeader });
+  //     setLessons((prev) => prev.filter((l) => Number(l.id) !== idNum));
+  //     if (selectedLesson && Number(selectedLesson.id) === idNum) {
+  //       setSelectedLesson(null);
+  //       setProgressList([]);
+  //       setSelectedUser(null);
+  //       setUserLessonQuestion(undefined);
+  //     }
+  //     alert("✅ Lesson deleted");
+  //   } catch (err) {
+  //     console.error("❌ Delete failed:", err);
+  //     alert("Failed to delete lesson.");
+  //   }
+  // };
+
+  const handleDeleteLesson = async (id: string ) => {
+  if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
+
+  try {
+    await axios.delete(ENDPOINTS.DeleteContent(Number(id)), { headers: authHeader });
+    setLessons((prev) => prev.filter((l) => l.id !== id));
+
+    if (selectedLesson?.id === id) {
+      setSelectedLesson(null);
+      setProgressList([]);
+      setSelectedUser(null);
+      setUserLessonQuestion(undefined);
+    }
+
+      alert("✅ Lesson deleted");
+    } catch (err) {
+      console.error("❌ Delete failed:", err);
+      alert("Failed to delete lesson.");
+    }
+  };
+
+  const handleOpenEdit = (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setShowEditModal(true);
+  };
+
+  const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
+    if (!selectedLesson) return;
+    try {
+      const payload: Lesson = { ...selectedLesson, ...data };
+      await axios.put(`/api/learning/${selectedLesson.id}`, payload, { headers: authHeader });
+
+      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
+      setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
+
+      setShowEditModal(false);
+      alert("✅ Lesson updated");
+    } catch (err) {
+      console.error("❌ Update failed:", err);
+      alert("Failed to update lesson information.");
+    }
+  };
+
+  if (!token) return null;
+
   return (
-    <div className="flex h-screen bg-gray-50 relative">
-      <SupervisorSidebarWidget />
+    <div className="min-h-screen bg-gray-50 flex">
+      <AdminSidebarWidget />
 
-      <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <h1 className="text-2xl md:text-3xl font-bold">Course Assignment</h1>
-          <div className="text-sm opacity-70">
-            ทีมที่เลือก:{" "}
-            <span className="font-medium">
-              {selectedTeam?.name || "-"}
-            </span>
-          </div>
-        </div>
+      <main className="flex-1 p-10 space-y-6">
+        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">🧙 Learning Management</h1>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Team & members */}
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="font-semibold">ทีมของฉัน</div>
-              <div className="text-xs opacity-60">
-                {teams.length
-                  ? "เลือกทีม แล้วเลือกสมาชิก"
-                  : "กำลังโหลดทีม..."}
-              </div>
-            </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Lesson List */}
+          <section className="col-span-1 space-y-4">
+            {loading ? (
+              <p className="text-gray-500">Loading lessons...</p>
+            ) : (
+              lessons.map((lesson) => (
+                <div
+                  key={lesson.id}
+                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all ${
+                    selectedLesson?.id === lesson.id ? "bg-blue-50 border-blue-500" : "bg-white hover:border-blue-500"
+                  }`}
+                >
+                  <div onClick={() => handleSelectLesson(lesson) }  title="คลิกเพื่อดูรายละเอียดบทเรียน">
+                    <h3 className="font-semibold text-lg text-gray-800">{lesson.title}</h3>
+                    {/* <p className="text-sm text-gray-500">ID: {lesson.id}</p> */}
+                    <p className="text-sm text-gray-500 opacity-60">คลิกเพื่อดูรายละเอียดบทเรียน</p>
+                    <p className="text-xs text-purple-600 font-semibold uppercase">{lesson.category}</p>
+                  </div>
 
-            {/* Team selector */}
-            <div className="mb-3">
-              <button
-                className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 bg-white"
-                disabled={!teams.length}
-              >
-                <ChevronDown className="w-4 h-4" />{" "}
-                {selectedTeam?.name || "—"}
-              </button>
-              <div className="mt-2 flex gap-2 flex-wrap">
-                {teams.map((t) => (
+                  {/* Edit button */}
                   <button
-                    key={t.id}
-                    onClick={() => setSelectedTeamId(t.id)}
-                    className={`rounded-full px-3 py-1 border text-sm ${
-                      selectedTeamId === t.id
-                        ? "bg-blue-600 text-white"
-                        : "bg-white"
-                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenEdit(lesson);
+                    }}
+                    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
+                    title="Edit lesson"
+                    type="button"
+                    aria-label="Edit lesson"
                   >
-                    {t.name}
+                    <Pencil size={18} />
                   </button>
-                ))}
-              </div>
-            </div>
 
-            {/* Members list */}
-            <div className="border rounded-xl overflow-hidden">
-              <div className="px-3 py-2 text-xs uppercase bg-gray-50 border-b">
-                สมาชิกในทีม
+                  {/* Delete button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteLesson(String(lesson.id));
+                    }}
+                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                    title="Delete lesson"
+                    type="button"
+                    aria-label="Delete lesson"
+                  >
+                    🗑
+                  </button>
+                </div>
+              ))
+            )}
+          </section>
+
+          {/* User Progress List */}
+          <section className="col-span-1 space-y-4">
+            <div className="max-h-[60vh] overflow-auto pr-2 space-y-3">
+               {progressList.length === 0 && selectedLesson && <p className="text-gray-400">No progress yet…</p>}
+            {progressList.map((user) => (
+              <div
+                key={`${user.lessonId}-${user.userEmail}`}
+                className="p-4 bg-white rounded-xl shadow flex justify-between items-center"
+              >
+                <div>
+                  <p className="font-medium text-gray-800">{user.userEmail}</p>
+                  <p className="text-sm text-gray-400"></p>
+                  {/* Lesson ID: {user.lessonId} */}
+                </div>
+                <button
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
+                  onClick={() => setSelectedUser(user)}
+                >
+                  View
+                </button>
               </div>
-              <div className="max-h-64 overflow-auto divide-y">
-                {members.length ? (
-                  members.map((m) => {
-                    const active = draft.assignees.includes(m.userId);
-                    return (
-                      <button
-                        key={m.userId}
-                        onClick={() => toggleAssignee(m.userId)}
-                        className={`w-full flex items-center justify-between px-3 py-2 text-left hover:bg-gray-50 ${
-                          active ? "bg-gray-50" : ""
-                        }`}
-                      >
-                        <div className="truncate">
-                          <div className="font-medium truncate">
-                            {m.name}
+            ))}
+            </div>
+          </section>
+
+          {/* Right pane: selected user overview */}
+          <section className="col-span-1 bg-white p-6 rounded-xl shadow">
+            <h2 className="text-lg font-semibold mb-4 text-gray-700">Quick overview of employee progress</h2>
+           <button
+              onClick={() => {
+                if (!selectedLesson) {
+                  alert("Please select a lesson first.");
+                  return;
+                }
+                // If you want to view a specific user's quiz history, include selectedUser
+                const lessonId = encodeURIComponent(String(selectedLesson.id));
+                const userEmail = selectedUser ? encodeURIComponent(selectedUser.userEmail) : "";
+                // navigate to trainer quiz history page (you may adjust the route as needed)
+                navigate(`/trainer/quiz-history/${lessonId}/${userEmail}`);
+              }}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow"
+              type="button"
+            >
+              📜 Quiz History
+            </button>
+            {selectedUser ? (
+              <div className="space-y-6">
+                <div className="flex items-center gap-3">
+                  {selectedUser.authorAvatarUrl ? (
+                    <img
+                      src={selectedUser.authorAvatarUrl}
+                      alt={`${selectedUser.userEmail}'s avatar`}
+                      className="w-10 h-10 rounded-full"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 bg-gray-200 rounded-full" />
+                  )}
+                  <div>
+                    <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
+                    {/* <p className="text-sm text-gray-500">Lesson ID: {selectedUser.lessonId}</p> */}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm text-gray-500">Progress</p>
+                  <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
+                  <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
+                </div>
+
+                <p className="text-sm text-gray-500">
+                  Quiz:{" "}
+                  {selectedUser?.score > 0 ? (
+                    <span className="text-green-600 font-semibold">
+                      Finished ({selectedUser.score} pts)
+                    </span>
+                  ) : (
+                    <span className="text-red-500">Not yet</span>
+                  )}
+                </p>
+
+                {/* Q&A thread for this user+lesson */}
+                <div className="border-t pt-4">
+                  <h3 className="font-semibold text-gray-800 mb-2">User Question for this Learning Content</h3>
+                  {userLessonQuestion === undefined ? (
+                    <p className="text-sm text-gray-400">Loading…</p>
+                  ) : userLessonQuestion.length === 0 ? (
+                    <p className="text-sm text-gray-400">No questions from this user for this lesson.</p>
+                  ) : (
+                    userLessonQuestion.map((qa) => {
+                      const askedAt = qa.createdAt || qa.createAt || "";
+                      return (
+                        <div key={qa.id} className="space-y-3">
+                          <div className="p-3 rounded-lg bg-gray-50 border">
+                            <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                              {qa.question || <span className="text-gray-400">No question text</span>}
+                            </p>
+                            <p className="mt-1 text-xs text-gray-400">Asked: {askedAt ? fmtDate(askedAt) : "-"}</p>
                           </div>
-                          <div className="text-xs opacity-60 truncate">
-                            {m.userId}
-                          </div>
+
+                          {qa.answerReplies && qa.answerReplies.length > 0 && (
+                            <div className="space-y-2">
+                              <p className="text-sm font-medium text-gray-700">Trainer Replies</p>
+                              {qa.answerReplies.map((r) => (
+                                <div key={r.id} className="p-3 rounded-lg bg-blue-50 border">
+                                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{r.trainerReply}</p>
+                                  <p className="mt-1 text-xs text-gray-500">
+                                    by {r.trainerName} • {r.trainerEmail} • {fmtDate(r.createdAt)}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        {active ? (
-                          <Check className="w-4 h-4" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4 opacity-60" />
-                        )}
-                      </button>
-                    );
-                  })
-                ) : (
-                  <div className="px-3 py-6 text-sm opacity-60">
-                    ไม่มีสมาชิกหรือกำลังโหลด…
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Feedback Section (ให้เฉพาะตอนจบ 100%) */}
+                {selectedUser?.percent === 100 && (
+                  <div className="border-t pt-4 space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Feedback for {selectedUser.userEmail}
+                    </label>
+
+                    {selectedUser.feedback ? (
+                      <div className="p-4 bg-gray-100 border rounded-lg">
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedUser.feedback}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <textarea
+                          value={feedback}
+                          onChange={(e) => setFeedback(e.target.value)}
+                          className="h-32 w-full border rounded-lg px-3 py-2"
+                          placeholder="Write your feedback here..."
+                        />
+                        <button
+                          onClick={async () => {
+                            if (!feedback.trim()) {
+                              alert("❌ Feedback cannot be empty.");
+                              return;
+                            }
+                            try {
+                              await axios.post(
+                                `/api/user/feedback`,
+                                {
+                                  userEmail: selectedUser.userEmail,
+                                  lessonId: selectedUser.lessonId,
+                                  feedback,
+                                  email,
+                                },
+                                { headers: authHeader }
+                              );
+
+                              const uid = await fetchUserIdByEmail(selectedUser.userEmail);
+                              if (uid) {
+                                await sendLessonNotification({
+                                  token,
+                                  message: `You have received feedback for lesson ${selectedLesson?.title}.`,
+                                  userIds: [uid],
+                                  target: "USER",
+                                });
+                              }
+
+                              alert("✅ Feedback sent successfully!");
+                              setFeedback("");
+                              setSelectedUser((prev) => (prev ? { ...prev, feedback } : prev));
+                            } catch (err) {
+                              console.error("❌ Failed to send feedback:", err);
+                              alert("Failed to send feedback.");
+                            }
+                          }}
+                          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                        >
+                          Send Feedback
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
-              </div>
-              <div className="px-3 py-2 flex gap-2">
-                <button
-                  className="rounded-lg border px-2 py-1 text-sm"
-                  onClick={setAllTeam}
-                  disabled={!members.length}
-                >
-                  เลือกทั้งทีม
-                </button>
-                <button
-                  className="rounded-lg border px-2 py-1 text-sm"
-                  onClick={clearAssignees}
-                >
-                  ล้าง
-                </button>
-              </div>
-            </div>
-          </div>
 
-          {/* Catalog */}
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="font-semibold">คอร์สทั้งหมด</div>
-              <div className="text-xs opacity-60">
-                {catalog.length
-                  ? "ค้นหา/กรอง เพื่อเพิ่มเข้าตะกร้า"
-                  : "กำลังโหลดคอร์ส..."}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 mb-3">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-60" />
-                <input
-                  className="w-full rounded-xl border pl-9 pr-3 py-2 bg-white"
-                  placeholder="ค้นหาชื่อคอร์สหรือแท็ก"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-              </div>
-              <div className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 bg-white">
-                <Filter className="w-4 h-4" />
-                <select
-                  className="bg-transparent max-w-[140px]"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                >
-                  {categories.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-                <span className="opacity-30">|</span>
-              </div>
-            </div>
-
-            <div className="border rounded-xl overflow-hidden">
-              <div className="px-3 py-2 text-xs uppercase bg-gray-50 border-b">
-                รายการคอร์ส
-              </div>
-              <div className="max-h-64 overflow-auto divide-y">
-                {filteredCatalog.map((c) => {
-                  const active = draft.courseIds.includes(c.id);
-                  return (
+                {/* Trainer Reply Section (ย้ายเงื่อนไข: แสดงเมื่อมีคำถาม ไม่ต้องรอ 100%) */}
+                {userLessonQuestion && userLessonQuestion.length > 0 && (
+                  <div className="mt-2 border-t pt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Reply to this question</label>
+                    <textarea
+                      value={trainerReply}
+                      onChange={(e) => setTrainerReply(e.target.value)}
+                      className="h-24 w-full border rounded-lg px-3 py-2"
+                      placeholder="Write your answer here..."
+                      disabled={replyLoading}
+                    />
                     <button
-                      key={c.id}
-                      onClick={() => toggleCourse(c.id)}
-                      className={`w-full grid grid-cols-12 gap-2 items-center px-3 py-3 text-left hover:bg-gray-50 ${
-                        active ? "bg-gray-50" : ""
+                      onClick={async () => {
+                        if (!trainerReply.trim()) {
+                          alert("❌ Answer cannot be empty.");
+                          return;
+                        }
+                        const qa = userLessonQuestion?.[0];
+                        if (!qa) {
+                          alert("❌ No question context to reply to.");
+                          return;
+                        }
+                        setReplyLoading(true);
+                        try {
+                          const payload = {
+                            // ✅ ผูกกับคำถามที่ถูกต้อง (ไม่ใช่ selectedLesson)
+                            questionAnswerId: qa.id,
+                            // เผื่อ backend ตรวจสอบ
+                            lessonId: selectedLesson?.id,
+                            trainerReply,
+                            trainerEmail: email,
+                            avatarUrl:avatarUrl,
+                            trainerName:  fullName || "Trainer",
+                            createdAt: new Date().toISOString(),
+                          };
+
+                          console.log("POST reply payload:", payload);
+
+                          await axios.post(
+                            "/api/trainer-question-answer/Update-answer-to-learning-content",
+                            payload,
+                            { headers: authHeader }
+                          );
+
+                          // refresh thread
+                          if (selectedUser && selectedLesson) {
+                            await fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
+                          }
+
+                          alert("✅ Trainer answer sent successfully!");
+                          setTrainerReply("");
+                        } catch (err) {
+                          if (axios.isAxiosError(err)) {
+                            console.error("❌ Failed to send trainer answer:", err.response?.status, err.response?.data || err.message);
+                            alert(`Failed to send trainer answer: ${err.response?.status ?? ""} ${JSON.stringify(err.response?.data ?? err.message)}`);
+                          } else {
+                            console.error("❌ Failed to send trainer answer:", err);
+                            alert("Failed to send trainer answer.");
+                          }
+                        } finally {
+                          setReplyLoading(false);
+                        }
+                      }}
+                      className={`mt-2 px-4 py-2 rounded-lg ${
+                        replyLoading || !trainerReply.trim()
+                          ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                          : "bg-green-600 text-white hover:bg-green-700"
                       }`}
+                      disabled={replyLoading || !trainerReply.trim()}
                     >
-                      <div className="col-span-6">
-                        <div className="font-medium truncate">
-                          {c.title}
-                        </div>
-                        <div className="text-xs opacity-60 truncate">
-                          {(c.category || "General")} •{" "}
-                          {(c.level || "Beginner")}
-                        </div>
-                      </div>
-                      <div className="col-span-3 text-xs opacity-70">
-                        {c.durationMin
-                          ? `${c.durationMin} นาที`
-                          : "-"}
-                      </div>
-                      <div className="col-span-3 flex justify-end">
-                        {active ? (
-                          <span className="inline-flex items-center gap-1 text-green-700 text-xs">
-                            <Check className="w-4 h-4" /> เลือกแล้ว
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs opacity-70">
-                            <BookOpen className="w-4 h-4" /> เลือก
-                          </span>
-                        )}
-                      </div>
+                      {replyLoading ? "Sending..." : "Send Trainer Answer"}
                     </button>
-                  );
-                })}
-                {!filteredCatalog.length && (
-                  <div className="px-3 py-6 text-sm opacity-60">
-                    ไม่พบคอร์สที่ตรงเงื่อนไข
                   </div>
                 )}
               </div>
-              <div className="px-3 py-2 flex gap-2">
-                <button
-                  className="rounded-lg border px-2 py-1 text-sm"
-                  onClick={clearCourses}
-                >
-                  ล้างคอร์ส
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Basket */}
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="font-semibold">ตะกร้ามอบหมาย</div>
-              <div className="text-xs opacity-60">
-                ตรวจสอบก่อนกดยืนยัน
-              </div>
-            </div>
-
-            {/* Assignees */}
-            <div className="mb-3">
-              <div className="text-xs uppercase opacity-60 mb-2">
-                ผู้เรียนที่เลือก ({selectedMembers.length})
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                {selectedMembers.length ? (
-                  selectedMembers.map((m) => (
-                    <AssigneeChip
-                      key={m.userId}
-                      id={m.userId}
-                      name={m.name}
-                    />
-                  ))
-                ) : (
-                  <div className="text-sm opacity-60">
-                    ยังไม่เลือกผู้เรียน
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Courses */}
-            <div className="mb-3">
-              <div className="text-xs uppercase opacity-60 mb-2">
-                คอร์สที่เลือก ({selectedCourses.length})
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                {selectedCourses.length ? (
-                  selectedCourses.map((c) => (
-                    <CourseChip
-                      key={c.id}
-                      id={c.id}
-                      title={c.title}
-                    />
-                  ))
-                ) : (
-                  <div className="text-sm opacity-60">
-                    {/* intentionally blank hint area */}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Settings */}
-            <div className="grid grid-cols-1 gap-3 mb-3">
-              <div>
-                <div className="text-xs uppercase opacity-60 mb-1">
-                  กำหนดส่ง (Due Date)
-                </div>
-                <div className="relative">
-                  <CalendarDays className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-60" />
-                  <input
-                    type="date"
-                    className="w-full rounded-xl border pl-9 pr-3 py-2 bg-white"
-                    value={draft.dueDate || ""}
-                    onChange={(e) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        dueDate: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Submit */}
-            <button
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 bg-blue-600 text-white hover:opacity-90 disabled:opacity-60"
-              onClick={doBulkAssign}
-              disabled={loading}
-            >
-              <Send className="w-4 h-4" />{" "}
-              {loading ? "กำลังมอบหมาย..." : "มอบหมายคอร์ส"}
-            </button>
-          </div>
+            ) : (
+              <p className="text-gray-400">← Select a user to see details</p>
+            )}
+          </section>
         </div>
+      </main>
 
-        {/* Toast */}
-        {toast && (
-          <div className="fixed bottom-4 right-4 rounded-xl border bg-white shadow p-3 flex items-center gap-2 text-sm z-50">
-            <span>{toast}</span>
-            <button
-              className="ml-2 opacity-60 hover:opacity-100"
-              onClick={() => setToast(null)}
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Init overlay */}
-      {initLoading && (
-        <div className="fixed inset-0 bg-black/5 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl border px-4 py-3 shadow inline-flex items-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-sm">กำลังโหลดข้อมูลเริ่มต้น…</span>
-          </div>
-        </div>
+      {/* Edit Lesson Modal */}
+      {showEditModal && selectedLesson && (
+        <EditLessonModal
+          open={showEditModal}
+          initial={selectedLesson}
+          onClose={() => setShowEditModal(false)}
+          onSave={handleSaveLesson}
+        />
       )}
     </div>
   );
-}
+};
+
+export default AdminTaskManagementPage;
