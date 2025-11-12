@@ -1,853 +1,201 @@
- @PUT
-    @Path("/{id}")
-    @Transactional
-    @RolesAllowed(Roles.ROLE_TRAINER)
-    public LearningContentDto update(
-            @PathParam("id") String id,
-            LearningContentDto dto,
-            @Context SecurityContext securityContext
-    ) {
-        String currentUser = securityContext.getUserPrincipal().getName();
-        String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
-        log.info("User '{}' called '{}' to update content ID: {}", currentUser, methodName, id);
+@PUT
+@Path("/{id}")
+@Transactional
+@RolesAllowed(Roles.ROLE_TRAINER)
+public LearningContentDto update(
+        @PathParam("id") String id,
+        LearningContentDto dto,
+        @Context SecurityContext securityContext
+) {
+    String currentUser = securityContext.getUserPrincipal().getName();
+    String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
+    log.info("User '{}' called '{}' to update content ID: {}", currentUser, methodName, id);
 
-        LearningContent lc = em.find(LearningContent.class, id);
-        if (lc == null) {
-            log.error("Learning content with ID {} not found", id);
-            throw new NotFoundException();
-        }
+    LearningContent lc = em.find(LearningContent.class, id);
+    if (lc == null) {
+        log.error("Learning content with ID {} not found", id);
+        throw new NotFoundException();
+    }
 
-        // ✅ ตรวจสอบสิทธิ์เจ้าของ
-        if (lc.getAuthorEmail() != null && !lc.getAuthorEmail().equalsIgnoreCase(currentUser)) {
-            throw new ForbiddenException("You are not allowed to update this learning content");
-        }
+    // ✅ ตรวจสอบสิทธิ์เจ้าของเนื้อหา
+    if (lc.getAuthorEmail() != null && !lc.getAuthorEmail().equalsIgnoreCase(currentUser)) {
+        throw new ForbiddenException("You are not allowed to update this learning content");
+    }
 
-        /* ========== UPDATE BASIC FIELDS ========== */
-        if (dto.title() != null) lc.setTitle(dto.title());
-        if (dto.description() != null) lc.setDescription(dto.description());
-        if (dto.category() != null) lc.setCategory(dto.category());
-        if (dto.thumbnailUrl() != null) lc.setThumbnailUrl(dto.thumbnailUrl());
-        if (dto.authorAvatarUrl() != null) lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
-        if (dto.assignType() != null) lc.setAssignType(dto.assignType());
-        if (dto.dueDate() != null) lc.setDueDate(dto.dueDate());
-        if (dto.quizAvailable() != null) lc.setQuizAvailable(dto.quizAvailable());
-        else if (dto.questions() != null) lc.setQuizAvailable(Boolean.TRUE);
+    /* ========== UPDATE BASIC FIELDS ========== */
+    if (dto.title() != null) lc.setTitle(dto.title());
+    if (dto.description() != null) lc.setDescription(dto.description());
+    if (dto.category() != null) lc.setCategory(dto.category());
+    if (dto.thumbnailUrl() != null) lc.setThumbnailUrl(dto.thumbnailUrl());
+    if (dto.authorAvatarUrl() != null) lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
+    if (dto.assignType() != null) lc.setAssignType(dto.assignType());
+    if (dto.dueDate() != null) lc.setDueDate(dto.dueDate());
+    if (dto.quizAvailable() != null) lc.setQuizAvailable(dto.quizAvailable());
+    else if (dto.questions() != null) lc.setQuizAvailable(Boolean.TRUE);
 
-        // Merge assignedUserIds / assignedTeamIds
-        if (dto.assignedUserIds() != null) {
-            var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new));
-            merged.addAll(dto.assignedUserIds());
-            lc.setAssignedUserIds(new ArrayList<>(merged));
-        }
-        if (dto.assignedTeamIds() != null) {
-            var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(ArrayList::new));
-            merged.addAll(dto.assignedTeamIds());
-            lc.setAssignedTeamIds(new ArrayList<>(merged));
-        }
+    // Merge assignedUserIds / assignedTeamIds
+    if (dto.assignedUserIds() != null) {
+        var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new));
+        merged.addAll(dto.assignedUserIds());
+        lc.setAssignedUserIds(new ArrayList<>(merged));
+    }
+    if (dto.assignedTeamIds() != null) {
+        var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(ArrayList::new));
+        merged.addAll(dto.assignedTeamIds());
+        lc.setAssignedTeamIds(new ArrayList<>(merged));
+    }
 
-        /* ========== UPDATE QUIZ QUESTIONS ========== */
-        List<QuestionDTO> dtoQuestions = dto.questions();
-        List<QuestionDTO> resultQuestions = new ArrayList<>();
+    /* ========== UPDATE QUIZ QUESTIONS ========== */
+    List<QuestionDTO> dtoQuestions = dto.questions();
+    List<QuestionDTO> resultQuestions = new ArrayList<>();
 
-        // โหลดคำถามเดิมทั้งหมด
-        List<QuestionEntity> existingQuestions = em.createQuery(
-                        "SELECT q FROM QuestionEntity q WHERE q.learningContent.id = :contentId",
-                        QuestionEntity.class)
-                .setParameter("contentId", id)
-                .getResultList();
+    // โหลดคำถามเดิมทั้งหมด
+    List<QuestionEntity> existingQuestions = em.createQuery(
+                    "SELECT q FROM QuestionEntity q WHERE q.learningContent.id = :contentId",
+                    QuestionEntity.class)
+            .setParameter("contentId", id)
+            .getResultList();
 
-        Map<String, QuestionEntity> existingById = existingQuestions.stream()
-                .filter(q -> q.getId() != null)
-                .collect(Collectors.toMap(QuestionEntity::getId, q -> q));
+    Map<String, QuestionEntity> existingById = existingQuestions.stream()
+            .filter(q -> q.getId() != null)
+            .collect(Collectors.toMap(QuestionEntity::getId, q -> q));
 
-        Set<String> keepIds = new HashSet<>();
+    Set<String> keepIds = new HashSet<>();
 
-        if (dtoQuestions != null && !dtoQuestions.isEmpty()) {
-            for (QuestionDTO qdto : dtoQuestions) {
-                String qId = qdto.questionId;
-                QuestionEntity question;
+    if (dtoQuestions != null && !dtoQuestions.isEmpty()) {
+        for (QuestionDTO qdto : dtoQuestions) {
+            if (qdto == null) continue;
+            String qId = qdto.questionId;
+            QuestionEntity question;
 
-                // ✅ ถ้ามี questionId → ใช้ของเดิม
-                if (qId != null && existingById.containsKey(qId)) {
-                    question = existingById.get(qId);
-                    log.info("Updating existing question {}", qId);
-                } else if (qId != null && em.find(QuestionEntity.class, qId) != null) {
-                    // fallback: find by id in db
-                    question = em.find(QuestionEntity.class, qId);
-                } else {
-                    // ✅ ถ้าไม่มี questionId → สร้างใหม่
-                    question = new QuestionEntity();
-                    String newId = generateId();
-                    question.setId(newId);
-                    question.setLearningContent(lc);
-                    question.setActive(true);
-                    em.persist(question);
-                    log.info("Creating new question {} for content {}", newId, id);
-                }
-
-                keepIds.add(question.getId());
-
-                // อัปเดต field
-                question.setQuestionText(qdto.questionText);
-                question.setPoints(qdto.points != null ? qdto.points : 1);
+            // ✅ ถ้ามี questionId → ใช้ของเดิม
+            if (qId != null && existingById.containsKey(qId)) {
+                question = existingById.get(qId);
+                log.info("Updating existing question {}", qId);
+            } else if (qId != null && em.find(QuestionEntity.class, qId) != null) {
+                question = em.find(QuestionEntity.class, qId);
+            } else {
+                // ✅ ถ้าไม่มี questionId → สร้างใหม่
+                question = new QuestionEntity();
+                String newId = generateId();
+                question.setId(newId);
+                question.setLearningContent(lc);
                 question.setActive(true);
-
-                QuestionType type = resolveTypeFromDto(qdto);
-                question.setType(type);
-
-                /* ========== MULTIPLE CHOICE ========== */
-                if (type == QuestionType.MULTIPLE) {
-                    if (question.getChoices() == null) question.setChoices(new ArrayList<>());
-                    List<QuestionChoiceEntity> existingChoices = question.getChoices();
-
-                    Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
-                            .filter(c -> c.getId() != null)
-                            .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
-
-                    Set<String> keepChoices = new HashSet<>();
-
-                    if (qdto.choices != null) {
-                        for (ChoiceDTO cdto : qdto.choices) {
-                            String cid = cdto.getChoiceId();
-                            QuestionChoiceEntity choice;
-
-                            if (cid != null && choiceById.containsKey(cid)) {
-                                choice = choiceById.get(cid);
-                            } else {
-                                choice = new QuestionChoiceEntity();
-                                choice.setId(cid != null ? cid : generateId());
-                                choice.setQuestion(question);
-                                em.merge(choice);
-                            }
-
-                            keepChoices.add(choice.getId());
-                            choice.setChoiceText(cdto.getText());
-                            choice.setCorrect(cdto.isCorrect());
-                        }
-                    }
-
-                    // ลบ choice ที่ไม่อยู่ใน DTO
-                    for (Iterator<QuestionChoiceEntity> it = existingChoices.iterator(); it.hasNext();) {
-                        QuestionChoiceEntity c = it.next();
-                        if (!keepChoices.contains(c.getId())) {
-                            em.remove(c);
-                            it.remove();
-                        }
-                    }
-
-                    // ลบ fill-blank เก่าถ้ามี
-                    em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
-                            .setParameter("q", question)
-                            .executeUpdate();
-                }
-
-                /* ========== FILL BLANK ========== */
-                else if (type == QuestionType.FILL_BLANK) {
-                    // ลบ choices เดิม
-                    if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                        for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                            em.remove(c);
-                        }
-                        question.getChoices().clear();
-                    }
-
-                    List<QuestionFillBlankEntity> fbList = em.createQuery(
-                                    "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
-                                    QuestionFillBlankEntity.class)
-                            .setParameter("q", question)
-                            .getResultList();
-
-                    QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
-                    String ans = qdto.correctAnswer != null ? qdto.correctAnswer.trim() : "";
-
-                    if (!ans.isEmpty()) {
-                        if (fb == null) {
-                            fb = new QuestionFillBlankEntity();
-                            fb.setId(generateId());
-                            fb.setQuestion(question);
-                        }
-                        fb.setCorrectAnswer(ans);
-                        if (!em.contains(fb)) em.persist(fb);
-                    } else if (fb != null) {
-                        em.remove(fb);
-                    }
-                }
-
-                resultQuestions.add(qdto);
+                em.persist(question);
+                log.info("Creating new question {} for content {}", newId, id);
             }
 
-            /* ========== ลบคำถามที่ไม่ได้อยู่ใน DTO โดยไม่ลบทิ้งจริง ========== */
-            for (QuestionEntity q : existingQuestions) {
-                if (!keepIds.contains(q.getId())) {
-                    log.info("Marking question {} as inactive instead of deleting", q.getId());
-                    q.setActive(false);
+            keepIds.add(question.getId());
+
+            // อัปเดต field
+            question.setQuestionText(qdto.questionText != null ? qdto.questionText.trim() : "");
+            question.setPoints(qdto.points != null ? qdto.points : 1);
+            question.setActive(true);
+
+            QuestionType type = resolveTypeFromDto(qdto);
+            question.setType(type);
+
+            /* ========== MULTIPLE CHOICE ========== */
+            if (type == QuestionType.MULTIPLE) {
+                if (question.getChoices() == null) question.setChoices(new ArrayList<>());
+                List<QuestionChoiceEntity> existingChoices = question.getChoices();
+
+                Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
+                        .filter(c -> c.getId() != null)
+                        .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
+
+                Set<String> keepChoices = new HashSet<>();
+
+                if (qdto.choices != null) {
+                    for (ChoiceDTO cdto : qdto.choices) {
+                        if (cdto == null) continue;
+                        String text = cdto.getText();
+                        if (text == null || text.trim().isEmpty()) {
+                            log.warn("⚠️ Skipping empty choice for question {}", question.getId());
+                            continue;
+                        }
+
+                        String cid = cdto.getChoiceId();
+                        QuestionChoiceEntity choice;
+
+                        if (cid != null && choiceById.containsKey(cid)) {
+                            choice = choiceById.get(cid);
+                        } else {
+                            choice = new QuestionChoiceEntity();
+                            choice.setId(cid != null ? cid : generateId());
+                            choice.setQuestion(question);
+                            em.persist(choice);
+                        }
+
+                        choice.setChoiceText(text.trim());
+                        choice.setCorrect(cdto.isCorrect());
+                        keepChoices.add(choice.getId());
+                    }
+                }
+
+                // ลบ choice ที่ไม่อยู่ใน DTO
+                for (Iterator<QuestionChoiceEntity> it = existingChoices.iterator(); it.hasNext();) {
+                    QuestionChoiceEntity c = it.next();
+                    if (!keepChoices.contains(c.getId())) {
+                        em.remove(c);
+                        it.remove();
+                    }
+                }
+
+                // ลบ fill-blank เก่าถ้ามี
+                em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
+                        .setParameter("q", question)
+                        .executeUpdate();
+            }
+
+            /* ========== FILL BLANK ========== */
+            else if (type == QuestionType.FILL_BLANK) {
+                // ลบ choices เดิม
+                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
+                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
+                        em.remove(c);
+                    }
+                    question.getChoices().clear();
+                }
+
+                List<QuestionFillBlankEntity> fbList = em.createQuery(
+                                "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
+                                QuestionFillBlankEntity.class)
+                        .setParameter("q", question)
+                        .getResultList();
+
+                QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
+                String ans = qdto.correctAnswer != null ? qdto.correctAnswer.trim() : "";
+
+                if (!ans.isEmpty()) {
+                    if (fb == null) {
+                        fb = new QuestionFillBlankEntity();
+                        fb.setId(generateId());
+                        fb.setQuestion(question);
+                    }
+                    fb.setCorrectAnswer(ans);
+                    if (!em.contains(fb)) em.persist(fb);
+                } else if (fb != null) {
+                    em.remove(fb);
                 }
             }
-        } else {
-            log.info("No questions provided, skipping quiz update");
+
+            resultQuestions.add(qdto);
         }
 
-        em.flush();
-        log.info("✅ Content {} updated successfully", id);
-
-        return LearningContentDto.withQuizInfo(lc, resultQuestions);
-    }
-
-2025-11-12 11:42:26,567 ERROR [io.qua.ver.htt.run.QuarkusErrorHandler] (executor-thread-1) HTTP Request to /learning/830c8614a76e485aa5220 failed, error id: 9e8823f8-9b43-42f8-b500-ddb4bb1aea3b-6
-
-Exception in LearningContentResource.java:493
-          491          }                                                                                                                                                                                                            
-          492                                                                                                                                                                                                                       
-        ? 493          em.flush();                                                                                                                                                                                                  
-          494          log.info("? Content {} updated successfully", id);                                                                                                                                                           
-          495                                                                                                                                                                                                                       
-
-Exception in LearningContentResource.java:493
-          491          }                                                                                                                                                                                                            
-          492                                                                                                                                                                                                                       
-        ? 493          em.flush();                                                                                                                                                                                                  
-          494          log.info("? Content {} updated successfully", id);                                                                                                                                                           
-          495  : org.hibernate.exception.ConstraintViolationException: could not execute statement [ERROR: null value in column "choice_text" of relation "question_choice" violates not-null constraint                            
-  Detail: Failing row contains (f, 1f521c26edc840128c557, 4cdf23b02f184f6881973, null).] [insert into Question_choice (choice_text,is_correct,question_id,id) values (?,?,?,?)]                                                     
-        at org.hibernate.exception.internal.SQLStateConversionDelegate.convert(SQLStateConversionDelegate.java:97)                                                                                                                  
-        at org.hibernate.exception.internal.StandardSQLExceptionConverter.convert(StandardSQLExceptionConverter.java:58)                                                                                                            
-        at org.hibernate.engine.jdbc.spi.SqlExceptionHelper.convert(SqlExceptionHelper.java:108)                                                                                                                                    
-        at org.hibernate.engine.jdbc.internal.ResultSetReturnImpl.executeUpdate(ResultSetReturnImpl.java:197)                                                                                                                       
-        at org.hibernate.engine.jdbc.mutation.internal.AbstractMutationExecutor.performNonBatchedMutation(AbstractMutationExecutor.java:134)                                                                                        
-        at org.hibernate.engine.jdbc.mutation.internal.MutationExecutorSingleNonBatched.performNonBatchedOperations(MutationExecutorSingleNonBatched.java:55)                                                                       
-        at org.hibernate.engine.jdbc.mutation.internal.AbstractMutationExecutor.execute(AbstractMutationExecutor.java:55)                                                                                                           
-        at org.hibernate.persister.entity.mutation.InsertCoordinatorStandard.doStaticInserts(InsertCoordinatorStandard.java:194)                                                                                                    
-        at org.hibernate.persister.entity.mutation.InsertCoordinatorStandard.coordinateInsert(InsertCoordinatorStandard.java:132)                                                                                                   
-        at org.hibernate.persister.entity.mutation.InsertCoordinatorStandard.insert(InsertCoordinatorStandard.java:104)                                                                                                             
-        at org.hibernate.action.internal.EntityInsertAction.execute(EntityInsertAction.java:110)                                                                                                                                    
-        at org.hibernate.engine.spi.ActionQueue.executeActions(ActionQueue.java:644)                                                                                                                                                
-        at org.hibernate.engine.spi.ActionQueue.executeActions(ActionQueue.java:511)                                                                                                                                                
-        at org.hibernate.event.internal.AbstractFlushingEventListener.performExecutions(AbstractFlushingEventListener.java:414)                                                                                                     
-        at org.hibernate.event.internal.DefaultFlushEventListener.onFlush(DefaultFlushEventListener.java:41)                                                                                                                        
-        at org.hibernate.event.service.internal.EventListenerGroupImpl.fireEventOnEachListener(EventListenerGroupImpl.java:127)                                                                                                     
-        at org.hibernate.internal.SessionImpl.doFlush(SessionImpl.java:1429)                                                                                                                                                        
-        at org.hibernate.internal.SessionImpl.flush(SessionImpl.java:1415)                                                                                                                                                          
-        at io.quarkus.hibernate.orm.runtime.session.TransactionScopedSession.flush(TransactionScopedSession.java:247)                                                                                                               
-        at org.hibernate.engine.spi.SessionLazyDelegator.flush(SessionLazyDelegator.java:83)                                                                                                                                        
-        at org.hibernate.Session_OpdLahisOZ9nWRPXMsEFQmQU03A_Synthetic_ClientProxy.flush(Unknown Source)                                                                                                                            
-        at Testing.LearningContentResource.update(LearningContentResource.java:493)                                                                                                                                                 
-        at Testing.LearningContentResource_Subclass.update$$superforward(Unknown Source)                                                                                                                                            
-        at Testing.LearningContentResource_Subclass$$function$$71.apply(Unknown Source)                                                                                                                                             
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:73)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
-        at io.quarkus.security.runtime.interceptor.SecurityHandler.handle(SecurityHandler.java:27)                                                                                                                                  
-        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor.intercept(RolesAllowedInterceptor.java:29)                                                                                                               
-        at io.quarkus.security.runtime.interceptor.RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                                                           
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext$NextAroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:97)                                                                                       
-        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor.intercept(StandardSecurityCheckInterceptor.java:44)                                                                                         
-        at io.quarkus.resteasy.reactive.server.runtime.StandardSecurityCheckInterceptor_RolesAllowedInterceptor_Bean.intercept(Unknown Source)                                                                                      
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:70)                                                                                                                         
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.proceed(AroundInvokeInvocationContext.java:62)                                                                                                                         
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:136)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.invokeInOurTx(TransactionalInterceptorBase.java:107)                                                                                            
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.doIntercept(TransactionalInterceptorRequired.java:38)                                                                                       
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorBase.intercept(TransactionalInterceptorBase.java:61)                                                                                                 
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired.intercept(TransactionalInterceptorRequired.java:32)                                                                                         
-        at io.quarkus.narayana.jta.runtime.interceptor.TransactionalInterceptorRequired_Bean.intercept(Unknown Source)                                                                                                              
-        at io.quarkus.arc.impl.InterceptorInvocation.invoke(InterceptorInvocation.java:42)                                                                                                                                          
-        at io.quarkus.arc.impl.AroundInvokeInvocationContext.perform(AroundInvokeInvocationContext.java:30)                                                                                                                         
-        at io.quarkus.arc.impl.InvocationContexts.performAroundInvoke(InvocationContexts.java:27)                                                                                                                                   
-        at Testing.LearningContentResource_Subclass.update(Unknown Source)                                                                                                                                                          
-        at Testing.LearningContentResource$quarkusrestinvoker$update_32ea3203ec171cb8a5003760c7201533316078ec.invoke(Unknown Source)                                                                                                
-        at org.jboss.resteasy.reactive.server.handlers.InvocationHandler.handle(InvocationHandler.java:29)                                                                                                                          
-        at io.quarkus.resteasy.reactive.server.runtime.QuarkusResteasyReactiveRequestContext.invokeHandler(QuarkusResteasyReactiveRequestContext.java:141)                                                                          
-        at org.jboss.resteasy.reactive.common.core.AbstractResteasyReactiveContext.run(AbstractResteasyReactiveContext.java:147)                                                                                                    
-        at io.quarkus.vertx.core.runtime.VertxCoreRecorder$15.runWith(VertxCoreRecorder.java:637)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$Task.doRunWith(EnhancedQueueExecutor.java:2651)                                                                                                                                  
-        at org.jboss.threads.EnhancedQueueExecutor$Task.run(EnhancedQueueExecutor.java:2630)                                                                                                                                        
-        at org.jboss.threads.EnhancedQueueExecutor.runThreadBody(EnhancedQueueExecutor.java:1622)                                                                                                                                   
-        at org.jboss.threads.EnhancedQueueExecutor$ThreadBody.run(EnhancedQueueExecutor.java:1589)                                                                                                                                  
-        at org.jboss.threads.DelegatingRunnable.run(DelegatingRunnable.java:11)                                                                                                                                                     
-        at org.jboss.threads.ThreadLocalResettingRunnable.run(ThreadLocalResettingRunnable.java:11)                                                                                                                                 
-        at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)                                                                                                                                    
-        at java.base/java.lang.Thread.run(Thread.java:1583)                                                                                                                                                                         
-Caused by: org.postgresql.util.PSQLException: ERROR: null value in column "choice_text" of relation "question_choice" violates not-null constraint                                                                                  
-  Detail: Failing row contains (f, 1f521c26edc840128c557, 4cdf23b02f184f6881973, null).                                                                                                                                             
-        at org.postgresql.core.v3.QueryExecutorImpl.receiveErrorResponse(QueryExecutorImpl.java:2736)                                                                                                                               
-        at org.postgresql.core.v3.QueryExecutorImpl.processResults(QueryExecutorImpl.java:2423)                                                                                                                                     
-        at org.postgresql.core.v3.QueryExecutorImpl.execute(QueryExecutorImpl.java:374)                                                                                                                                             
-        at org.postgresql.jdbc.PgStatement.executeInternal(PgStatement.java:518)                                                                                                                                                    
-        at org.postgresql.jdbc.PgStatement.execute(PgStatement.java:435)                                                                                                                                                            
-        at org.postgresql.jdbc.PgPreparedStatement.executeWithFlags(PgPreparedStatement.java:196)                                                                                                                                   
-        at org.postgresql.jdbc.P                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                    
---                                                                                                                                                                                                                                  
-                         gPreparedStatement.executeUpdate(PgPreparedStatement.java:157)
-        at io.agroal.pool.wrapper.PreparedStatementWrapper.executeUpdate(PreparedStatementWrapper.java:90)                                                                                                                          
-        at org.hibernate.engine.jdbc.internal.ResultSetReturnImpl.executeUpdate(ResultSetReturnImpl.java:194)                                                                                                                       
-        ... 56 more                                                                                                                                                                                                                 
-                                                                                                                                                                                                                                    
-
-/* eslint-disable react-hooks/exhaustive-deps */
-import { useContext, useEffect, useState } from "react";
-import axios from "axios";
-import { AuthContext } from "../../../Authentication/AuthContext";
-import AdminSidebarWidget from "../Widgets/AdminSideBar";
-import { useNavigate } from "react-router-dom";
-import { Pencil } from "lucide-react";
-import EditLessonModal, { type Lesson } from "./EditLessonModal";
-import { sendLessonNotification } from "../Widgets/notificationServices";
-import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
-import type { QuestionAnswer, UserProgress } from "../../../types/trainer/types";
-import { ENDPOINTS } from "../../../config/endpoints";
-
-const AdminTaskManagementPage = () => {
-  const { token } = useContext(AuthContext);
-  const { email } = useUserProfile(token);
-  const navigate = useNavigate();
-
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
-  const [progressList, setProgressList] = useState<UserProgress[]>([]);
-  const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const [feedback, setFeedback] = useState<string>("");
-
-  const [trainerReply, setTrainerReply] = useState<string>("");
-  const [replyLoading, setReplyLoading] = useState(false);
-
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [userLessonQuestion, setUserLessonQuestion] = useState<QuestionAnswer[] | undefined>();
-  const { fullName ,avatarUrl} = useUserProfile(token);
-
-
-  const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
-
-  // ---------- helpers ----------
-  const fmtDate = (iso?: string) => {
-    if (!iso) return "";
-    try {
-      return new Date(iso).toLocaleString();
-    } catch {
-      return iso;
-    }
-  };
-
-  // ---------- fetchers ----------
-  const fetchLessons = async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get<Lesson[]>("/api/learning?mine=true", { headers: authHeader });
-      setLessons(res.data);
-    } catch (err) {
-      console.error("❌ Failed to load lessons:", err);
-      alert("Failed to fetch lessons.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchUserIdByEmail = async (userEmail: string) => {
-    try {
-      const res = await axios.get("/api/profile/users", {
-        params: { email: userEmail },
-        headers: authHeader,
-      });
-
-      const users = res.data;
-      if (Array.isArray(users) && users.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const user = users.find((u: any) => u.email === userEmail);
-        return user?.id || null;
-      }
-      console.error("❌ No matching user found for email:", userEmail);
-      return null;
-    } catch (err) {
-      if (axios.isAxiosError(err)) {
-        console.error("❌ Failed to fetch userId:", err.response?.data || err.message);
-      } else {
-        console.error("❌ Failed to fetch userId:", err);
-      }
-      return null;
-    }
-  };
-
-  const fetchUserLessonQuestion = async (userEmail: string, lessonId: string | number) => {
-    try {
-      // ✅ encode email ป้องกัน + และอักขระพิเศษ
-      const emailPath = encodeURIComponent(userEmail);
-      // ✅ รองรับทั้ง object เดี่ยวและ array
-      const res = await axios.get<QuestionAnswer | QuestionAnswer[]>(
-        `/api/trainer-question-answer/get-answer-reply-by-question-id/${emailPath}/${lessonId}`,
-        { headers: authHeader }
-      );
-      const data = res.data;
-      if (!data) {
-        setUserLessonQuestion([]);
-      } else if (Array.isArray(data)) {
-        setUserLessonQuestion(data);
-      } else {
-        setUserLessonQuestion([data]);
-      }
-    } catch (err) {
-      console.error("❌ Failed to fetch user lesson question:", err);
-      setUserLessonQuestion([]);
-    }
-  };
-
-  useEffect(() => {
-    if (!token) {
-      navigate("/");
-      return;
-    }
-    fetchLessons();
-  }, [token, navigate]);
-
-  useEffect(() => {
-    if (selectedUser && selectedLesson) {
-      fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
+        /* ========== ลบคำถามที่ไม่อยู่ใน DTO (mark inactive) ========== */
+        for (QuestionEntity q : existingQuestions) {
+            if (!keepIds.contains(q.getId())) {
+                log.info("Marking question {} as inactive", q.getId());
+                q.setActive(false);
+            }
+        }
     } else {
-      setUserLessonQuestion(undefined);
-    }
-  }, [selectedUser, selectedLesson]);
-
-  // ---------- handlers ----------
-  const handleSelectLesson = async (lesson: Lesson) => {
-    setSelectedLesson(lesson);
-    setSelectedUser(null);
-    setUserLessonQuestion(undefined);
-    setTrainerReply("");
-
-    try {
-      const res = await axios.get<UserProgress[]>(ENDPOINTS.AlluserProgress, { headers: authHeader });
-      const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
-
-      // keep last entry per user
-      const latestByUser = new Map<string, UserProgress>();
-      lessonProgress.forEach((entry) => {
-        latestByUser.set(entry.userEmail, entry);
-      });
-
-      setProgressList(Array.from(latestByUser.values()));
-    } catch (err) {
-      console.error("❌ Failed to fetch progress:", err);
-      alert("Failed to load progress data.");
-    }
-  };
-
-  const handleDeleteLesson = async (id: string) => {
-    if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
-    const idStr = String(id).trim();
-    if (!idStr) {
-      console.error("❌ Invalid lesson id:", id);
-      alert("Invalid lesson id.");
-      return;
+        log.info("No questions provided, skipping quiz update");
     }
 
-    try {
-      // Use string id (URL-encoded). Backend expects string IDs (not Number).
-      await axios.delete(`/api/learning/${encodeURIComponent(idStr)}`, { headers: authHeader });
+    em.flush();
+    log.info("✅ Content {} updated successfully", id);
 
-     // remove by string comparison
-      setLessons((prev) => prev.filter((l) => String(l.id) !== idStr));
-
-      if (selectedLesson && String(selectedLesson.id) === idStr) {
-        setSelectedLesson(null);
-        setProgressList([]);
-        setSelectedUser(null);
-        setUserLessonQuestion(undefined);
-      }
-
-      alert("✅ Lesson deleted");
-    } catch (err) {
-      console.error("❌ Delete failed:", err);
-      alert("Failed to delete lesson.");
-    }
-  };
-
-  // const handleDeleteLesson = async (id: string ) => {
-  // if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
-
-  // try {
-  //   await axios.delete(ENDPOINTS.DeleteContent(Number(id)), { headers: authHeader });
-  //   setLessons((prev) => prev.filter((l) => l.id !== id));
-
-  //   if (selectedLesson?.id === id) {
-  //     setSelectedLesson(null);
-  //     setProgressList([]);
-  //     setSelectedUser(null);
-  //     setUserLessonQuestion(undefined);
-  //   }
-
-  //     alert("✅ Lesson deleted");
-  //   } catch (err) {
-  //     console.error("❌ Delete failed:", err);
-  //     alert("Failed to delete lesson.");
-  //   }
-  // };
-
-  const handleOpenEdit = (lesson: Lesson) => {
-    setSelectedLesson(lesson);
-    setShowEditModal(true);
-  };
-
-  const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
-    if (!selectedLesson) return;
-    try {
-      const payload: Lesson = { ...selectedLesson, ...data };
-      await axios.put(`/api/learning/${selectedLesson.id}`, payload, { headers: authHeader });
-
-      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
-      setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
-
-      setShowEditModal(false);
-      alert("✅ Lesson updated");
-    } catch (err) {
-      console.error("❌ Update failed:", err);
-      alert("Failed to update lesson information.");
-    }
-  };
-
-  if (!token) return null;
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <AdminSidebarWidget />
-
-      <main className="flex-1 p-10 space-y-6">
-        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">🧙 Learning Management</h1>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Lesson List */}
-          <section className="col-span-1 space-y-4">
-            {loading ? (
-              <p className="text-gray-500">Loading lessons...</p>
-            ) : (
-              lessons.map((lesson) => (
-                <div
-                  key={lesson.id}
-                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all ${
-                    selectedLesson?.id === lesson.id ? "bg-blue-50 border-blue-500" : "bg-white hover:border-blue-500"
-                  }`}
-                >
-                  <div onClick={() => handleSelectLesson(lesson) }  title="คลิกเพื่อดูรายละเอียดบทเรียน">
-                    <h3 className="font-semibold text-lg text-gray-800">{lesson.title}</h3>
-                    {/* <p className="text-sm text-gray-500">ID: {lesson.id}</p> */}
-                    <p className="text-sm text-gray-500 opacity-60">คลิกเพื่อดูรายละเอียดบทเรียน</p>
-                    <p className="text-xs text-purple-600 font-semibold uppercase">{lesson.category}</p>
-                  </div>
-
-                  {/* Edit button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenEdit(lesson);
-                    }}
-                    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
-                    title="Edit lesson"
-                    type="button"
-                    aria-label="Edit lesson"
-                  >
-                    <Pencil size={18} />
-                  </button>
-
-                  {/* Delete button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteLesson(String(lesson.id));
-                    }}
-                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
-                    title="Delete lesson"
-                    type="button"
-                    aria-label="Delete lesson"
-                  >
-                    🗑
-                  </button>
-                </div>
-              ))
-            )}
-          </section>
-
-          {/* User Progress List */}
-          <section className="col-span-1 space-y-4">
-            <div className="max-h-[60vh] overflow-auto pr-2 space-y-3">
-               {progressList.length === 0 && selectedLesson && <p className="text-gray-400">No progress yet…</p>}
-            {progressList.map((user) => (
-              <div
-                key={`${user.lessonId}-${user.userEmail}`}
-                className="p-4 bg-white rounded-xl shadow flex justify-between items-center"
-              >
-                <div>
-                  <p className="font-medium text-gray-800">{user.userEmail}</p>
-                  <p className="text-sm text-gray-400"></p>
-                  {/* Lesson ID: {user.lessonId} */}
-                </div>
-                <button
-                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
-                  onClick={() => setSelectedUser(user)}
-                >
-                  View
-                </button>
-              </div>
-            ))}
-            </div>
-          </section>
-
-          {/* Right pane: selected user overview */}
-          <section className="col-span-1 bg-white p-6 rounded-xl shadow">
-            <h2 className="text-lg font-semibold mb-4 text-gray-700">Quick overview of employee progress</h2>
-            {selectedUser ? (
-              
-              <div className="space-y-6">
-                <button
-              onClick={() => {
-                if (!selectedLesson) {
-                  alert("Please select a lesson first.");
-                  return;
-                }
-                const lessonId = encodeURIComponent(String(selectedLesson.id));
-                const userEmail = selectedUser ? encodeURIComponent(selectedUser.userEmail) : "";
-                // ✅ Use absolute path under /admin
-                if (userEmail) {
-                  navigate(`/admin/trainer/quiz-history/${lessonId}/${userEmail}`);
-                } else {
-                  navigate(`/admin/trainer/quiz-history/${lessonId}`);
-                }
-              }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow"
-            >
-              📜 Quiz History
-            </button>
-                <div className="flex items-center gap-3">
-                  {selectedUser.authorAvatarUrl ? (
-                    <img
-                      src={selectedUser.authorAvatarUrl}
-                      alt={`${selectedUser.userEmail}'s avatar`}
-                      className="w-10 h-10 rounded-full"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 bg-gray-200 rounded-full" />
-                  )}
-                  <div>
-                    <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
-                    {/* <p className="text-sm text-gray-500">Lesson ID: {selectedUser.lessonId}</p> */}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-sm text-gray-500">Progress</p>
-                  <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
-                  <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
-                </div>
-
-                <p className="text-sm text-gray-500">
-                  Quiz:{" "}
-                  {selectedUser?.score > 0 ? (
-                    <span className="text-green-600 font-semibold">
-                      Finished ({selectedUser.score} pts)
-                    </span>
-                  ) : (
-                    <span className="text-red-500">Not yet</span>
-                  )}
-                </p>
-
-                {/* Q&A thread for this user+lesson */}
-                <div className="border-t pt-4">
-                  <h3 className="font-semibold text-gray-800 mb-2">User Question for this Learning Content</h3>
-                  {userLessonQuestion === undefined ? (
-                    <p className="text-sm text-gray-400">Loading…</p>
-                  ) : userLessonQuestion.length === 0 ? (
-                    <p className="text-sm text-gray-400">No questions from this user for this lesson.</p>
-                  ) : (
-                    userLessonQuestion.map((qa) => {
-                      const askedAt = qa.createdAt || qa.createAt || "";
-                      return (
-                        <div key={qa.id} className="space-y-3">
-                          <div className="p-3 rounded-lg bg-gray-50 border">
-                            <p className="text-sm text-gray-700 whitespace-pre-wrap">
-                              {qa.question || <span className="text-gray-400">No question text</span>}
-                            </p>
-                            <p className="mt-1 text-xs text-gray-400">Asked: {askedAt ? fmtDate(askedAt) : "-"}</p>
-                          </div>
-
-                          {qa.answerReplies && qa.answerReplies.length > 0 && (
-                            <div className="space-y-2">
-                              <p className="text-sm font-medium text-gray-700">Trainer Replies</p>
-                              {qa.answerReplies.map((r) => (
-                                <div key={r.id} className="p-3 rounded-lg bg-blue-50 border">
-                                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{r.trainerReply}</p>
-                                  <p className="mt-1 text-xs text-gray-500">
-                                    by {r.trainerName} • {r.trainerEmail} • {fmtDate(r.createdAt)}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                {/* Feedback Section (ให้เฉพาะตอนจบ 100%) */}
-                {selectedUser?.percent === 100 && (
-                  <div className="border-t pt-4 space-y-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Feedback for {selectedUser.userEmail}
-                    </label>
-
-                    {selectedUser.feedback ? (
-                      <div className="p-4 bg-gray-100 border rounded-lg">
-                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedUser.feedback}</p>
-                      </div>
-                    ) : (
-                      <>
-                        <textarea
-                          value={feedback}
-                          onChange={(e) => setFeedback(e.target.value)}
-                          className="h-32 w-full border rounded-lg px-3 py-2"
-                          placeholder="Write your feedback here..."
-                        />
-                        <button
-                          onClick={async () => {
-                            if (!feedback.trim()) {
-                              alert("❌ Feedback cannot be empty.");
-                              return;
-                            }
-                            try {
-                              await axios.post(
-                                `/api/user/feedback`,
-                                {
-                                  userEmail: selectedUser.userEmail,
-                                  lessonId: selectedUser.lessonId,
-                                  feedback,
-                                  email,
-                                },
-                                { headers: authHeader }
-                              );
-
-                              const uid = await fetchUserIdByEmail(selectedUser.userEmail);
-                              if (uid) {
-                                await sendLessonNotification({
-                                  token,
-                                  message: `You have received feedback for lesson ${selectedLesson?.title}.`,
-                                  userIds: [uid],
-                                  target: "USER",
-                                });
-                              }
-
-                              alert("✅ Feedback sent successfully!");
-                              setFeedback("");
-                              setSelectedUser((prev) => (prev ? { ...prev, feedback } : prev));
-                            } catch (err) {
-                              console.error("❌ Failed to send feedback:", err);
-                              alert("Failed to send feedback.");
-                            }
-                          }}
-                          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                        >
-                          Send Feedback
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {/* Trainer Reply Section (ย้ายเงื่อนไข: แสดงเมื่อมีคำถาม ไม่ต้องรอ 100%) */}
-                {userLessonQuestion && userLessonQuestion.length > 0 && (
-                  <div className="mt-2 border-t pt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Reply to this question</label>
-                    <textarea
-                      value={trainerReply}
-                      onChange={(e) => setTrainerReply(e.target.value)}
-                      className="h-24 w-full border rounded-lg px-3 py-2"
-                      placeholder="Write your answer here..."
-                      disabled={replyLoading}
-                    />
-                    <button
-                      onClick={async () => {
-                        if (!trainerReply.trim()) {
-                          alert("❌ Answer cannot be empty.");
-                          return;
-                        }
-                        const qa = userLessonQuestion?.[0];
-                        if (!qa) {
-                          alert("❌ No question context to reply to.");
-                          return;
-                        }
-                        setReplyLoading(true);
-                        try {
-                          const payload = {
-                            // ✅ ผูกกับคำถามที่ถูกต้อง (ไม่ใช่ selectedLesson)
-                            questionAnswerId: qa.id,
-                            // เผื่อ backend ตรวจสอบ
-                            lessonId: selectedLesson?.id,
-                            trainerReply,
-                            trainerEmail: email,
-                            avatarUrl:avatarUrl,
-                            trainerName:  fullName || "Trainer",
-                            createdAt: new Date().toISOString(),
-                          };
-
-                          console.log("POST reply payload:", payload);
-
-                          await axios.post(
-                            "/api/trainer-question-answer/Update-answer-to-learning-content",
-                            payload,
-                            { headers: authHeader }
-                          );
-
-                          // refresh thread
-                          if (selectedUser && selectedLesson) {
-                            await fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
-                          }
-
-                          alert("✅ Trainer answer sent successfully!");
-                          setTrainerReply("");
-                        } catch (err) {
-                          if (axios.isAxiosError(err)) {
-                            console.error("❌ Failed to send trainer answer:", err.response?.status, err.response?.data || err.message);
-                            alert(`Failed to send trainer answer: ${err.response?.status ?? ""} ${JSON.stringify(err.response?.data ?? err.message)}`);
-                          } else {
-                            console.error("❌ Failed to send trainer answer:", err);
-                            alert("Failed to send trainer answer.");
-                          }
-                        } finally {
-                          setReplyLoading(false);
-                        }
-                      }}
-                      className={`mt-2 px-4 py-2 rounded-lg ${
-                        replyLoading || !trainerReply.trim()
-                          ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                          : "bg-green-600 text-white hover:bg-green-700"
-                      }`}
-                      disabled={replyLoading || !trainerReply.trim()}
-                    >
-                      {replyLoading ? "Sending..." : "Send Trainer Answer"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <p className="text-gray-400">← Select a user to see details</p>
-            )}
-          </section>
-        </div>
-      </main>
-
-      {/* Edit Lesson Modal */}
-      {showEditModal && selectedLesson && (
-        <EditLessonModal
-          open={showEditModal}
-          initial={selectedLesson}
-          onClose={() => setShowEditModal(false)}
-          onSave={handleSaveLesson}
-        />
-      )}
-    </div>
-  );
-};
-
-export default AdminTaskManagementPage;
+    return LearningContentDto.withQuizInfo(lc, resultQuestions);
+}
