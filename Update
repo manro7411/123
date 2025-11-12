@@ -1,118 +1,106 @@
 /* eslint-disable react-hooks/exhaustive-deps */
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import { AuthContext } from "../../../Authentication/AuthContext";
 import AdminSidebarWidget from "../Widgets/AdminSideBar";
 import { useNavigate } from "react-router-dom";
-import { Pencil } from "lucide-react";
+import { Pencil, Loader2, Trash2 } from "lucide-react";
 import EditLessonModal, { type Lesson } from "./EditLessonModal";
 import { sendLessonNotification } from "../Widgets/notificationServices";
 import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
 import type { QuestionAnswer, UserProgress } from "../../../types/trainer/types";
 import { ENDPOINTS } from "../../../config/endpoints";
 
+// ---------- reusable axios instance ----------
+const useAxios = (token?: string) =>
+  useMemo(
+    () =>
+      axios.create({
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }),
+    [token]
+  );
+
 const AdminTaskManagementPage = () => {
   const { token } = useContext(AuthContext);
-  const { email } = useUserProfile(token);
+  const { email, fullName, avatarUrl } = useUserProfile(token);
   const navigate = useNavigate();
+
+  const api = useAxios(token);
 
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
   const [progressList, setProgressList] = useState<UserProgress[]>([]);
   const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const [feedback, setFeedback] = useState<string>("");
-
-  const [trainerReply, setTrainerReply] = useState<string>("");
   const [replyLoading, setReplyLoading] = useState(false);
-
-  const [showEditModal, setShowEditModal] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [trainerReply, setTrainerReply] = useState("");
   const [userLessonQuestion, setUserLessonQuestion] = useState<QuestionAnswer[] | undefined>();
-  const { fullName ,avatarUrl} = useUserProfile(token);
-
-
-  const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
+  const [showEditModal, setShowEditModal] = useState(false);
 
   // ---------- helpers ----------
-  const fmtDate = (iso?: string) => {
-    if (!iso) return "";
-    try {
-      return new Date(iso).toLocaleString();
-    } catch {
-      return iso;
-    }
-  };
+  const fmtDate = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "-");
 
   // ---------- fetchers ----------
   const fetchLessons = async () => {
     setLoading(true);
     try {
-      const res = await axios.get<Lesson[]>("/api/learning?mine=true", { headers: authHeader });
-      setLessons(res.data);
+      const { data } = await api.get<Lesson[]>("/api/learning?mine=true");
+      setLessons(data);
     } catch (err) {
-      console.error("❌ Failed to load lessons:", err);
+      console.error("❌ Failed to fetch lessons:", err);
       alert("Failed to fetch lessons.");
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchUserIdByEmail = async (userEmail: string) => {
+  const fetchProgress = async (lessonId: string) => {
     try {
-      const res = await axios.get("/api/profile/users", {
-        params: { email: userEmail },
-        headers: authHeader,
-      });
-
-      const users = res.data;
-      if (Array.isArray(users) && users.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const user = users.find((u: any) => u.email === userEmail);
-        return user?.id || null;
-      }
-      console.error("❌ No matching user found for email:", userEmail);
-      return null;
+      const { data } = await api.get<UserProgress[]>(ENDPOINTS.AlluserProgress);
+      const latest = new Map<string, UserProgress>();
+      data
+        .filter((p) => p.lessonId === lessonId)
+        .forEach((p) => latest.set(p.userEmail, p));
+      setProgressList([...latest.values()]);
     } catch (err) {
-      if (axios.isAxiosError(err)) {
-        console.error("❌ Failed to fetch userId:", err.response?.data || err.message);
-      } else {
-        console.error("❌ Failed to fetch userId:", err);
-      }
-      return null;
+      console.error("❌ Failed to fetch progress:", err);
     }
   };
 
   const fetchUserLessonQuestion = async (userEmail: string, lessonId: string | number) => {
     try {
-      // ✅ encode email ป้องกัน + และอักขระพิเศษ
-      const emailPath = encodeURIComponent(userEmail);
-      // ✅ รองรับทั้ง object เดี่ยวและ array
-      const res = await axios.get<QuestionAnswer | QuestionAnswer[]>(
-        `/api/trainer-question-answer/get-answer-reply-by-question-id/${emailPath}/${lessonId}`,
-        { headers: authHeader }
+      const res = await api.get<QuestionAnswer | QuestionAnswer[]>(
+        `/api/trainer-question-answer/get-answer-reply-by-question-id/${encodeURIComponent(userEmail)}/${lessonId}`
       );
       const data = res.data;
-      if (!data) {
-        setUserLessonQuestion([]);
-      } else if (Array.isArray(data)) {
-        setUserLessonQuestion(data);
-      } else {
-        setUserLessonQuestion([data]);
-      }
+      setUserLessonQuestion(Array.isArray(data) ? data : data ? [data] : []);
     } catch (err) {
-      console.error("❌ Failed to fetch user lesson question:", err);
+      console.error("❌ Failed to fetch user question:", err);
       setUserLessonQuestion([]);
     }
   };
 
+  const fetchUserIdByEmail = async (userEmail: string) => {
+    try {
+      const res = await api.get("/api/profile/users", { params: { email: userEmail } });
+      const users = res.data;
+      return Array.isArray(users) && users.length ? users.find((u: any) => u.email === userEmail)?.id ?? null : null;
+    } catch (err) {
+      console.error("❌ Fetch user ID error:", err);
+      return null;
+    }
+  };
+
+  // ---------- effects ----------
   useEffect(() => {
     if (!token) {
       navigate("/");
       return;
     }
     fetchLessons();
-  }, [token, navigate]);
+  }, [token]);
 
   useEffect(() => {
     if (selectedUser && selectedLesson) {
@@ -127,98 +115,42 @@ const AdminTaskManagementPage = () => {
     setSelectedLesson(lesson);
     setSelectedUser(null);
     setUserLessonQuestion(undefined);
-    setTrainerReply("");
-
-    try {
-      const res = await axios.get<UserProgress[]>(ENDPOINTS.AlluserProgress, { headers: authHeader });
-      const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
-
-      // keep last entry per user
-      const latestByUser = new Map<string, UserProgress>();
-      lessonProgress.forEach((entry) => {
-        latestByUser.set(entry.userEmail, entry);
-      });
-
-      setProgressList(Array.from(latestByUser.values()));
-    } catch (err) {
-      console.error("❌ Failed to fetch progress:", err);
-      alert("Failed to load progress data.");
-    }
+    await fetchProgress(lesson.id);
   };
 
   const handleDeleteLesson = async (id: string) => {
     if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
-    const idStr = String(id).trim();
-    if (!idStr) {
-      console.error("❌ Invalid lesson id:", id);
-      alert("Invalid lesson id.");
-      return;
-    }
-
     try {
-      // Use string id (URL-encoded). Backend expects string IDs (not Number).
-      await axios.delete(`/api/learning/${encodeURIComponent(idStr)}`, { headers: authHeader });
-
-     // remove by string comparison
-      setLessons((prev) => prev.filter((l) => String(l.id) !== idStr));
-
-      if (selectedLesson && String(selectedLesson.id) === idStr) {
+      await api.delete(`/api/learning/${encodeURIComponent(id)}`);
+      setLessons((prev) => prev.filter((l) => String(l.id) !== String(id)));
+      if (selectedLesson?.id === id) {
         setSelectedLesson(null);
         setProgressList([]);
         setSelectedUser(null);
-        setUserLessonQuestion(undefined);
       }
-
-      alert("✅ Lesson deleted");
+      alert("✅ Lesson deleted successfully.");
     } catch (err) {
       console.error("❌ Delete failed:", err);
       alert("Failed to delete lesson.");
     }
   };
 
-  // const handleDeleteLesson = async (id: string ) => {
-  // if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
-
-  // try {
-  //   await axios.delete(ENDPOINTS.DeleteContent(Number(id)), { headers: authHeader });
-  //   setLessons((prev) => prev.filter((l) => l.id !== id));
-
-  //   if (selectedLesson?.id === id) {
-  //     setSelectedLesson(null);
-  //     setProgressList([]);
-  //     setSelectedUser(null);
-  //     setUserLessonQuestion(undefined);
-  //   }
-
-  //     alert("✅ Lesson deleted");
-  //   } catch (err) {
-  //     console.error("❌ Delete failed:", err);
-  //     alert("Failed to delete lesson.");
-  //   }
-  // };
-
-  const handleOpenEdit = (lesson: Lesson) => {
-    setSelectedLesson(lesson);
-    setShowEditModal(true);
-  };
-
   const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
     if (!selectedLesson) return;
     try {
       const payload: Lesson = { ...selectedLesson, ...data };
-      await axios.put(`/api/learning/${selectedLesson.id}`, payload, { headers: authHeader });
-
-      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
-      setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
-
+      await api.put(`/api/learning/${selectedLesson.id}`, payload);
+      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? payload : l)));
+      setSelectedLesson(payload);
       setShowEditModal(false);
-      alert("✅ Lesson updated");
+      alert("✅ Lesson updated successfully.");
     } catch (err) {
       console.error("❌ Update failed:", err);
-      alert("Failed to update lesson information.");
+      alert("Failed to update lesson.");
     }
   };
 
+  // ---------- UI ----------
   if (!token) return null;
 
   return (
@@ -232,231 +164,168 @@ const AdminTaskManagementPage = () => {
           {/* Lesson List */}
           <section className="col-span-1 space-y-4">
             {loading ? (
-              <p className="text-gray-500">Loading lessons...</p>
+              <div className="text-center text-gray-500 flex items-center justify-center py-10">
+                <Loader2 className="animate-spin mr-2" /> Loading lessons…
+              </div>
             ) : (
               lessons.map((lesson) => (
                 <div
                   key={lesson.id}
-                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all ${
+                  className={`relative p-4 rounded-xl shadow border transition-all cursor-pointer ${
                     selectedLesson?.id === lesson.id ? "bg-blue-50 border-blue-500" : "bg-white hover:border-blue-500"
                   }`}
+                  onClick={() => handleSelectLesson(lesson)}
                 >
-                  <div onClick={() => handleSelectLesson(lesson) }  title="คลิกเพื่อดูรายละเอียดบทเรียน">
-                    <h3 className="font-semibold text-lg text-gray-800">{lesson.title}</h3>
-                    {/* <p className="text-sm text-gray-500">ID: {lesson.id}</p> */}
-                    <p className="text-sm text-gray-500 opacity-60">คลิกเพื่อดูรายละเอียดบทเรียน</p>
-                    <p className="text-xs text-purple-600 font-semibold uppercase">{lesson.category}</p>
+                  <h3 className="font-semibold text-lg text-gray-800">{lesson.title}</h3>
+                  <p className="text-xs text-purple-600 uppercase">{lesson.category}</p>
+                  <p className="text-xs text-gray-500 opacity-60">Click to view details</p>
+
+                  <div className="absolute top-2 right-2 flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowEditModal(true);
+                        setSelectedLesson(lesson);
+                      }}
+                      title="Edit lesson"
+                    >
+                      <Pencil size={18} className="text-gray-600 hover:text-blue-700" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteLesson(String(lesson.id));
+                      }}
+                      title="Delete lesson"
+                    >
+                      <Trash2 size={18} className="text-red-600 hover:text-red-800" />
+                    </button>
                   </div>
-
-                  {/* Edit button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenEdit(lesson);
-                    }}
-                    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
-                    title="Edit lesson"
-                    type="button"
-                    aria-label="Edit lesson"
-                  >
-                    <Pencil size={18} />
-                  </button>
-
-                  {/* Delete button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteLesson(String(lesson.id));
-                    }}
-                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
-                    title="Delete lesson"
-                    type="button"
-                    aria-label="Delete lesson"
-                  >
-                    🗑
-                  </button>
                 </div>
               ))
             )}
           </section>
 
           {/* User Progress List */}
-          <section className="col-span-1 space-y-4">
-            <div className="max-h-[60vh] overflow-auto pr-2 space-y-3">
-               {progressList.length === 0 && selectedLesson && <p className="text-gray-400">No progress yet…</p>}
+          <section className="col-span-1 space-y-3">
+            {progressList.length === 0 && selectedLesson && (
+              <p className="text-gray-400 text-sm">No progress data yet…</p>
+            )}
             {progressList.map((user) => (
               <div
                 key={`${user.lessonId}-${user.userEmail}`}
-                className="p-4 bg-white rounded-xl shadow flex justify-between items-center"
+                className={`p-4 rounded-lg shadow border flex justify-between items-center ${
+                  selectedUser?.userEmail === user.userEmail ? "bg-blue-50" : "bg-white"
+                }`}
               >
                 <div>
                   <p className="font-medium text-gray-800">{user.userEmail}</p>
-                  <p className="text-sm text-gray-400"></p>
-                  {/* Lesson ID: {user.lessonId} */}
+                  <p className="text-xs text-gray-500">{user.percent}% done</p>
                 </div>
                 <button
-                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
                   onClick={() => setSelectedUser(user)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"
                 >
                   View
                 </button>
               </div>
             ))}
-            </div>
           </section>
 
-          {/* Right pane: selected user overview */}
+          {/* User Overview */}
           <section className="col-span-1 bg-white p-6 rounded-xl shadow">
-            <h2 className="text-lg font-semibold mb-4 text-gray-700">Quick overview of employee progress</h2>
-            {selectedUser ? (
-              
+            <h2 className="text-lg font-semibold mb-4 text-gray-700">User Progress Overview</h2>
+
+            {!selectedUser ? (
+              <p className="text-gray-400">← Select a user to see details</p>
+            ) : (
               <div className="space-y-6">
+                {/* Quiz History */}
                 <button
-              onClick={() => {
-                if (!selectedLesson) {
-                  alert("Please select a lesson first.");
-                  return;
-                }
-                const lessonId = encodeURIComponent(String(selectedLesson.id));
-                const userEmail = selectedUser ? encodeURIComponent(selectedUser.userEmail) : "";
-                // ✅ Use absolute path under /admin
-                if (userEmail) {
-                  navigate(`/admin/trainer/quiz-history/${lessonId}/${userEmail}`);
-                } else {
-                  navigate(`/admin/trainer/quiz-history/${lessonId}`);
-                }
-              }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow"
-            >
-              📜 Quiz History
-            </button>
+                  onClick={() => {
+                    if (!selectedLesson) return alert("Select a lesson first.");
+                    navigate(
+                      `/admin/trainer/quiz-history/${encodeURIComponent(String(selectedLesson.id))}/${encodeURIComponent(
+                        selectedUser.userEmail
+                      )}`
+                    );
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow"
+                >
+                  📜 Quiz History
+                </button>
+
+                {/* User Info */}
                 <div className="flex items-center gap-3">
                   {selectedUser.authorAvatarUrl ? (
                     <img
                       src={selectedUser.authorAvatarUrl}
-                      alt={`${selectedUser.userEmail}'s avatar`}
                       className="w-10 h-10 rounded-full"
+                      alt="user avatar"
                     />
                   ) : (
                     <div className="w-10 h-10 bg-gray-200 rounded-full" />
                   )}
                   <div>
                     <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
-                    {/* <p className="text-sm text-gray-500">Lesson ID: {selectedUser.lessonId}</p> */}
                   </div>
                 </div>
 
+                {/* Progress */}
                 <div>
                   <p className="text-sm text-gray-500">Progress</p>
                   <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
                   <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
                 </div>
 
-                <p className="text-sm text-gray-500">
-                  Quiz:{" "}
-                  {selectedUser?.score > 0 ? (
-                    <span className="text-green-600 font-semibold">
-                      Finished ({selectedUser.score} pts)
-                    </span>
-                  ) : (
-                    <span className="text-red-500">Not yet</span>
-                  )}
-                </p>
-
-                {/* Q&A thread for this user+lesson */}
-                <div className="border-t pt-4">
-                  <h3 className="font-semibold text-gray-800 mb-2">User Question for this Learning Content</h3>
-                  {userLessonQuestion === undefined ? (
-                    <p className="text-sm text-gray-400">Loading…</p>
-                  ) : userLessonQuestion.length === 0 ? (
-                    <p className="text-sm text-gray-400">No questions from this user for this lesson.</p>
-                  ) : (
-                    userLessonQuestion.map((qa) => {
-                      const askedAt = qa.createdAt || qa.createAt || "";
-                      return (
-                        <div key={qa.id} className="space-y-3">
-                          <div className="p-3 rounded-lg bg-gray-50 border">
-                            <p className="text-sm text-gray-700 whitespace-pre-wrap">
-                              {qa.question || <span className="text-gray-400">No question text</span>}
-                            </p>
-                            <p className="mt-1 text-xs text-gray-400">Asked: {askedAt ? fmtDate(askedAt) : "-"}</p>
-                          </div>
-
-                          {qa.answerReplies && qa.answerReplies.length > 0 && (
-                            <div className="space-y-2">
-                              <p className="text-sm font-medium text-gray-700">Trainer Replies</p>
-                              {qa.answerReplies.map((r) => (
-                                <div key={r.id} className="p-3 rounded-lg bg-blue-50 border">
-                                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{r.trainerReply}</p>
-                                  <p className="mt-1 text-xs text-gray-500">
-                                    by {r.trainerName} • {r.trainerEmail} • {fmtDate(r.createdAt)}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                {/* Feedback Section (ให้เฉพาะตอนจบ 100%) */}
-                {selectedUser?.percent === 100 && (
+                {/* Feedback */}
+                {selectedUser.percent === 100 && (
                   <div className="border-t pt-4 space-y-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-gray-700">
                       Feedback for {selectedUser.userEmail}
                     </label>
-
                     {selectedUser.feedback ? (
-                      <div className="p-4 bg-gray-100 border rounded-lg">
-                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedUser.feedback}</p>
+                      <div className="p-3 bg-gray-50 border rounded-lg text-sm text-gray-700 whitespace-pre-wrap">
+                        {selectedUser.feedback}
                       </div>
                     ) : (
                       <>
                         <textarea
                           value={feedback}
                           onChange={(e) => setFeedback(e.target.value)}
-                          className="h-32 w-full border rounded-lg px-3 py-2"
-                          placeholder="Write your feedback here..."
+                          className="h-24 w-full border rounded-lg p-2"
+                          placeholder="Write your feedback..."
                         />
                         <button
                           onClick={async () => {
-                            if (!feedback.trim()) {
-                              alert("❌ Feedback cannot be empty.");
-                              return;
-                            }
+                            if (!feedback.trim()) return alert("Feedback cannot be empty.");
                             try {
-                              await axios.post(
-                                `/api/user/feedback`,
-                                {
-                                  userEmail: selectedUser.userEmail,
-                                  lessonId: selectedUser.lessonId,
-                                  feedback,
-                                  email,
-                                },
-                                { headers: authHeader }
-                              );
+                              await api.post("/api/user/feedback", {
+                                userEmail: selectedUser.userEmail,
+                                lessonId: selectedUser.lessonId,
+                                feedback,
+                                email,
+                              });
 
                               const uid = await fetchUserIdByEmail(selectedUser.userEmail);
                               if (uid) {
                                 await sendLessonNotification({
                                   token,
-                                  message: `You have received feedback for lesson ${selectedLesson?.title}.`,
+                                  message: `You have received feedback for ${selectedLesson?.title}.`,
                                   userIds: [uid],
                                   target: "USER",
                                 });
                               }
 
-                              alert("✅ Feedback sent successfully!");
+                              alert("✅ Feedback sent successfully.");
+                              setSelectedUser((u) => (u ? { ...u, feedback } : u));
                               setFeedback("");
-                              setSelectedUser((prev) => (prev ? { ...prev, feedback } : prev));
                             } catch (err) {
-                              console.error("❌ Failed to send feedback:", err);
+                              console.error("❌ Feedback failed:", err);
                               alert("Failed to send feedback.");
                             }
                           }}
-                          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
                         >
                           Send Feedback
                         </button>
@@ -465,89 +334,61 @@ const AdminTaskManagementPage = () => {
                   </div>
                 )}
 
-                {/* Trainer Reply Section (ย้ายเงื่อนไข: แสดงเมื่อมีคำถาม ไม่ต้องรอ 100%) */}
+                {/* Trainer Reply */}
                 {userLessonQuestion && userLessonQuestion.length > 0 && (
-                  <div className="mt-2 border-t pt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Reply to this question</label>
+                  <div className="mt-4 border-t pt-4">
+                    <label className="block text-sm font-medium text-gray-700">Reply to question</label>
                     <textarea
                       value={trainerReply}
                       onChange={(e) => setTrainerReply(e.target.value)}
-                      className="h-24 w-full border rounded-lg px-3 py-2"
-                      placeholder="Write your answer here..."
+                      className="h-24 w-full border rounded-lg p-2"
+                      placeholder="Write your answer..."
                       disabled={replyLoading}
                     />
                     <button
                       onClick={async () => {
-                        if (!trainerReply.trim()) {
-                          alert("❌ Answer cannot be empty.");
-                          return;
-                        }
+                        if (!trainerReply.trim()) return alert("Answer cannot be empty.");
                         const qa = userLessonQuestion?.[0];
-                        if (!qa) {
-                          alert("❌ No question context to reply to.");
-                          return;
-                        }
+                        if (!qa) return alert("No question found.");
                         setReplyLoading(true);
                         try {
                           const payload = {
-                            // ✅ ผูกกับคำถามที่ถูกต้อง (ไม่ใช่ selectedLesson)
                             questionAnswerId: qa.id,
-                            // เผื่อ backend ตรวจสอบ
                             lessonId: selectedLesson?.id,
                             trainerReply,
                             trainerEmail: email,
-                            avatarUrl:avatarUrl,
-                            trainerName:  fullName || "Trainer",
+                            avatarUrl,
+                            trainerName: fullName || "Trainer",
                             createdAt: new Date().toISOString(),
                           };
-
-                          console.log("POST reply payload:", payload);
-
-                          await axios.post(
-                            "/api/trainer-question-answer/Update-answer-to-learning-content",
-                            payload,
-                            { headers: authHeader }
-                          );
-
-                          // refresh thread
-                          if (selectedUser && selectedLesson) {
-                            await fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
-                          }
-
-                          alert("✅ Trainer answer sent successfully!");
+                          await api.post("/api/trainer-question-answer/Update-answer-to-learning-content", payload);
+                          await fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson!.id);
                           setTrainerReply("");
+                          alert("✅ Trainer answer sent!");
                         } catch (err) {
-                          if (axios.isAxiosError(err)) {
-                            console.error("❌ Failed to send trainer answer:", err.response?.status, err.response?.data || err.message);
-                            alert(`Failed to send trainer answer: ${err.response?.status ?? ""} ${JSON.stringify(err.response?.data ?? err.message)}`);
-                          } else {
-                            console.error("❌ Failed to send trainer answer:", err);
-                            alert("Failed to send trainer answer.");
-                          }
+                          console.error("❌ Reply failed:", err);
+                          alert("Failed to send reply.");
                         } finally {
                           setReplyLoading(false);
                         }
                       }}
+                      disabled={replyLoading || !trainerReply.trim()}
                       className={`mt-2 px-4 py-2 rounded-lg ${
-                        replyLoading || !trainerReply.trim()
+                        replyLoading
                           ? "bg-gray-300 text-gray-500 cursor-not-allowed"
                           : "bg-green-600 text-white hover:bg-green-700"
                       }`}
-                      disabled={replyLoading || !trainerReply.trim()}
                     >
                       {replyLoading ? "Sending..." : "Send Trainer Answer"}
                     </button>
                   </div>
                 )}
               </div>
-            ) : (
-              <p className="text-gray-400">← Select a user to see details</p>
             )}
           </section>
         </div>
       </main>
 
-      {/* Edit Lesson Modal */}
       {showEditModal && selectedLesson && (
         <EditLessonModal
           open={showEditModal}
