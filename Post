@@ -1,127 +1,774 @@
-จากเดิม :
-if (qId != null && existingById.containsKey(qId)) {
-    // อัปเดตคำถามเดิม
-    question = existingById.get(qId);
-    log.info("Updating existing question ID: {} for content {}", qId, id);
-} else {
-    // เพิ่มคำถามใหม่
-    question = new QuestionEntity();
-    String newId = generateId();
-    question.setId(newId);
-    question.setLearningContent(lc);
-    em.persist(question);
-    isNew = true;
-    log.info("Creating new question ID: {} for content {}", newId, id);
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useContext, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { X, Save, Plus, Trash2 } from "lucide-react";
+import { TARGET_OPTION } from "../AdminUtil";
+import type { QuestionForm } from "../../../types/trainer/types";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import { CATEGORY_GROUP } from "../../../types/base/types";
+
+export interface Lesson {
+  id: number | string;
+  title: string;
+  thumbnailUrl?: string;
+  category: string;
+  description: string;
+  contentType: "video" | "document";
+  assignType: "all" | "team" | "specific";
+  quizAvailable?: boolean;
 }
 
-เป็น : 
-if (qId != null) {
-    QuestionEntity existing = em.find(QuestionEntity.class, qId);
-    if (existing != null) {
-        question = existing;
-        log.info("Reusing existing question ID: {} for content {}", qId, id);
-    } else {
-        question = new QuestionEntity();
-        question.setId(qId); // ใช้ id เดิมจาก FE ถ้าไม่ชน
-        question.setLearningContent(lc);
-        em.persist(question);
-        log.info("Creating new question with provided ID: {} for content {}", qId, id);
-    }
-} else {
-    question = new QuestionEntity();
-    question.setId(generateId()); // ไม่มี id จาก FE -> generate ใหม่
-    question.setLearningContent(lc);
-    em.persist(question);
-    log.info("Creating new question with new ID: {} for content {}", question.getId(), id);
+interface EditLessonModalProps {
+  open: boolean;
+  initial: Lesson;
+  onClose: () => void;
+  onSave: (data: {
+    title: string;
+    category: string;
+    description: string;
+    thumbnailUrl?: string;
+    video?: File | null;
+    contentType: "video" | "document";
+    assignType: "all" | "team" | "specific";
+    quizAvailable: boolean;
+    questions?: QuestionForm[];
+  }) => Promise<void> | void;
 }
 
-ส่วน choice dto : 
-if (choice == null) {
-    // choice ใหม่
-    String newCid =
-        (cId != null && em.find(QuestionChoiceEntity.class, cId) == null)
-                ? cId
-                : generateId();
+type Choice = { choiceId?: string; text: string; correct?: boolean };
+type QuestionTypeUI = "MULTIPLE" | "FILL_BLANK";
 
-    choice = new QuestionChoiceEntity();
-    choice.setId(newCid);
-    choice.setQuestion(question);
-    existingChoices.add(choice); // cascade จะ persist ให้
-    log.info("Creating new choice ID: {} for question {}", newCid, question.getId());
-}
-
-เป็น :
-if (choice == null) {
-    choice = new QuestionChoiceEntity();
-    if (cId != null) {
-        QuestionChoiceEntity existingChoice = em.find(QuestionChoiceEntity.class, cId);
-        if (existingChoice != null) {
-            choice = existingChoice; // ใช้ของเดิม
-            log.info("Reusing existing choice ID: {} for question {}", cId, question.getId());
-        } else {
-            choice.setId(cId); // ใช้ id ที่ FE ส่งมา ถ้าไม่ชน
-            log.info("Creating new choice with provided ID: {} for question {}", cId, question.getId());
-        }
-    } else {
-        choice.setId(generateId()); // ไม่มี id -> generate ใหม่
-        log.info("Creating new choice with new ID: {} for question {}", choice.getId(), question.getId());
-    }
-    choice.setQuestion(question);
-    existingChoices.add(choice);
-}
-
-
-FE:
-export type QuestionForm = {
-  questionId?: string; // เพิ่ม
+type Q = {
+  questionId?: string;
   questionText: string;
-  type: "multiple" | "fill_blank";
+  type: QuestionTypeUI;
+  choices: Choice[];
+  correctAnswer?: string;
   points?: number;
-  options: string[];
-  correctAnswers: string[];
-  choiceIds?: string[]; // เพิ่ม ถ้าระบุได้
 };
-2. ปรับ payload ใน handleVideoSubmit()
 
-ให้แน่ใจว่าส่งทั้ง questionId และ choiceId กลับไป
-formData.append(
-  "questions",
-  JSON.stringify(
-    form.questions.map((q) => ({
-      questionId: q.questionId ?? null, // ✅ ส่ง id เดิมถ้ามี
-      questionText: q.questionText,
-      type: q.type,
-      points: q.points ?? 1,
-      choices:
-        q.type === "multiple"
-          ? q.options.map((text, idx) => ({
-              choiceId: q.choiceIds?.[idx] ?? null, // ✅ ส่ง id เดิมถ้ามี
-              text,
-              correct: q.correctAnswers.includes(text),
-            }))
-          : [
-              {
-                text: q.correctAnswers[0] ?? "",
-                correct: true,
-              },
-            ],
-    }))
-  )
-);
-
-3. เมื่อดึงข้อมูล quiz มาแก้ไข (หน้า Edit)
-
-เวลาคุณโหลด lesson เพื่อแก้ไข quiz
-อย่าลืม map ID เดิมใส่ใน form.questions เช่น
-setForm({
-  ...form,
-  questions: lessonData.questions.map(q => ({
-    questionId: q.questionId,
-    questionText: q.questionText,
-    type: q.type,
-    points: q.points,
-    options: q.choices?.map(c => c.text) || [],
-    choiceIds: q.choices?.map(c => c.choiceId) || [],
-    correctAnswers: q.choices?.filter(c => c.correct).map(c => c.text) || [],
-  }))
+const emptyChoice = (): Choice => ({ text: "", correct: false });
+const emptyMultiple = (): Q => ({
+  questionText: "",
+  type: "MULTIPLE",
+  choices: [emptyChoice(), emptyChoice()],
+  points: 1,
 });
+
+const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProps) => {
+  const { token } = useContext(AuthContext);
+
+  const [title, setTitle] = useState(initial.title);
+  const [category, setCategory] = useState(initial.category);
+  const [description, setDescription] = useState(initial.description);
+  const [thumbnailUrl, setThumbnailUrl] = useState(initial.thumbnailUrl ?? "");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [contentType, setContentType] = useState<"video" | "document">("video");
+  const [assignType, setAssignType] = useState<"all" | "specific" | "team">("all");
+  const [saving, setSaving] = useState(false);
+  const [quizAvailable, setQuizAvailable] = useState(initial.quizAvailable ?? false);
+  const [questions, setQuestions] = useState<Q[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [categoryGroup, setCategoryGroup] = useState<string>("");
+  const [categorySub, setCategorySub] = useState<string>();
+
+  const categoryValue = categorySub ? `${categoryGroup} > ${categorySub}` : categoryGroup;
+
+  useEffect(() => {
+    setTitle(initial.title);
+    let grp = "";
+    let sub: string | undefined = "";
+    if (initial.category) {
+      if (initial.category.includes(">")) {
+        const parts = initial.category.split(">").map((s) => s.trim());
+        grp = parts[0] ?? "";
+        sub = parts[1] ?? "";
+      } else {
+        for (const g of Object.keys(CATEGORY_GROUP)) {
+          if ((CATEGORY_GROUP[g] || []).includes(initial.category)) {
+            grp = g;
+            sub = initial.category;
+            break;
+          }
+        }
+        if (!grp) {
+          grp = initial.category;
+          sub = "";
+        }
+      }
+    }
+    setCategory(initial.category);
+    setCategoryGroup(grp);
+    setCategorySub(sub);
+    setDescription(initial.description);
+    setThumbnailUrl(initial.thumbnailUrl ?? "");
+    setContentType(initial.contentType ?? "video");
+    setAssignType(initial.assignType ?? "all");
+    setQuizAvailable(initial.quizAvailable ?? false);
+    setQuestions([]);
+  }, [initial]);
+
+  // ✅ UPDATED: fetch questions and preserve IDs
+  useEffect(() => {
+    if (!open) return;
+    const fetchLessonDetails = async () => {
+      if (!initial?.id) return;
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/learning/${encodeURIComponent(String(initial.id))}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const qs: Q[] = Array.isArray(data.questions)
+          ? data.questions.map((q: any): Q => {
+              const type = (q.type || "").toUpperCase();
+              if (type === "FILL_BLANK") {
+                return {
+                  questionId: q.questionId ?? q.id,
+                  questionText: q.questionText ?? "",
+                  type: "FILL_BLANK",
+                  correctAnswer: q.correctAnswer ?? "",
+                  points: q.points ?? 1,
+                  choices: [],
+                };
+              }
+              return {
+                questionId: q.questionId ?? q.id,
+                questionText: q.questionText ?? "",
+                type: "MULTIPLE",
+                points: q.points ?? 1,
+                choices: (q.choices ?? []).map((c: any) => ({
+                  choiceId: c.choiceId ?? c.id,
+                  text: c.text ?? "",
+                  correct: Boolean(c.correct ?? false),
+                })),
+              };
+            })
+          : [];
+        setQuestions(qs.length ? qs : [emptyMultiple()]);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchLessonDetails();
+  }, [open, initial.id, token]);
+
+  /* ==================== Submit ==================== */
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      let payloadQuestions: QuestionForm[] | undefined = undefined;
+
+      if (quizAvailable) {
+        payloadQuestions = questions
+          .filter((q) => q.questionText.trim())
+          .map((q) => {
+            const base = {
+              questionId: q.questionId ?? null, // ✅ keep existing id if any
+              questionText: q.questionText.trim(),
+              points: q.points ?? 1,
+            } as any;
+
+            if (q.type === "FILL_BLANK") {
+              return {
+                ...base,
+                type: "fill_blank", // ✅ match backend enum
+                correctAnswer: q.correctAnswer?.trim() ?? "",
+              };
+            }
+
+            // MULTIPLE
+            const choices = (q.choices || [])
+              .filter((c) => c.text.trim())
+              .map((c) => ({
+                choiceId: c.choiceId ?? null, // ✅ preserve id
+                text: c.text.trim(),
+                correct: !!c.correct,
+              }));
+
+            return {
+              ...base,
+              type: "multiple",
+              choices,
+            };
+          });
+      }
+
+      const payload = {
+        title: title.trim(),
+        category: categoryValue,
+        description: description.trim(),
+        thumbnailUrl: thumbnailUrl.trim() || undefined,
+        video: videoFile,
+        contentType,
+        assignType: assignType as "all" | "team" | "specific",
+        quizAvailable,
+        questions: payloadQuestions,
+      };
+
+      console.log("Saving payload:", payload);
+      await onSave(payload);
+    } catch (err) {
+      console.error("Save failed:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) return null;
+
+  // ... (rest of your UI stays unchanged)
+  // ✅ ไม่มีความจำเป็นต้องเปลี่ยนส่วน UI เพิ่มเติม
+  return createPortal(
+    <div className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4" onClick={onClose}>
+      {/* Modal UI same as your version */}
+      {/* (ตัดเพื่อย่อ) */}
+    </div>,
+    document.body
+  );
+};
+
+export default EditLessonModal;
+
+
+=====================
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { useContext, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { X, Save, Plus, Trash2 } from "lucide-react";
+import { TARGET_OPTION } from "../AdminUtil";
+import type { QuestionForm } from "../../../types/trainer/types";
+import { AuthContext } from "../../../Authentication/AuthContext";
+import { CATEGORY_GROUP } from "../../../types/base/types";
+
+export interface Lesson {
+  id: number | string;
+  title: string;
+  thumbnailUrl?: string;
+  category: string;
+  description: string;
+  contentType: "video" | "document";
+  assignType: "all" | "team" | "specific";
+  quizAvailable?: boolean;
+}
+
+interface EditLessonModalProps {
+  open: boolean;
+  initial: Lesson;
+  onClose: () => void;
+  onSave: (data: {
+    title: string;
+    category: string;
+    description: string;
+    thumbnailUrl?: string;
+    video?: File | null;
+    contentType: "video" | "document";
+    assignType: "all" | "team" | "specific";
+    quizAvailable: boolean;
+    questions?: QuestionForm[];
+  }) => Promise<void> | void;
+}
+
+type Choice = { choiceId?: string | null; text: string; correct?: boolean };
+type QuestionTypeUI = "MULTIPLE" | "FILL_BLANK";
+
+type Q = {
+  questionId?: string | null;
+  questionText: string;
+  type: QuestionTypeUI;
+  choices: Choice[];
+  correctAnswer?: string;
+  points?: number;
+};
+
+const emptyChoice = (): Choice => ({ text: "", correct: false });
+const emptyMultiple = (): Q => ({
+  questionText: "",
+  type: "MULTIPLE",
+  choices: [emptyChoice(), emptyChoice()],
+  points: 1,
+});
+
+const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProps) => {
+  const { token } = useContext(AuthContext);
+
+  const [title, setTitle] = useState(initial.title);
+  const [category, setCategory] = useState(initial.category);
+  const [description, setDescription] = useState(initial.description);
+  const [thumbnailUrl, setThumbnailUrl] = useState(initial.thumbnailUrl ?? "");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [contentType, setContentType] = useState<"video" | "document">("video");
+  const [assignType, setAssignType] = useState<"all" | "specific" | "team">("all");
+  const [saving, setSaving] = useState(false);
+  const [quizAvailable, setQuizAvailable] = useState(initial.quizAvailable ?? false);
+  const [questions, setQuestions] = useState<Q[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [categoryGroup, setCategoryGroup] = useState<string>("");
+  const [categorySub, setCategorySub] = useState<string>();
+
+  const categoryValue = categorySub ? `${categoryGroup} > ${categorySub}` : categoryGroup;
+
+  /* ==================== Reset fields when opening ==================== */
+  useEffect(() => {
+    setTitle(initial.title);
+    let grp = "";
+    let sub: string | undefined = "";
+
+    if (initial.category) {
+      if (initial.category.includes(">")) {
+        const parts = initial.category.split(">").map((s) => s.trim());
+        grp = parts[0] ?? "";
+        sub = parts[1] ?? "";
+      } else {
+        for (const g of Object.keys(CATEGORY_GROUP)) {
+          if ((CATEGORY_GROUP[g] || []).includes(initial.category)) {
+            grp = g;
+            sub = initial.category;
+            break;
+          }
+        }
+        if (!grp) {
+          grp = initial.category;
+          sub = "";
+        }
+      }
+    }
+
+    setCategory(initial.category);
+    setCategoryGroup(grp);
+    setCategorySub(sub);
+    setDescription(initial.description);
+    setThumbnailUrl(initial.thumbnailUrl ?? "");
+    setContentType(initial.contentType ?? "video");
+    setAssignType(initial.assignType ?? "all");
+    setQuizAvailable(initial.quizAvailable ?? false);
+    setQuestions([]);
+  }, [initial]);
+
+  /* ==================== Fetch full lesson + quiz ==================== */
+  useEffect(() => {
+    if (!open || !initial?.id) return;
+    const fetchLessonDetails = async () => {
+      setLoading(true);
+      try {
+        const url = `/api/learning/${encodeURIComponent(String(initial.id))}`;
+        const res = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          cache: "no-store",
+        });
+        if (!res.ok) throw new Error("Failed to fetch lesson");
+        const data = await res.json();
+
+        const qs: Q[] = Array.isArray(data.questions)
+          ? data.questions.map((q: any): Q => {
+              const type = (q.type || "").toString().toUpperCase();
+              if (type === "FILL_BLANK") {
+                return {
+                  questionId: q.questionId ?? q.id ?? null,
+                  questionText: q.questionText ?? "",
+                  type: "FILL_BLANK",
+                  correctAnswer: q.correctAnswer ?? "",
+                  points: q.points ?? 1,
+                  choices: [],
+                };
+              }
+
+              const normalizedChoices: Choice[] = (q.choices ?? []).map((c: any) => ({
+                choiceId: c.choiceId ?? c.id ?? null,
+                text: c.text ?? c.choiceText ?? "",
+                correct: Boolean(c.correct ?? c.isCorrect ?? false),
+              }));
+
+              return {
+                questionId: q.questionId ?? q.id ?? null,
+                questionText: q.questionText ?? "",
+                type: "MULTIPLE",
+                points: q.points ?? 1,
+                choices:
+                  normalizedChoices.length >= 2
+                    ? normalizedChoices
+                    : [emptyChoice(), emptyChoice()],
+              };
+            })
+          : [];
+
+        setQuestions(qs.length ? qs : [emptyMultiple()]);
+      } catch (err) {
+        console.error("Failed to fetch lesson:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchLessonDetails();
+  }, [open, initial.id, token]);
+
+  /* ==================== Quiz helper functions ==================== */
+
+  const addQuestion = () => setQuestions((prev) => [...prev, emptyMultiple()]);
+  const removeQuestion = (idx: number) =>
+    setQuestions((prev) => prev.filter((_, i) => i !== idx));
+
+  const updateQuestionText = (idx: number, text: string) =>
+    setQuestions((prev) =>
+      prev.map((q, i) => (i === idx ? { ...q, questionText: text } : q))
+    );
+
+  const updateQuestionType = (idx: number, type: QuestionTypeUI) =>
+    setQuestions((prev) =>
+      prev.map((q, i) => {
+        if (i !== idx) return q;
+        if (q.type === type) return q;
+
+        if (type === "MULTIPLE") {
+          return {
+            ...q,
+            type: "MULTIPLE",
+            choices: q.choices?.length ? q.choices : [emptyChoice(), emptyChoice()],
+            correctAnswer: undefined,
+          };
+        }
+        return {
+          ...q,
+          type: "FILL_BLANK",
+          correctAnswer: q.correctAnswer ?? "",
+          choices: [],
+        };
+      })
+    );
+
+  const updateQuestionPoints = (idx: number, points: number) =>
+    setQuestions((prev) =>
+      prev.map((q, i) => (i === idx ? { ...q, points } : q))
+    );
+
+  const addChoice = (qIdx: number) =>
+    setQuestions((prev) =>
+      prev.map((q, i) =>
+        i === qIdx ? { ...q, choices: [...q.choices, emptyChoice()] } : q
+      )
+    );
+
+  const removeChoice = (qIdx: number, cIdx: number) =>
+    setQuestions((prev) =>
+      prev.map((q, i) =>
+        i === qIdx
+          ? { ...q, choices: q.choices.filter((_, ci) => ci !== cIdx) }
+          : q
+      )
+    );
+
+  const updateChoiceText = (qIdx: number, cIdx: number, text: string) =>
+    setQuestions((prev) =>
+      prev.map((q, i) =>
+        i === qIdx
+          ? {
+              ...q,
+              choices: q.choices.map((c, ci) =>
+                ci === cIdx ? { ...c, text } : c
+              ),
+            }
+          : q
+      )
+    );
+
+  const toggleChoiceCorrect = (qIdx: number, cIdx: number) =>
+    setQuestions((prev) =>
+      prev.map((q, i) => {
+        if (i !== qIdx) return q;
+        return {
+          ...q,
+          choices: q.choices.map((c, ci) =>
+            ci === cIdx ? { ...c, correct: !c.correct } : c
+          ),
+        };
+      })
+    );
+
+  const updateFillBlankAnswer = (qIdx: number, value: string) =>
+    setQuestions((prev) =>
+      prev.map((q, i) =>
+        i === qIdx ? { ...q, correctAnswer: value } : q
+      )
+    );
+
+  /* ==================== Submit ==================== */
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      let payloadQuestions: QuestionForm[] | undefined = undefined;
+
+      if (quizAvailable) {
+        payloadQuestions = questions
+          .filter((q) => q.questionText.trim())
+          .map((q) => {
+            const base = {
+              questionId: q.questionId ?? null,
+              questionText: q.questionText.trim(),
+              points: q.points ?? 1,
+            } as any;
+
+            if (q.type === "FILL_BLANK") {
+              return {
+                ...base,
+                type: "fill_blank",
+                correctAnswer: q.correctAnswer?.trim() ?? "",
+              } as QuestionForm;
+            }
+
+            const choices = (q.choices ?? [])
+              .filter((c) => c.text.trim())
+              .map((c) => ({
+                choiceId: c.choiceId ?? null,
+                text: c.text.trim(),
+                correct: !!c.correct,
+              }));
+
+            return {
+              ...base,
+              type: "multiple",
+              choices,
+            } as QuestionForm;
+          });
+      }
+
+      const payload = {
+        title: title.trim(),
+        category: categoryValue,
+        description: description.trim(),
+        thumbnailUrl: thumbnailUrl.trim() || undefined,
+        video: videoFile,
+        contentType,
+        assignType,
+        quizAvailable,
+        questions: payloadQuestions,
+      };
+
+      console.log("Saving payload:", payload);
+      await onSave(payload);
+    } catch (err) {
+      console.error("Save failed:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) return null;
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+
+  /* ==================== Render ==================== */
+  return createPortal(
+    <div
+      className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4"
+      onClick={onClose}
+      aria-modal="true"
+      role="dialog"
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-6 overflow-auto max-h-[90vh]"
+        onClick={stop}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">Edit Learning Content</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700"
+            type="button"
+            aria-label="Close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="p-6 text-sm text-gray-500">Loading lesson...</div>
+        ) : (
+          <form className="space-y-4" onSubmit={handleSubmit}>
+            {/* Title & Category */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Title
+                </label>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2"
+                  placeholder="Lesson title"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Category
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={categoryGroup}
+                    onChange={(e) => {
+                      setCategoryGroup(e.target.value);
+                      setCategorySub("");
+                    }}
+                    className="border rounded px-2 py-1"
+                  >
+                    <option value={categoryGroup}>{categoryGroup}</option>
+                    {Object.keys(CATEGORY_GROUP).map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                  {(CATEGORY_GROUP[categoryGroup] ?? []).length > 0 && (
+                    <select
+                      value={categorySub}
+                      onChange={(e) => setCategorySub(e.target.value)}
+                      className="border rounded px-2 py-1"
+                    >
+                      {CATEGORY_GROUP[categoryGroup].map((sub) => (
+                        <option key={sub} value={sub}>
+                          {sub}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Description */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Description
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full h-28 border rounded-lg px-3 py-2"
+                placeholder="Description"
+                required
+              />
+            </div>
+
+            {/* Quiz toggle */}
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={quizAvailable}
+                  onChange={(e) => setQuizAvailable(e.target.checked)}
+                />
+                <span className="text-sm">Quiz available</span>
+              </label>
+            </div>
+
+            {/* Quiz editor */}
+            {quizAvailable && (
+              <div className="border rounded-lg p-4 bg-gray-50">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold">Questions</h3>
+                  <button
+                    type="button"
+                    onClick={addQuestion}
+                    className="inline-flex items-center gap-2 px-3 py-1 bg-white border rounded text-sm"
+                  >
+                    <Plus size={14} /> Add question
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {questions.map((q, qi) => (
+                    <div
+                      key={q.questionId ?? qi}
+                      className="bg-white border rounded p-3"
+                    >
+                      {/* Header */}
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <label className="text-xs text-gray-500">
+                              Question {qi + 1}
+                            </label>
+                            <select
+                              value={q.type}
+                              onChange={(e) =>
+                                updateQuestionType(qi, e.target.value as QuestionTypeUI)
+                              }
+                              className="text-xs border rounded px-1.5 py-0.5"
+                            >
+                              <option value="MULTIPLE">Multiple choice</option>
+                              <option value="FILL_BLANK">Fill in the blank</option>
+                            </select>
+                            <input
+                              type="number"
+                              min={1}
+                              value={q.points ?? 1}
+                              onChange={(e) =>
+                                updateQuestionPoints(qi, Number(e.target.value) || 1)
+                              }
+                              className="w-14 text-xs border rounded px-1 py-0.5"
+                              title="Points"
+                            />
+                          </div>
+                          <input
+                            value={q.questionText}
+                            onChange={(e) =>
+                              updateQuestionText(qi, e.target.value)
+                            }
+                            className="w-full mt-1 border rounded px-2 py-1 text-sm"
+                            placeholder="Question text"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeQuestion(qi)}
+                          className="text-red-500"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+
+                      {/* MULTIPLE */}
+                      {q.type === "MULTIPLE" && (
+                        <div className="mt-3 space-y-2">
+                          {q.choices.map((c, ci) => (
+                            <div key={c.choiceId ?? ci} className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleChoiceCorrect(qi, ci)}
+                                className={`px-2 py-1 rounded text-xs ${
+                                  c.correct
+                                    ? "bg-green-500 text-white"
+                                    : "bg-gray-200 text-gray-700"
+                                }`}
+                              >
+                                {c.correct ? "✓" : "○"}
+                              </button>
+                              <input
+                                value={c.text}
+                                onChange={(e) => updateChoiceText(qi, ci, e.target.value)}
+                                className="flex-1 border rounded px-2 py-1 text-sm"
+                                placeholder={`Choice ${ci + 1}`}
+                              />
+                              {q.choices.length > 2 && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeChoice(qi, ci)}
+                                  className="text-red-500"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => addChoice
