@@ -1,329 +1,290 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { useContext, useEffect, useState } from "react";
-import axios from "axios";
-import { useNavigate } from "react-router-dom";
-import { Pencil } from "lucide-react";
-import { AuthContext } from "../../../Authentication/AuthContext";
-import AdminSidebarWidget from "../Widgets/AdminSideBar";
-import EditLessonModal, { type Lesson } from "./EditLessonModal";
-import { sendLessonNotification } from "../Widgets/notificationServices";
-import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
-import type { QuestionAnswer, UserProgress } from "../../../types/trainer/types";
-import { ENDPOINTS } from "../../../config/endpoints";
+  @PUT
+    @Path("/{id}")
+    @Transactional
+    @RolesAllowed(Roles.ROLE_TRAINER)
+    public LearningContentDto update(
+            @PathParam("id") String id,
+            LearningContentDto dto,
+            @Context SecurityContext securityContext
+    ) {
+        String currentUser = securityContext.getUserPrincipal().getName();
+        String methodName = Thread.currentThread().getStackTrace()[1].getMethodName();
+        log.info("User '{}' called method '{}' to update Learning content with ID: {}", currentUser, methodName, id);
 
-const AdminTaskManagementPage = () => {
-  const { token } = useContext(AuthContext);
-  const { email, fullName, avatarUrl } = useUserProfile(token);
-  const navigate = useNavigate();
+        LearningContent lc = em.find(LearningContent.class, id);
+        if (lc == null) {
+            log.error("Learning content with ID: {} not found in method -> {}", id, methodName);
+            throw new NotFoundException();
+        }
 
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
-  const [progressList, setProgressList] = useState<UserProgress[]>([]);
-  const [selectedUser, setSelectedUser] = useState<UserProgress | null>(null);
-  const [loading, setLoading] = useState(false);
+        // อนุญาตเฉพาะเจ้าของ (ปรับตาม policy ได้)
+        if (lc.getAuthorEmail() != null && !lc.getAuthorEmail().equalsIgnoreCase(currentUser)) {
+            log.warn("User {} is not owner of content {} (owner: {}), forbidden", currentUser, id, lc.getAuthorEmail());
+            throw new ForbiddenException("You are not allowed to update this learning content");
+        }
 
-  const [feedback, setFeedback] = useState("");
-  const [trainerReply, setTrainerReply] = useState("");
-  const [replyLoading, setReplyLoading] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [userLessonQuestion, setUserLessonQuestion] = useState<QuestionAnswer[] | undefined>();
+        /* ==================== อัปเดตข้อมูลพื้นฐาน ==================== */
+        if (dto.title() != null) {
+            lc.setTitle(dto.title());
+        }
+        if (dto.description() != null) {
+            lc.setDescription(dto.description());
+        }
+        if (dto.category() != null) {
+            lc.setCategory(dto.category());
+        }
+        if (dto.thumbnailUrl() != null) {
+            lc.setThumbnailUrl(dto.thumbnailUrl());
+        }
+        if (dto.authorAvatarUrl() != null) {
+            lc.setAuthorAvatarUrl(dto.authorAvatarUrl());
+        }
+        if (dto.assignType() != null) {
+            lc.setAssignType(dto.assignType());
+        }
 
-  const authHeader = token ? { Authorization: `Bearer ${token}` } : undefined;
+        if (dto.assignedUserIds() != null) {
+            var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedUserIds()).orElseGet(ArrayList::new));
+            merged.addAll(dto.assignedUserIds());
+            lc.setAssignedUserIds(new ArrayList<>(merged));
+        }
 
-  // ---------- Helper ----------
-  const fmtDate = (iso?: string) => {
-    if (!iso) return "";
-    try {
-      return new Date(iso).toLocaleString();
-    } catch {
-      return iso;
-    }
-  };
+        if (dto.assignedTeamIds() != null) {
+            var merged = new LinkedHashSet<>(Optional.ofNullable(lc.getAssignedTeamIds()).orElseGet(ArrayList::new));
+            merged.addAll(dto.assignedTeamIds());
+            lc.setAssignedTeamIds(new ArrayList<>(merged));
+        }
 
-  // ---------- Fetch lessons ----------
-  const fetchLessons = async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get<Lesson[]>("/api/learning?mine=true", { headers: authHeader });
-      setLessons(res.data);
-    } catch (err) {
-      console.error("❌ Failed to load lessons:", err);
-      alert("Failed to fetch lessons.");
-    } finally {
-      setLoading(false);
-    }
-  };
+        if (dto.dueDate() != null) {
+            lc.setDueDate(dto.dueDate());
+        }
+        if (dto.quizAvailable() != null) {
+            lc.setQuizAvailable(dto.quizAvailable());
+        }else if (dto.questions() != null){
+            lc.setQuizAvailable(Boolean.TRUE);
+        }
 
-  // ---------- Fetch progress ----------
-  const handleSelectLesson = async (lesson: Lesson) => {
-    setSelectedLesson(lesson);
-    setSelectedUser(null);
-    setUserLessonQuestion(undefined);
-    setTrainerReply("");
+        /* ==================== อัปเดต Quiz ==================== */
 
-    try {
-      const res = await axios.get<UserProgress[]>(ENDPOINTS.AlluserProgress, { headers: authHeader });
-      const lessonProgress = res.data.filter((p) => p.lessonId === lesson.id);
+        List<QuestionDTO> dtoQuestions = dto.questions();
+        List<QuestionDTO> resultQuestions = new ArrayList<>();
 
-      // keep last progress per user
-      const latestByUser = new Map<string, UserProgress>();
-      lessonProgress.forEach((entry) => latestByUser.set(entry.userEmail, entry));
+        if (dtoQuestions != null) {
+            // โหลดคำถามเดิมทั้งหมดของ content นี้ (managed)
+            List<QuestionEntity> existingQuestions = em.createQuery(
+                            "SELECT q FROM QuestionEntity q WHERE q.learningContent.id = :contentId",
+                            QuestionEntity.class)
+                    .setParameter("contentId", id)
+                    .getResultList();
 
-      setProgressList(Array.from(latestByUser.values()));
-    } catch (err) {
-      console.error("❌ Failed to fetch progress:", err);
-      alert("Failed to load progress data.");
-    }
-  };
+            Map<String, QuestionEntity> existingById = existingQuestions.stream()
+                    .filter(q -> q.getId() != null)
+                    .collect(Collectors.toMap(QuestionEntity::getId, q -> q));
 
-  // ---------- Fetch user lesson question ----------
-  const fetchUserLessonQuestion = async (userEmail: string, lessonId: string | number) => {
-    try {
-      const emailPath = encodeURIComponent(userEmail);
-      const res = await axios.get<QuestionAnswer | QuestionAnswer[]>(
-        `/api/trainer-question-answer/get-answer-reply-by-question-id/${emailPath}/${lessonId}`,
-        { headers: authHeader }
-      );
-      const data = res.data;
-      if (!data) setUserLessonQuestion([]);
-      else if (Array.isArray(data)) setUserLessonQuestion(data);
-      else setUserLessonQuestion([data]);
-    } catch (err) {
-      console.error("❌ Failed to fetch user lesson question:", err);
-      setUserLessonQuestion([]);
-    }
-  };
+            Set<String> keepQuestionIds = new HashSet<>();
 
-  // ---------- Fetch user ID for notification ----------
-  const fetchUserIdByEmail = async (userEmail: string) => {
-    try {
-      const res = await axios.get("/api/profile/users", {
-        params: { email: userEmail },
-        headers: authHeader,
-      });
-      const users = res.data;
-      if (Array.isArray(users) && users.length > 0) {
-        const user = users.find((u: any) => u.email === userEmail);
-        return user?.id || null;
-      }
-      return null;
-    } catch (err) {
-      console.error("❌ Failed to fetch userId:", err);
-      return null;
-    }
-  };
+            for (QuestionDTO qdto : dtoQuestions) {
+                // FE ต้องส่ง questionId กลับมาถ้าเป็นคำถามเดิม
+                String qId = qdto.questionId;
 
-  // ---------- useEffect ----------
-  useEffect(() => {
-    if (!token) {
-      navigate("/");
-      return;
-    }
-    fetchLessons();
-  }, [token, navigate]);
+                QuestionEntity question;
+                boolean isNew = false;
 
-  useEffect(() => {
-    if (selectedUser && selectedLesson) {
-      fetchUserLessonQuestion(selectedUser.userEmail, selectedLesson.id);
-    } else {
-      setUserLessonQuestion(undefined);
-    }
-  }, [selectedUser, selectedLesson]);
-
-  // ---------- Delete lesson ----------
-  const handleDeleteLesson = async (id: string) => {
-    if (!window.confirm("Delete this lesson? This cannot be undone!")) return;
-
-    try {
-      await axios.delete(ENDPOINTS.DeleteContent(Number(id)), { headers: authHeader });
-      setLessons((prev) => prev.filter((l) => String(l.id) !== id));
-
-      if (selectedLesson?.id === id) {
-        setSelectedLesson(null);
-        setProgressList([]);
-        setSelectedUser(null);
-        setUserLessonQuestion(undefined);
-      }
-
-      alert("✅ Lesson deleted successfully.");
-    } catch (err) {
-      console.error("❌ Delete failed:", err);
-      alert("Failed to delete lesson.");
-    }
-  };
-
-  // ---------- Save edited lesson ----------
-  const handleSaveLesson = async (data: { title: string; category: string; thumbnailUrl?: string }) => {
-    if (!selectedLesson) return;
-    try {
-      const payload: Lesson = { ...selectedLesson, ...data };
-      await axios.put(`/api/learning/${selectedLesson.id}`, payload, { headers: authHeader });
-
-      setLessons((prev) => prev.map((l) => (l.id === selectedLesson.id ? { ...l, ...payload } : l)));
-      setSelectedLesson((prev) => (prev ? { ...prev, ...payload } : prev));
-
-      setShowEditModal(false);
-      alert("✅ Lesson updated");
-    } catch (err) {
-      console.error("❌ Update failed:", err);
-      alert("Failed to update lesson information.");
-    }
-  };
-
-  if (!token) return null;
-
-  // ---------- UI ----------
-  return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <AdminSidebarWidget />
-
-      <main className="flex-1 p-10 space-y-6">
-        <h1 className="text-2xl font-bold text-blue-800 border-b pb-2">🧙 Learning Management</h1>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Lesson List */}
-          <section className="col-span-1 space-y-4">
-            {loading ? (
-              <p className="text-gray-500">Loading lessons...</p>
-            ) : (
-              lessons.map((lesson) => (
-                <div
-                  key={lesson.id}
-                  className={`relative cursor-pointer p-4 rounded-xl shadow border transition-all ${
-                    selectedLesson?.id === lesson.id
-                      ? "bg-blue-50 border-blue-500"
-                      : "bg-white hover:border-blue-500"
-                  }`}
-                >
-                  <div onClick={() => handleSelectLesson(lesson)} title="Click to view lesson details">
-                    <h3 className="font-semibold text-lg text-gray-800">{lesson.title}</h3>
-                    <p className="text-sm text-gray-500 opacity-60">Click to view details</p>
-                    <p className="text-xs text-purple-600 font-semibold uppercase">{lesson.category}</p>
-                  </div>
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowEditModal(true);
-                      setSelectedLesson(lesson);
-                    }}
-                    className="absolute top-2 right-10 text-gray-500 hover:text-gray-700"
-                    title="Edit lesson"
-                  >
-                    <Pencil size={18} />
-                  </button>
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteLesson(String(lesson.id));
-                    }}
-                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
-                    title="Delete lesson"
-                  >
-                    🗑
-                  </button>
-                </div>
-              ))
-            )}
-          </section>
-
-          {/* User Progress */}
-          <section className="col-span-1 space-y-4">
-            <div className="max-h-[60vh] overflow-auto pr-2 space-y-3">
-              {progressList.length === 0 && selectedLesson && <p className="text-gray-400">No progress yet…</p>}
-              {progressList.map((user) => (
-                <div
-                  key={`${user.lessonId}-${user.userEmail}`}
-                  className="p-4 bg-white rounded-xl shadow flex justify-between items-center"
-                >
-                  <div>
-                    <p className="font-medium text-gray-800">{user.userEmail}</p>
-                  </div>
-                  <button
-                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1 rounded shadow"
-                    onClick={() => setSelectedUser(user)}
-                  >
-                    View
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* User Details */}
-          <section className="col-span-1 bg-white p-6 rounded-xl shadow">
-            <h2 className="text-lg font-semibold mb-4 text-gray-700">Employee Progress Overview</h2>
-
-            <button
-              onClick={() => {
-                if (!selectedLesson) {
-                  alert("Please select a lesson first.");
-                  return;
+                if (qId != null && existingById.containsKey(qId)) {
+                    // อัปเดตคำถามเดิม
+                    question = existingById.get(qId);
+                    log.info("Updating existing question ID: {} for content {}", qId, id);
+                } else {
+                    // เพิ่มคำถามใหม่
+                    question = new QuestionEntity();
+                    String newId = generateId();
+                    question.setId(newId);
+                    question.setLearningContent(lc);
+                    em.persist(question);
+                    isNew = true;
+                    log.info("Creating new question ID: {} for content {}", newId, id);
                 }
-                const lessonId = encodeURIComponent(String(selectedLesson.id));
-                const userEmail = selectedUser ? encodeURIComponent(selectedUser.userEmail) : "";
-                // ✅ navigate under /admin route
-                if (userEmail) navigate(`/admin/trainer/quiz-history/${lessonId}/${userEmail}`);
-                else navigate(`/admin/trainer/quiz-history/${lessonId}`);
-              }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow"
-            >
-              📜 Quiz History
-            </button>
 
-            {selectedUser ? (
-              <div className="space-y-6 mt-4">
-                <div className="flex items-center gap-3">
-                  {selectedUser.authorAvatarUrl ? (
-                    <img
-                      src={selectedUser.authorAvatarUrl}
-                      alt="User avatar"
-                      className="w-10 h-10 rounded-full"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 bg-gray-200 rounded-full" />
-                  )}
-                  <div>
-                    <p className="font-medium text-gray-800">{selectedUser.userEmail}</p>
-                  </div>
-                </div>
+                keepQuestionIds.add(question.getId());
 
-                <div>
-                  <p className="text-sm text-gray-500">Progress</p>
-                  <progress value={selectedUser.percent} max={100} className="w-full h-2 mt-1" />
-                  <p className="text-right text-xs text-gray-500">{selectedUser.percent}%</p>
-                </div>
+                // อัปเดต field ของ question
+                question.setQuestionText(qdto.questionText);
+                question.setPoints(qdto.points != null ? qdto.points : 1);
 
-                <p className="text-sm text-gray-500">
-                  Quiz:{" "}
-                  {selectedUser?.score > 0 ? (
-                    <span className="text-green-600 font-semibold">
-                      Finished ({selectedUser.score} pts)
-                    </span>
-                  ) : (
-                    <span className="text-red-500">Not yet</span>
-                  )}
-                </p>
-              </div>
-            ) : (
-              <p className="text-gray-400 mt-4">← Select a user to see details</p>
-            )}
-          </section>
-        </div>
-      </main>
+                QuestionType type = resolveTypeFromDto(qdto);
+                question.setType(type);
 
-      {showEditModal && selectedLesson && (
-        <EditLessonModal
-          open={showEditModal}
-          initial={selectedLesson}
-          onClose={() => setShowEditModal(false)}
-          onSave={handleSaveLesson}
-        />
-      )}
-    </div>
-  );
-};
+                /* ========== MULTIPLE CHOICE ========== */
+                if (type == QuestionType.MULTIPLE) {
+                    if (question.getChoices() == null) {
+                        question.setChoices(new ArrayList<>());
+                    }
+                    List<QuestionChoiceEntity> existingChoices = question.getChoices();
 
-export default AdminTaskManagementPage;
+                    Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
+                            .filter(c -> c.getId() != null)
+                            .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
+
+                    Set<String> keepChoiceIds = new HashSet<>();
+
+                    if (qdto.choices != null) {
+                        for (ChoiceDTO cdto : qdto.choices) {
+                            String cId = cdto.getChoiceId();
+                            QuestionChoiceEntity choice = null;
+
+                            if (cId != null) {
+                                choice = choiceById.get(cId);
+                                if (choice == null) {
+                                    // fallback: ถ้ามีใน DB และ belong กับคำถามนี้ ให้ reuse
+                                    QuestionChoiceEntity found = em.find(QuestionChoiceEntity.class, cId);
+                                    if (found != null && found.getQuestion() != null &&
+                                            question.getId().equals(found.getQuestion().getId())) {
+                                        choice = found;
+                                        if (!existingChoices.contains(found)) {
+                                            existingChoices.add(found);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (choice == null) {
+                                // choice ใหม่
+                                String newCid =
+                                        (cId != null && em.find(QuestionChoiceEntity.class, cId) == null)
+                                                ? cId
+                                                : generateId();
+
+                                choice = new QuestionChoiceEntity();
+                                choice.setId(newCid);
+                                choice.setQuestion(question);
+                                existingChoices.add(choice); // cascade จะ persist ให้
+                                log.info("Creating new choice ID: {} for question {}", newCid, question.getId());
+                            }
+
+                            keepChoiceIds.add(choice.getId());
+                            choice.setChoiceText(cdto.getText());
+                            choice.setCorrect(cdto.isCorrect());
+                        }
+                    }
+
+                    // ลบ choices ที่ไม่อยู่ใน DTO
+                    for (var it = existingChoices.iterator(); it.hasNext(); ) {
+                        QuestionChoiceEntity c = it.next();
+                        if (!keepChoiceIds.contains(c.getId())) {
+                            log.info("Removing choice ID: {} from question {}", c.getId(), question.getId());
+                            em.remove(c); // orphanRemoval + remove
+                            it.remove();
+                        }
+                    }
+
+                    // เคลียร์ fill-blank ถ้ามี (กัน type เปลี่ยน)
+                    em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
+                            .setParameter("q", question)
+                            .executeUpdate();
+                }
+
+                /* ========== FILL IN THE BLANK ========== */
+                else if (type == QuestionType.FILL_BLANK) {
+                    // ลบ choices เดิมออก
+                    if (question.getChoices() != null && !question.getChoices().isEmpty()) {
+                        for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
+                            em.remove(c);
+                        }
+                        question.getChoices().clear();
+                    }
+
+                    // หา fill-blank เดิม
+                    List<QuestionFillBlankEntity> fbList = em.createQuery(
+                                    "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
+                                    QuestionFillBlankEntity.class)
+                            .setParameter("q", question)
+                            .getResultList();
+                    QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
+
+                    String answer = qdto.correctAnswer != null ? qdto.correctAnswer.trim() : "";
+
+                    if (!answer.isEmpty()) {
+                        if (fb == null) {
+                            fb = new QuestionFillBlankEntity();
+                            fb.setId(generateId());
+                            fb.setQuestion(question);
+                        }
+                        fb.setCorrectAnswer(answer); // ตั้งค่าก่อน persist/flush
+                        if (!em.contains(fb)) {
+                            em.persist(fb);
+                            log.info("Creating fill-blank record ID: {} for question {}", fb.getId(), question.getId());
+                        }
+                    } else if (fb != null) {
+                        log.info("Removing fill-blank record ID: {} for question {}", fb.getId(), question.getId());
+                        em.remove(fb);
+                    }
+                }
+
+                /* ========== TYPE อื่น ========== */
+                else {
+                    // ลบ choices ถ้ามี
+                    if (question.getChoices() != null && !question.getChoices().isEmpty()) {
+                        for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
+                            em.remove(c);
+                        }
+                        question.getChoices().clear();
+                    }
+                    // ลบ fill-blank ถ้ามี
+                    em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
+                            .setParameter("q", question)
+                            .executeUpdate();
+                }
+
+                resultQuestions.add(qdto);
+
+                if (isNew) {
+                    log.info("Question {} created for content {}", question.getId(), id);
+                } else {
+                    log.info("Question {} updated for content {}", question.getId(), id);
+                }
+            }
+
+            // ลบคำถามที่ไม่อยู่ใน DTO (ถ้าไม่มีคำตอบใน quiz_answers เท่านั้น)
+            for (QuestionEntity q : existingQuestions) {
+                if (!keepQuestionIds.contains(q.getId())) {
+                    // เช็คว่ามีคำตอบอ้างอิงอยู่ไหม
+                    Number answerCount = (Number) em.createNativeQuery(
+                                    "SELECT COUNT(*) FROM quiz_answers WHERE question_id = :qid")
+                            .setParameter("qid", q.getId())
+                            .getSingleResult();
+
+                    if (answerCount != null && answerCount.longValue() > 0L) {
+                        log.warn(
+                                "Skip deleting question {} because {} quiz_answers still reference it",
+                                q.getId(), answerCount.longValue()
+                        );
+                        continue; // ห้ามลบคำถามนี้
+                    }
+
+                    log.info("Removing question ID: {} from content {}", q.getId(), id);
+
+                    // ลบ fill-blank
+                    em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
+                            .setParameter("q", q)
+                            .executeUpdate();
+
+                    // ลบ choices
+                    if (q.getChoices() != null && !q.getChoices().isEmpty()) {
+                        for (QuestionChoiceEntity c : new ArrayList<>(q.getChoices())) {
+                            em.remove(c);
+                        }
+                        q.getChoices().clear();
+                    }
+
+                    em.remove(q);
+                }
+            }
+        } else {
+            log.info("No quiz data provided for content {}, skipping quiz update", id);
+        }
+
+        em.flush();
+        log.info("Learning content with ID: {} updated successfully in {}", id, methodName);
+
+        return LearningContentDto.withQuizInfo(lc, resultQuestions);
+    }
