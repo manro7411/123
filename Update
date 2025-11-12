@@ -1,3 +1,128 @@
+for (QuestionDTO qdto : dtoQuestions) {
+    QuestionEntity question = null;
+    boolean isNew = false;
+
+    // --- Case: มี questionId และพบในฐานข้อมูล ---
+    if (qdto.questionId != null && existingById.containsKey(qdto.questionId)) {
+        question = existingById.get(qdto.questionId);
+        log.info("Updating existing question ID: {}", qdto.questionId);
+    } 
+    // --- Case: ไม่มีคำถามเดิม หรือเป็นคำถามใหม่ ---
+    else {
+        question = new QuestionEntity();
+        question.setId(generateId());
+        question.setLearningContent(lc);
+        em.persist(question);
+        isNew = true;
+        log.info("Creating new question ID: {} for content {}", question.getId(), id);
+    }
+
+    keepQuestionIds.add(question.getId());
+    question.setQuestionText(qdto.questionText);
+    question.setPoints(qdto.points != null ? qdto.points : 1);
+
+    QuestionType type = resolveTypeFromDto(qdto);
+    question.setType(type);
+
+    // ===== MULTIPLE CHOICE =====
+    if (type == QuestionType.MULTIPLE) {
+        if (question.getChoices() == null)
+            question.setChoices(new ArrayList<>());
+
+        List<QuestionChoiceEntity> existingChoices = question.getChoices();
+        Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
+                .filter(c -> c.getId() != null)
+                .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
+
+        Set<String> keepChoiceIds = new HashSet<>();
+
+        if (qdto.choices != null) {
+            for (ChoiceDTO cdto : qdto.choices) {
+                QuestionChoiceEntity choice = null;
+
+                // --- ถ้ามี choiceId และอยู่ใน existing ---
+                if (cdto.getChoiceId() != null && choiceById.containsKey(cdto.getChoiceId())) {
+                    choice = choiceById.get(cdto.getChoiceId());
+                } 
+                // --- ถ้าเป็น choice ใหม่ ---
+                else {
+                    choice = new QuestionChoiceEntity();
+                    choice.setId(generateId());
+                    choice.setQuestion(question);
+                    existingChoices.add(choice);
+                    em.persist(choice);
+                    log.info("Creating new choice ID: {} for question {}", choice.getId(), question.getId());
+                }
+
+                keepChoiceIds.add(choice.getId());
+                choice.setChoiceText(cdto.getText());
+                choice.setCorrect(cdto.isCorrect());
+            }
+        }
+
+        // --- ลบ choice ที่ไม่มีใน DTO ---
+        for (Iterator<QuestionChoiceEntity> it = existingChoices.iterator(); it.hasNext();) {
+            QuestionChoiceEntity c = it.next();
+            if (!keepChoiceIds.contains(c.getId())) {
+                em.remove(c);
+                it.remove();
+                log.info("Removed old choice ID: {}", c.getId());
+            }
+        }
+
+        // ล้าง fill-blanks เก่า
+        em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
+                .setParameter("q", question)
+                .executeUpdate();
+    }
+    // ===== FILL BLANK =====
+    else if (type == QuestionType.FILL_BLANK) {
+        // ลบ choices เดิม
+        if (question.getChoices() != null) {
+            for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) em.remove(c);
+            question.getChoices().clear();
+        }
+
+        // สร้างหรืออัปเดต fill-blank
+        List<QuestionFillBlankEntity> fbList = em.createQuery(
+                        "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
+                        QuestionFillBlankEntity.class)
+                .setParameter("q", question)
+                .getResultList();
+
+        QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
+        String answer = Optional.ofNullable(qdto.correctAnswer).map(String::trim).orElse("");
+
+        if (!answer.isEmpty()) {
+            if (fb == null) {
+                fb = new QuestionFillBlankEntity();
+                fb.setId(generateId());
+                fb.setQuestion(question);
+            }
+            fb.setCorrectAnswer(answer);
+            if (!em.contains(fb)) em.persist(fb);
+        } else if (fb != null) {
+            em.remove(fb);
+        }
+    }
+
+    // ===== CLEANUP OTHER TYPES =====
+    else {
+        if (question.getChoices() != null) {
+            for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) em.remove(c);
+            question.getChoices().clear();
+        }
+        em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
+                .setParameter("q", question)
+                .executeUpdate();
+    }
+
+    if (isNew) log.info("Question {} created for content {}", question.getId(), id);
+    else log.info("Question {} updated for content {}", question.getId(), id);
+}
+
+
+
 @PUT
 @Path("/{id}")
 @Transactional
@@ -17,7 +142,7 @@ public LearningContentDto update(
         throw new NotFoundException();
     }
 
-    // ===== Check ownership =====
+    // ===== Ownership check =====
     if (lc.getAuthorEmail() != null && !lc.getAuthorEmail().equalsIgnoreCase(currentUser)) {
         log.warn("User {} is not owner of content {} (owner: {}), forbidden", currentUser, id, lc.getAuthorEmail());
         throw new ForbiddenException("You are not allowed to update this learning content");
@@ -61,13 +186,13 @@ public LearningContentDto update(
         Set<String> keepQuestionIds = new HashSet<>();
 
         for (QuestionDTO qdto : dtoQuestions) {
-            String qId = qdto.questionId;
             QuestionEntity question;
             boolean isNew = false;
 
-            if (qId != null && existingById.containsKey(qId)) {
-                question = existingById.get(qId);
-                log.info("Updating question ID: {}", qId);
+            // ===== Create or update question =====
+            if (qdto.questionId != null && existingById.containsKey(qdto.questionId)) {
+                question = existingById.get(qdto.questionId);
+                log.info("Updating existing question ID: {}", qdto.questionId);
             } else {
                 question = new QuestionEntity();
                 question.setId(generateId());
@@ -83,11 +208,12 @@ public LearningContentDto update(
             QuestionType type = resolveTypeFromDto(qdto);
             question.setType(type);
 
-            /* ===== MULTIPLE CHOICE ===== */
+            // ===== MULTIPLE CHOICE =====
             if (type == QuestionType.MULTIPLE) {
-                if (question.getChoices() == null) question.setChoices(new ArrayList<>());
-                List<QuestionChoiceEntity> existingChoices = question.getChoices();
+                if (question.getChoices() == null)
+                    question.setChoices(new ArrayList<>());
 
+                List<QuestionChoiceEntity> existingChoices = question.getChoices();
                 Map<String, QuestionChoiceEntity> choiceById = existingChoices.stream()
                         .filter(c -> c.getId() != null)
                         .collect(Collectors.toMap(QuestionChoiceEntity::getId, c -> c));
@@ -96,14 +222,16 @@ public LearningContentDto update(
 
                 if (qdto.choices != null) {
                     for (ChoiceDTO cdto : qdto.choices) {
-                        String cId = cdto.getChoiceId();
-                        QuestionChoiceEntity choice = cId != null ? choiceById.get(cId) : null;
+                        QuestionChoiceEntity choice = null;
 
-                        if (choice == null) {
+                        if (cdto.getChoiceId() != null && choiceById.containsKey(cdto.getChoiceId())) {
+                            choice = choiceById.get(cdto.getChoiceId());
+                        } else {
                             choice = new QuestionChoiceEntity();
                             choice.setId(generateId());
                             choice.setQuestion(question);
                             existingChoices.add(choice);
+                            em.persist(choice);
                             log.info("Creating new choice ID: {} for question {}", choice.getId(), question.getId());
                         }
 
@@ -114,32 +242,28 @@ public LearningContentDto update(
                 }
 
                 // Remove old choices
-                for (var it = existingChoices.iterator(); it.hasNext();) {
+                for (Iterator<QuestionChoiceEntity> it = existingChoices.iterator(); it.hasNext(); ) {
                     QuestionChoiceEntity c = it.next();
                     if (!keepChoiceIds.contains(c.getId())) {
-                        log.info("Removing choice ID: {} from question {}", c.getId(), question.getId());
                         em.remove(c);
                         it.remove();
+                        log.info("Removed old choice ID: {}", c.getId());
                     }
                 }
 
-                // Clean fill-blanks if exist
+                // Clean up fill blanks
                 em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
                         .setParameter("q", question)
                         .executeUpdate();
             }
 
-            /* ===== FILL IN THE BLANK ===== */
+            // ===== FILL IN THE BLANK =====
             else if (type == QuestionType.FILL_BLANK) {
-                // Remove all old choices
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
+                if (question.getChoices() != null) {
+                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) em.remove(c);
                     question.getChoices().clear();
                 }
 
-                // Manage fill-blank
                 List<QuestionFillBlankEntity> fbList = em.createQuery(
                                 "SELECT fb FROM QuestionFillBlankEntity fb WHERE fb.question = :q",
                                 QuestionFillBlankEntity.class)
@@ -147,7 +271,7 @@ public LearningContentDto update(
                         .getResultList();
 
                 QuestionFillBlankEntity fb = fbList.isEmpty() ? null : fbList.get(0);
-                String answer = qdto.correctAnswer != null ? qdto.correctAnswer.trim() : "";
+                String answer = Optional.ofNullable(qdto.correctAnswer).map(String::trim).orElse("");
 
                 if (!answer.isEmpty()) {
                     if (fb == null) {
@@ -162,12 +286,10 @@ public LearningContentDto update(
                 }
             }
 
-            /* ===== OTHER TYPES ===== */
+            // ===== OTHER TYPES =====
             else {
-                if (question.getChoices() != null && !question.getChoices().isEmpty()) {
-                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) {
-                        em.remove(c);
-                    }
+                if (question.getChoices() != null) {
+                    for (QuestionChoiceEntity c : new ArrayList<>(question.getChoices())) em.remove(c);
                     question.getChoices().clear();
                 }
                 em.createQuery("DELETE FROM QuestionFillBlankEntity fb WHERE fb.question = :q")
@@ -175,11 +297,13 @@ public LearningContentDto update(
                         .executeUpdate();
             }
 
-            if (isNew) log.info("Question {} created for content {}", question.getId(), id);
-            else log.info("Question {} updated for content {}", question.getId(), id);
+            if (isNew)
+                log.info("Question {} created for content {}", question.getId(), id);
+            else
+                log.info("Question {} updated for content {}", question.getId(), id);
         }
 
-        // ===== Remove old questions not in DTO =====
+        // ===== Remove questions not in DTO =====
         for (QuestionEntity q : existingQuestions) {
             if (!keepQuestionIds.contains(q.getId())) {
                 Number answerCount = (Number) em.createNativeQuery(
@@ -209,7 +333,7 @@ public LearningContentDto update(
         log.info("No quiz data provided for content {}, skipping quiz update", id);
     }
 
-    // ===== Final flush & reload for accurate return =====
+    // ===== Final flush =====
     em.flush();
 
     List<QuestionEntity> updatedQuestions = em.createQuery(
