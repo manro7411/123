@@ -1,170 +1,36 @@
-Array(1)
-0
-: 
-answers
-: 
-Array(2)
-0
-: 
-choices
-: 
-(3) [{…}, {…}, {…}]
-isCorrect
-: 
-true
-questionId
-: 
-"5d7b1db727bf4622aae16"
-questionText
-: 
-"question1"
-selectedChoiceId
-: 
-"a62f92a10a5c4a00bd666"
-type
-: 
-"MULTIPLE"
-[[Prototype]]
-: 
-Object
-constructor
-: 
-ƒ Object()
-hasOwnProperty
-: 
-ƒ hasOwnProperty()
-isPrototypeOf
-: 
-ƒ isPrototypeOf()
-propertyIsEnumerable
-: 
-ƒ propertyIsEnumerable()
-toLocaleString
-: 
-ƒ toLocaleString()
-toString
-: 
-ƒ toString()
-valueOf
-: 
-ƒ valueOf()
-__defineGetter__
-: 
-ƒ __defineGetter__()
-__defineSetter__
-: 
-ƒ __defineSetter__()
-__lookupGetter__
-: 
-ƒ __lookupGetter__()
-__lookupSetter__
-: 
-ƒ __lookupSetter__()
-__proto__
-: 
-(...)
-get __proto__
-: 
-ƒ __proto__()
-set __proto__
-: 
-ƒ __proto__()
-1
-: 
-choices
-: 
-Array(3)
-0
-: 
-{choiceId: 'be8b90a2cebf4859b4599', correct: false, selected: false, text: 'a1'}
-1
-: 
-{choiceId: 'b30aea956e1c4110a3fe2', correct: true, selected: true, text: 'a2'}
-2
-: 
-{choiceId: '2cdb581817f8433199e7e', correct: false, selected: false, text: 'a3'}
-length
-: 
-3
-[[Prototype]]
-: 
-Array(0)
-isCorrect
-: 
-true
-questionId
-: 
-"fc191e43227e43dc98103"
-questionText
-: 
-"Question2"
-selectedChoiceId
-: 
-"b30aea956e1c4110a3fe2"
-type
-: 
-"MULTIPLE"
-[[Prototype]]
-: 
-Object
-length
-: 
-2
-[[Prototype]]
-: 
-Array(0)
-attemptCount
-: 
-1
-attemptId
-: 
-"ddec26a2-ed21-45ca-8c82-464749897715"
-attemptedAt
-: 
-"2025-11-13T10:33:39.594696"
-learningCategories
-: 
-"Technical Skills > Programming & Development"
-learningContentTitle
-: 
-"[NEW] Additional Question"
-learningDescription
-: 
-"[NEW] Additional Question"
-lessonId
-: 
-"c4386a846d1b45cd8d630"
-maxScore
-: 
-2
-max_attempt
-: 
-1
-percentScore
-: 
-100
-score
-: 
-2
-userEmail
-: 
-"user2@gmail.com"
-[[Prototype]]
-: 
-Object
-length
-: 
-1
-[[Prototype]]
-: 
-Array(0)
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import { AuthContext } from "../../../Authentication/AuthContext";
 import { Loader2, ArrowLeft } from "lucide-react";
+
+/* ----------------------------- Types & Shapes ----------------------------- */
+
+type ChoiceId = string;
+type QuestionId = string;
+
+interface QuizChoice {
+  choiceId: ChoiceId;
+  text: string;
+  correct: boolean;
+  selected?: boolean; // some payloads include this
+}
+
+type QuizType = "MULTIPLE" | "FILL_BLANK" | string;
+
+interface QuizAnswer {
+  questionId: QuestionId;
+  questionText: string;
+  type: QuizType;
+  isCorrect: boolean;
+  // MULTIPLE
+  choices?: QuizChoice[];
+  selectedChoiceId?: ChoiceId;
+  // FILL_BLANK or others
+  text?: string;
+  correctAnswer?: string;
+}
 
 interface QuizAttempt {
   attemptId?: string;
@@ -173,13 +39,10 @@ interface QuizAttempt {
   maxScore?: number;
   percentScore?: number;
   attemptedAt?: string;
-  answers?: {
-    questionText: string;
-    text: string;
-    correctAnswer: string;
-    isCorrect: boolean;
-  }[];
+  answers?: QuizAnswer[];
 }
+
+/* ------------------------------- Component -------------------------------- */
 
 const TrainerQuizHistory = () => {
   const { lessonId, userEmail } = useParams<{ lessonId: string; userEmail?: string }>();
@@ -189,6 +52,7 @@ const TrainerQuizHistory = () => {
   const [quizAttempts, setQuizAttempts] = useState<QuizAttempt[]>([]);
   const [loading, setLoading] = useState(true);
 
+  /* ------------------------------ Data fetch ------------------------------ */
   useEffect(() => {
     const fetchQuizHistory = async () => {
       if (!lessonId) return;
@@ -202,8 +66,9 @@ const TrainerQuizHistory = () => {
           headers: { Authorization: `Bearer ${token}` },
         });
 
-        setQuizAttempts(res.data || []);
-        console.log(res.data)
+        const data = Array.isArray(res.data) ? res.data : [];
+        setQuizAttempts(data);
+        // console.log("Quiz history:", data);
       } catch (err) {
         console.error("❌ Failed to fetch quiz history:", err);
         alert("Failed to load quiz history.");
@@ -215,6 +80,127 @@ const TrainerQuizHistory = () => {
     fetchQuizHistory();
   }, [lessonId, userEmail, token]);
 
+  /* ------------------------- Helper render functions ---------------------- */
+
+  // Normalize answers: ensure MULTIPLE answers have "selected" flag computed
+  const normalizedAttempts = useMemo<QuizAttempt[]>(() => {
+    return (quizAttempts || []).map((att) => {
+      const answers = (att.answers || []).map((ans) => {
+        if ((ans.type || "").toUpperCase() !== "MULTIPLE" || !Array.isArray(ans.choices)) {
+          return ans;
+        }
+        const selectedId = ans.selectedChoiceId;
+        const choices = ans.choices.map((c) => ({
+          ...c,
+          selected:
+            typeof c.selected === "boolean"
+              ? c.selected
+              : !!(selectedId && c.choiceId === selectedId),
+        }));
+        return { ...ans, choices };
+      });
+      return { ...att, answers };
+    });
+  }, [quizAttempts]);
+
+  const renderChoice = (c: QuizChoice) => {
+    const isCorrect = !!c.correct;
+    const isSelected = !!c.selected;
+
+    const base =
+      "w-full text-left border rounded-lg px-3 py-2 flex items-start gap-2 transition";
+    const color = isCorrect
+      ? "border-green-300 bg-white"
+      : isSelected
+      ? "border-blue-300 bg-white"
+      : "border-gray-200 bg-white";
+    const ring = isCorrect ? "ring-2 ring-green-200" : isSelected ? "ring-2 ring-blue-200" : "";
+
+    return (
+      <div key={c.choiceId} className={`${base} ${color} ${ring}`}>
+        <div className="mt-1">
+          {isCorrect ? (
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500" />
+          ) : isSelected ? (
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-500" />
+          ) : (
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-gray-300" />
+          )}
+        </div>
+        <div className="flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-gray-900">{c.text}</span>
+            {isSelected && (
+              <span className="text-[10px] uppercase tracking-wide bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                Selected
+              </span>
+            )}
+            {isCorrect && (
+              <span className="text-[10px] uppercase tracking-wide bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                Correct
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAnswerCard = (ans: QuizAnswer, idx: number) => {
+    const isMultiple = (ans.type || "").toUpperCase() === "MULTIPLE";
+    const hasChoices = isMultiple && Array.isArray(ans.choices) && ans.choices!.length > 0;
+
+    return (
+      <div
+        key={ans.questionId ?? idx}
+        className={`p-4 rounded-xl border ${
+          ans.isCorrect ? "border-green-300 bg-green-50" : "border-red-300 bg-red-50"
+        }`}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3">
+          <p className="font-semibold text-gray-900">
+            {idx + 1}. {ans.questionText}
+          </p>
+
+          <span
+            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
+              ans.isCorrect ? "bg-green-600 text-white" : "bg-red-600 text-white"
+            }`}
+          >
+            {ans.isCorrect ? "Correct" : "Incorrect"}
+          </span>
+        </div>
+
+        {/* MULTIPLE: show all choices */}
+        {hasChoices && (
+          <div className="mt-3 space-y-2">
+            {ans.choices!.map((c) => renderChoice(c))}
+          </div>
+        )}
+
+        {/* Non-multiple or missing choices: show simple text answer */}
+        {!hasChoices && (
+          <div className="mt-3 text-sm text-gray-800 space-y-1">
+            <p>
+              <strong>Your Answer:</strong>{" "}
+              <span className={ans.isCorrect ? "text-green-700" : "text-red-700"}>
+                {ans.text ?? "-"}
+              </span>
+            </p>
+            {!ans.isCorrect && ans.correctAnswer && (
+              <p className="text-gray-600">
+                <strong>Correct Answer:</strong> {ans.correctAnswer}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /* --------------------------------- Render -------------------------------- */
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       {/* Header */}
@@ -223,8 +209,8 @@ const TrainerQuizHistory = () => {
           onClick={() => navigate(-1)}
           className="flex items-center gap-2 text-gray-600 hover:text-blue-700 transition"
         >
-          <ArrowLeft className="w-5 h-5" />
-          Back
+            <ArrowLeft className="w-5 h-5" />
+            Back
         </button>
 
         <h1 className="text-2xl font-bold text-blue-800">
@@ -240,70 +226,45 @@ const TrainerQuizHistory = () => {
           <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
           <span className="ml-2 text-gray-600">Loading quiz history…</span>
         </div>
-      ) : quizAttempts.length === 0 ? (
+      ) : normalizedAttempts.length === 0 ? (
         <p className="text-center text-gray-500 mt-20">No quiz attempts found.</p>
       ) : (
         <div className="space-y-6">
-          {quizAttempts.map((attempt, index) => (
+          {normalizedAttempts.map((attempt, index) => (
             <div
               key={attempt.attemptId || index}
               className="bg-white rounded-xl shadow p-6 border border-gray-200"
             >
-              <h2 className="text-lg font-semibold text-gray-800 mb-2">
-                🧠 Attempt {index + 1}
-              </h2>
-              <p className="text-sm text-gray-500 mb-4">
-                {attempt.attemptedAt
-                  ? new Date(attempt.attemptedAt).toLocaleString()
-                  : "Unknown date"}
-              </p>
+              {/* Attempt header */}
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <h2 className="text-lg font-semibold text-gray-800">
+                  🧠 Attempt {index + 1}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {attempt.attemptedAt
+                    ? new Date(attempt.attemptedAt).toLocaleString()
+                    : "Unknown date"}
+                </p>
+              </div>
 
-              <div className="text-sm text-gray-700 space-y-1 mb-4">
+              {/* Meta */}
+              <div className="text-sm text-gray-700 grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
                 <p>
                   <strong>Lesson:</strong> {attempt.learningContentTitle || "N/A"}
                 </p>
                 <p>
-                  <strong>Score:</strong> {attempt.score ?? 0} / {attempt.maxScore ?? 0}{" "}
+                  <strong>Score:</strong>{" "}
+                  {attempt.score ?? 0} / {attempt.maxScore ?? 0}{" "}
                   ({attempt.percentScore ?? 0}%)
                 </p>
               </div>
 
+              {/* Answers */}
               {attempt.answers && attempt.answers.length > 0 && (
                 <div className="mt-4 border-t pt-4">
-                  <h3 className="text-md font-semibold text-gray-800 mb-2">
-                    📝 Answers:
-                  </h3>
-                  <div className="space-y-3">
-                    {attempt.answers.map((ans, i) => (
-                      <div
-                        key={i}
-                        className={`p-3 rounded-lg border ${
-                          ans.isCorrect
-                            ? "border-green-300 bg-green-50"
-                            : "border-red-300 bg-red-50"
-                        }`}
-                      >
-                        <p className="font-medium text-gray-800">
-                          {i + 1}. {ans.questionText
-}
-                        </p>
-                        <p className="text-sm mt-1">
-                          <strong>Your Answer:</strong>{" "}
-                          <span
-                            className={`${
-                              ans.isCorrect ? "text-green-700" : "text-red-700"
-                            }`}
-                          >
-                            {ans.text}
-                          </span>
-                        </p>
-                        {!ans.isCorrect && (
-                          <p className="text-sm text-gray-600">
-                            <strong>Correct Answer:</strong> {ans.correctAnswer}
-                          </p>
-                        )}
-                      </div>
-                    ))}
+                  <h3 className="text-md font-semibold text-gray-800 mb-2">📝 Answers</h3>
+                  <div className="space-y-4">
+                    {attempt.answers.map((ans, i) => renderAnswerCard(ans, i))}
                   </div>
                 </div>
               )}
