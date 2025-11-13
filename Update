@@ -794,7 +794,7 @@ const AdminDashboard = () => {
     return { enrolls, completedCount, avgScore, courses, recent: selectedUserActivity.slice(0, 8) };
   }, [selectedUserEmail, selectedUserActivity]);
 
-  const handleClear = () => setFilterText({ course: "" });
+  // const handleClear = () => setFilterText({ course: "" });
 
   const handleToastClick = (t: ToastItem) => {
     closeToast(t.id);
@@ -807,12 +807,12 @@ const AdminDashboard = () => {
    * Render
    * ---------------------------------------------------------------------*/
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-gray-50 flex overflow-x-hidden">
       {/* sidebar */}
       <AdminSidebarWidget />
 
       {/* main */}
-      <main className="flex-1 p-6 flex flex-col">
+      <main className="flex-1 p-6 flex flex-col min-w-0">
         {/* header */}
         <div className="flex justify-between items-start">
           {/* --- Assignment + Analysis Mode --- */}
