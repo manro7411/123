@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Save, Plus, Trash2 } from "lucide-react";
 import { TARGET_OPTION } from "../AdminUtil";
@@ -8,6 +8,9 @@ import type { QuestionForm } from "../../../types/trainer/types";
 import { AuthContext } from "../../../Authentication/AuthContext";
 import { CATEGORY_GROUP } from "../../../types/base/types";
 
+/* ---------------------------------------------------------------------------
+ * Types
+ * -------------------------------------------------------------------------*/
 export interface Lesson {
   id: number | string;
   title: string;
@@ -17,6 +20,7 @@ export interface Lesson {
   contentType: "video" | "document";
   assignType: "all" | "team" | "specific";
   quizAvailable?: boolean;
+  maxAttempts: number;
 }
 
 interface EditLessonModalProps {
@@ -32,15 +36,16 @@ interface EditLessonModalProps {
     contentType: "video" | "document";
     assignType: "all" | "team" | "specific";
     quizAvailable: boolean;
+    maxAttempts: number;
     questions?: QuestionForm[];
   }) => Promise<void> | void;
 }
 
-type Choice = { choiceId?: string | null; text: string; correct?: boolean };
+type Choice = { choiceId?: string; text: string; correct?: boolean };
 type QuestionTypeUI = "MULTIPLE" | "FILL_BLANK";
 
 type Q = {
-  questionId?: string | null;
+  questionId?: string;
   questionText: string;
   type: QuestionTypeUI;
   choices: Choice[];
@@ -48,6 +53,9 @@ type Q = {
   points?: number;
 };
 
+/* ---------------------------------------------------------------------------
+ * Helpers
+ * -------------------------------------------------------------------------*/
 const emptyChoice = (): Choice => ({ text: "", correct: false });
 const emptyMultiple = (): Q => ({
   questionText: "",
@@ -56,13 +64,18 @@ const emptyMultiple = (): Q => ({
   points: 1,
 });
 
-/* ========================================================================= */
+const normalizeContentType = (t: any): "video" | "document" =>
+  String(t || "video").toLowerCase() === "document" ? "document" : "video";
 
+/* ---------------------------------------------------------------------------
+ * Component
+ * -------------------------------------------------------------------------*/
 const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProps) => {
   const { token } = useContext(AuthContext);
 
   const [title, setTitle] = useState(initial.title);
-  const [category, setCategory] = useState(initial.category);
+  const [, setCategory] = useState(initial.category);
+  const [maxAttempts, setMaxAttempts] = useState<number>(initial.maxAttempts);
   const [description, setDescription] = useState(initial.description);
   const [thumbnailUrl, setThumbnailUrl] = useState(initial.thumbnailUrl ?? "");
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -72,17 +85,17 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
   const [quizAvailable, setQuizAvailable] = useState(initial.quizAvailable ?? false);
   const [questions, setQuestions] = useState<Q[]>([]);
   const [loading, setLoading] = useState(false);
+
   const [categoryGroup, setCategoryGroup] = useState<string>("");
   const [categorySub, setCategorySub] = useState<string>();
-
   const categoryValue = categorySub ? `${categoryGroup} > ${categorySub}` : categoryGroup;
 
-  /* -------------------- reset when modal opens -------------------- */
+  /* ---------------- Reset when `initial` changes ---------------- */
   useEffect(() => {
     setTitle(initial.title);
+
     let grp = "";
     let sub: string | undefined = "";
-
     if (initial.category) {
       if (initial.category.includes(">")) {
         const parts = initial.category.split(">").map((s) => s.trim());
@@ -102,7 +115,6 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
         }
       }
     }
-
     setCategory(initial.category);
     setCategoryGroup(grp);
     setCategorySub(sub);
@@ -111,125 +123,243 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
     setContentType(initial.contentType ?? "video");
     setAssignType(initial.assignType ?? "all");
     setQuizAvailable(initial.quizAvailable ?? false);
+    setMaxAttempts(initial.maxAttempts);
+
+    // clear local questions; will be reloaded when modal opens
     setQuestions([]);
   }, [initial]);
 
-  /* -------------------- fetch lesson details -------------------- */
+  /* ---------------- Load lesson detail (and questions) ---------------- */
   useEffect(() => {
-    if (!open || !initial?.id) return;
-    const fetchLessonDetails = async () => {
+    if (!open) return;
+    if (!initial?.id) return;
+
+    const ctrl = new AbortController();
+    const doFetch = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/learning/${encodeURIComponent(String(initial.id))}`, {
+        const url = `/api/learning/${encodeURIComponent(String(initial.id))}`;
+        const res = await fetch(url, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
           cache: "no-store",
+          signal: ctrl.signal,
         });
-        if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
+        if (!res.ok) {
+          // eslint-disable-next-line no-console
+          console.error("EditLessonModal: fetch failed", res.status, await res.text().catch(() => ""));
+          return;
+        }
         const data = await res.json();
+
+        setTitle(data.title ?? "");
+        setCategory(data.category ?? "");
+        setDescription(data.description ?? "");
+        setThumbnailUrl(data.thumbnailUrl ?? "");
+        setContentType(normalizeContentType(data.contentType));
+        setAssignType(data.assignType ?? "all");
+        setQuizAvailable(Boolean(data.quizAvailable));
 
         const qs: Q[] = Array.isArray(data.questions)
           ? data.questions.map((q: any): Q => {
-              const t = (q.type || "").toUpperCase();
-              if (t === "FILL_BLANK") {
+              const backendType = (q.type || "").toString().toUpperCase();
+              const isFill = backendType === "FILL_BLANK";
+
+              if (isFill) {
                 return {
-                  questionId: q.questionId ?? q.id ?? null,
-                  questionText: q.questionText ?? "",
+                  questionId: q.questionId ?? q.id,
+                  questionText: q.questionText ?? q.text ?? "",
                   type: "FILL_BLANK",
+                  choices: [],
                   correctAnswer: q.correctAnswer ?? "",
                   points: q.points ?? 1,
-                  choices: [],
                 };
               }
+
+              const normalizedChoices: Choice[] = Array.isArray(q.choices)
+                ? q.choices.map((c: any) => ({
+                    choiceId: c.choiceId ?? c.id,
+                    text: c.text ?? c.choiceText ?? "",
+                    correct: Boolean(c.correct ?? c.isCorrect ?? false),
+                  }))
+                : [];
+
               return {
-                questionId: q.questionId ?? q.id ?? null,
-                questionText: q.questionText ?? "",
+                questionId: q.questionId ?? q.id,
+                questionText: q.questionText ?? q.text ?? "",
                 type: "MULTIPLE",
+                choices: normalizedChoices.length >= 2 ? normalizedChoices : [emptyChoice(), emptyChoice()],
                 points: q.points ?? 1,
-                choices: (q.choices ?? []).map((c: any) => ({
-                  choiceId: c.choiceId ?? c.id ?? null,
-                  text: c.text ?? c.choiceText ?? "",
-                  correct: Boolean(c.correct ?? c.isCorrect ?? false),
-                })),
               };
             })
           : [];
-        setQuestions(qs.length ? qs : [emptyMultiple()]);
-      } catch (err) {
-        console.error("EditLessonModal fetch error:", err);
+
+        setQuestions(qs);
+      } catch (e: any) {
+        if (e?.name !== "AbortError") {
+          // eslint-disable-next-line no-console
+          console.error("Failed to fetch lesson details:", e);
+        }
       } finally {
         setLoading(false);
       }
     };
-    fetchLessonDetails();
+    doFetch();
+
+    return () => ctrl.abort();
   }, [open, initial.id, token]);
 
-  /* -------------------- question helpers -------------------- */
-  const addQuestion = () => setQuestions((p) => [...p, emptyMultiple()]);
-  const removeQuestion = (idx: number) => setQuestions((p) => p.filter((_, i) => i !== idx));
+  /* ---------------- Question editors ---------------- */
+  const addQuestion = () => setQuestions((s) => [...s, emptyMultiple()]);
+
+  const removeQuestion = (idx: number) => setQuestions((s) => s.filter((_, i) => i !== idx));
+
   const updateQuestionText = (idx: number, text: string) =>
-    setQuestions((p) => p.map((q, i) => (i === idx ? { ...q, questionText: text } : q)));
+    setQuestions((s) => s.map((q, i) => (i === idx ? { ...q, questionText: text } : q)));
+
   const updateQuestionType = (idx: number, type: QuestionTypeUI) =>
-    setQuestions((p) =>
-      p.map((q, i) => {
+    setQuestions((s) =>
+      s.map((q, i) => {
         if (i !== idx) return q;
-        if (type === "MULTIPLE")
-          return { ...q, type: "MULTIPLE", choices: q.choices.length ? q.choices : [emptyChoice(), emptyChoice()], correctAnswer: undefined };
+        if (q.type === type) return q;
+
+        if (type === "MULTIPLE") {
+          const choices = q.choices && q.choices.length >= 2 ? q.choices : [emptyChoice(), emptyChoice()];
+          return { ...q, type: "MULTIPLE", choices, correctAnswer: undefined };
+        }
         return { ...q, type: "FILL_BLANK", correctAnswer: q.correctAnswer ?? "", choices: [] };
       })
     );
-  const updatePoints = (idx: number, val: number) =>
-    setQuestions((p) => p.map((q, i) => (i === idx ? { ...q, points: val } : q)));
-  const addChoice = (qi: number) =>
-    setQuestions((p) => p.map((q, i) => (i === qi ? { ...q, choices: [...q.choices, emptyChoice()] } : q)));
-  const removeChoice = (qi: number, ci: number) =>
-    setQuestions((p) => p.map((q, i) => (i === qi ? { ...q, choices: q.choices.filter((_, j) => j !== ci) } : q)));
-  const updateChoiceText = (qi: number, ci: number, text: string) =>
-    setQuestions((p) =>
-      p.map((q, i) =>
-        i === qi ? { ...q, choices: q.choices.map((c, j) => (j === ci ? { ...c, text } : c)) } : q
-      )
+
+  const updateQuestionPoints = (idx: number, points: number) =>
+    setQuestions((s) => s.map((q, i) => (i === idx ? { ...q, points } : q)));
+
+  const addChoice = (qIdx: number) =>
+    setQuestions((s) => s.map((q, i) => (i === qIdx ? { ...q, choices: [...q.choices, emptyChoice()] } : q)));
+
+  const removeChoice = (qIdx: number, cIdx: number) =>
+    setQuestions((s) =>
+      s.map((q, i) => (i === qIdx ? { ...q, choices: q.choices.filter((_, ci) => ci !== cIdx) } : q))
     );
-  const toggleCorrect = (qi: number, ci: number) =>
-    setQuestions((p) =>
-      p.map((q, i) =>
-        i === qi
-          ? { ...q, choices: q.choices.map((c, j) => (j === ci ? { ...c, correct: !c.correct } : c)) }
+
+  const updateChoiceText = (qIdx: number, cIdx: number, text: string) =>
+    setQuestions((s) =>
+      s.map((q, i) =>
+        i === qIdx
+          ? { ...q, choices: q.choices.map((c, ci) => (ci === cIdx ? { ...c, text } : c)) }
           : q
       )
     );
-  const updateFillAnswer = (qi: number, val: string) =>
-    setQuestions((p) => p.map((q, i) => (i === qi ? { ...q, correctAnswer: val } : q)));
 
-  /* -------------------- submit -------------------- */
+  const toggleChoiceCorrect = (qIdx: number, cIdx: number) =>
+    setQuestions((s) =>
+      s.map((q, i) => {
+        if (i !== qIdx) return q;
+        return {
+          ...q,
+          choices: q.choices.map((c, ci) => (ci === cIdx ? { ...c, correct: !c.correct } : c)),
+        };
+      })
+    );
+
+  const updateFillBlankAnswer = (qIdx: number, value: string) =>
+    setQuestions((s) => s.map((q, i) => (i === qIdx ? { ...q, correctAnswer: value } : q)));
+
+  /* ---------------- Submit ---------------- */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
-      const payloadQuestions =
-        quizAvailable &&
-        questions
-          .filter((q) => q.questionText.trim())
-          .map((q): QuestionForm => {
-            const base = {
-              questionId: q.questionId ?? null,
-              questionText: q.questionText.trim(),
-              points: q.points ?? 1,
-            } as any;
-            if (q.type === "FILL_BLANK") {
-              return { ...base, type: "fill_blank", correctAnswer: q.correctAnswer?.trim() ?? "" };
+      // Build questions for backend (IMPORTANT: map questionId/choiceId -> id)
+      let payloadQuestions: QuestionForm[] | undefined = undefined;
+
+      if (quizAvailable) {
+        const cleaned: any[] = [];
+        const removedIndices: number[] = [];
+
+        for (let i = 0; i < questions.length; i++) {
+          const q = questions[i];
+          const qText = (q.questionText || "").trim();
+          if (!qText) {
+            removedIndices.push(i + 1);
+            continue;
+          }
+
+          if (q.type === "FILL_BLANK") {
+            const answer = (q.correctAnswer || "").trim();
+            if (!answer) {
+              removedIndices.push(i + 1);
+              continue;
             }
-            return {
-              ...base,
-              type: "multiple",
-              choices: q.choices
-                .filter((c) => c.text.trim())
-                .map((c) => ({
-                  choiceId: c.choiceId ?? null,
-                  text: c.text.trim(),
-                  correct: !!c.correct,
-                })),
-            };
+            cleaned.push({
+              id: q.questionId || undefined, // <-- map
+              questionText: qText,
+              type: "FILL_BLANK",
+              correctAnswer: answer,
+              points: q.points ?? 1,
+            });
+            continue;
+          }
+
+          // MULTIPLE
+          const cleanedChoices = (q.choices || [])
+            .map((c) => ({ ...c, text: String(c.text || "").trim() }))
+            .filter((c) => c.text.length > 0);
+
+          if (cleanedChoices.length < 2) {
+            removedIndices.push(i + 1);
+            continue;
+          }
+          if (!cleanedChoices.some((c) => !!c.correct)) {
+            removedIndices.push(i + 1);
+            continue;
+          }
+
+          cleaned.push({
+            id: q.questionId || undefined, // <-- map
+            questionText: qText,
+            type: "MULTIPLE",
+            points: q.points ?? 1,
+            choices: cleanedChoices.map((c) => ({
+              id: c.choiceId || undefined, // <-- map
+              text: c.text,
+              correct: !!c.correct,
+            })),
           });
+        }
+
+        if (removedIndices.length) {
+          alert(`Removed invalid/empty questions: ${removedIndices.join(", ")}`);
+        }
+
+        // Reflect cleaned content back to UI (optional)
+        setQuestions((prev) => {
+          const newQs: Q[] = cleaned.map((cq: any) =>
+            cq.type === "FILL_BLANK"
+              ? {
+                  questionId: cq.id,
+                  questionText: cq.questionText,
+                  type: "FILL_BLANK",
+                  choices: [],
+                  correctAnswer: cq.correctAnswer,
+                  points: cq.points,
+                }
+              : {
+                  questionId: cq.id,
+                  questionText: cq.questionText,
+                  type: "MULTIPLE",
+                  points: cq.points,
+                  choices: (cq.choices || []).map((c: any) => ({
+                    choiceId: c.id,
+                    text: c.text,
+                    correct: !!c.correct,
+                  })),
+                }
+          );
+          return newQs.length ? newQs : prev;
+        });
+
+        payloadQuestions = cleaned.length ? (cleaned as QuestionForm[]) : undefined;
+      }
 
       const payload = {
         title: title.trim(),
@@ -238,30 +368,37 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
         thumbnailUrl: thumbnailUrl.trim() || undefined,
         video: videoFile,
         contentType,
-        assignType,
+        assignType: assignType as "all" | "team" | "specific",
         quizAvailable,
-        questions: payloadQuestions ?? undefined,
+        maxAttempts,
+        questions: payloadQuestions,
       };
 
-      console.log("Saving payload:", payload);
       await onSave(payload);
-    } catch (err) {
-      console.error("Save failed:", err);
     } finally {
       setSaving(false);
     }
   };
 
   if (!open) return null;
+
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
-  /* -------------------- render -------------------- */
-  return createPortal(
-    <div className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-6 overflow-auto max-h-[90vh]" onClick={stop}>
-        <div className="flex justify-between items-center mb-4">
+  /* ---------------- UI ---------------- */
+  const modal = (
+    <div
+      className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4"
+      onClick={onClose}
+      aria-modal="true"
+      role="dialog"
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-6 overflow-auto max-h-[90vh]"
+        onClick={stop}
+      >
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Edit Learning Content</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700" type="button" aria-label="Close">
             <X size={18} />
           </button>
         </div>
@@ -270,91 +407,265 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
           <div className="p-6 text-sm text-gray-500">Loading lesson...</div>
         ) : (
           <form className="space-y-4" onSubmit={handleSubmit}>
-            {/* Title + Category */}
+            {/* Title & MaxAttempts */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">Title</label>
-                <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full border rounded px-3 py-2" required />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2"
+                  placeholder="Lesson title"
+                  required
+                  disabled={saving}
+                />
               </div>
+
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">Category</label>
-                <div className="flex gap-2">
-                  <select value={categoryGroup} onChange={(e) => { setCategoryGroup(e.target.value); setCategorySub(""); }} className="border rounded px-2 py-1">
-                    <option value={categoryGroup}>{categoryGroup}</option>
-                    {Object.keys(CATEGORY_GROUP).map((g) => <option key={g} value={g}>{g}</option>)}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max Attempts</label>
+                <input
+                  value={maxAttempts}
+                  onChange={(e) => setMaxAttempts(Math.max(1, Math.min(3, Number(e.target.value) || 1)))}
+                  min={1}
+                  max={3}
+                  className="w-full border rounded-lg px-3 py-2"
+                  placeholder="1 - 3"
+                  disabled={saving}
+                  type="number"
+                />
+              </div>
+
+              {/* Category */}
+              <div className="space y-4">
+                <div className="flex items-center gap-2">
+                  <label className="block text-sm font-medium text-gray-700">Category:</label>
+                  <select
+                    value={categoryGroup}
+                    onChange={(e) => {
+                      setCategoryGroup(e.target.value);
+                      setCategorySub("");
+                    }}
+                    className="border rounded px-2 py-1 text-sm"
+                  >
+                    <option value={categoryGroup}>{categoryGroup || "Select group"}</option>
+                    {Object.keys(CATEGORY_GROUP).map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
                   </select>
-                  {(CATEGORY_GROUP[categoryGroup] ?? []).length > 0 && (
-                    <select value={categorySub} onChange={(e) => setCategorySub(e.target.value)} className="border rounded px-2 py-1">
-                      {CATEGORY_GROUP[categoryGroup].map((sub) => <option key={sub} value={sub}>{sub}</option>)}
-                    </select>
-                  )}
                 </div>
+
+                {(CATEGORY_GROUP[categoryGroup] ?? []).length > 0 && (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 mt-2">Subcategory:</label>
+                    <select
+                      value={categorySub}
+                      onChange={(e) => setCategorySub(e.target.value)}
+                      className="border rounded px-2 py-1 text-sm"
+                    >
+                      {(CATEGORY_GROUP[categoryGroup] || []).map((sub) => (
+                        <option key={sub} value={sub}>
+                          {sub}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
               </div>
             </div>
 
             {/* Description */}
             <div>
-              <label className="text-sm font-medium text-gray-700 mb-1 block">Description</label>
-              <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="w-full border rounded px-3 py-2 h-28" required />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full h-28 border rounded-lg px-3 py-2"
+                placeholder="Description"
+                required
+                disabled={saving}
+              />
             </div>
 
+            {/* Content / Assign */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Content Type</label>
+                <div className="px-3 py-2 border rounded-lg bg-gray-100 text-gray-700">
+                  {contentType === "video" ? "Video" : "Document"}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Assign Type</label>
+                <select
+                  value={assignType}
+                  onChange={(e) => setAssignType(e.target.value as any)}
+                  className="w-full border rounded-lg px-3 py-2"
+                  disabled={saving}
+                >
+                  {TARGET_OPTION["Option"].map((option) => (
+                    <option key={option.index} value={option.index}>
+                      {option.option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Video upload */}
+            {contentType === "video" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Upload Video</label>
+                <input
+                  type="file"
+                  accept="video/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    setVideoFile(file);
+                  }}
+                  disabled={saving}
+                  className="w-full border rounded-lg px-3 py-2"
+                />
+              </div>
+            )}
+
             {/* Quiz toggle */}
-            <div className="flex items-center gap-2">
-              <input type="checkbox" checked={quizAvailable} onChange={(e) => setQuizAvailable(e.target.checked)} />
-              <span className="text-sm">Quiz available</span>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={quizAvailable}
+                  onChange={(e) => setQuizAvailable(e.target.checked)}
+                  disabled={saving}
+                />
+                <span className="text-sm">Quiz available</span>
+              </label>
             </div>
 
             {/* Quiz editor */}
             {quizAvailable && (
               <div className="border rounded-lg p-4 bg-gray-50">
-                <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-semibold">Questions</h3>
-                  <button type="button" onClick={addQuestion} className="inline-flex items-center gap-2 px-3 py-1 bg-white border rounded text-sm">
+                  <button
+                    type="button"
+                    onClick={addQuestion}
+                    className="inline-flex items-center gap-2 px-3 py-1 bg-white border rounded text-sm"
+                    disabled={saving}
+                  >
                     <Plus size={14} /> Add question
                   </button>
                 </div>
 
                 <div className="space-y-4">
                   {questions.map((q, qi) => (
-                    <div key={q.questionId ?? qi} className="bg-white border rounded p-3">
+                    <div key={q.questionId ?? `new-${qi}`} className="bg-white border rounded p-3">
+                      {/* Header row */}
                       <div className="flex justify-between items-start gap-3">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
-                            <label className="text-xs text-gray-500">Q{qi + 1}</label>
-                            <select value={q.type} onChange={(e) => updateQuestionType(qi, e.target.value as QuestionTypeUI)} className="text-xs border rounded px-1.5 py-0.5">
+                            <label className="text-xs text-gray-500">Question {qi + 1}</label>
+                            <select
+                              value={q.type}
+                              onChange={(e) => updateQuestionType(qi, e.target.value as QuestionTypeUI)}
+                              className="text-xs border rounded px-1.5 py-0.5"
+                              disabled={saving}
+                            >
                               <option value="MULTIPLE">Multiple choice</option>
                               <option value="FILL_BLANK">Fill in the blank</option>
                             </select>
-                            <input type="number" min={1} value={q.points ?? 1} onChange={(e) => updatePoints(qi, Number(e.target.value))} className="w-14 text-xs border rounded px-1 py-0.5" title="Points" />
+                            <input
+                              type="number"
+                              min={1}
+                              value={q.points ?? 1}
+                              onChange={(e) => updateQuestionPoints(qi, Number(e.target.value) || 1)}
+                              className="w-14 text-xs border rounded px-1 py-0.5"
+                              title="Points"
+                              disabled={saving}
+                            />
                           </div>
-                          <input value={q.questionText} onChange={(e) => updateQuestionText(qi, e.target.value)} className="w-full border rounded px-2 py-1 text-sm" placeholder="Question text" />
+                          <input
+                            value={q.questionText}
+                            onChange={(e) => updateQuestionText(qi, e.target.value)}
+                            className="w-full mt-1 border rounded px-2 py-1 text-sm"
+                            placeholder="Question text"
+                            disabled={saving}
+                          />
                         </div>
-                        <button type="button" onClick={() => removeQuestion(qi)} className="text-red-500"><Trash2 size={16} /></button>
+
+                        <div className="flex flex-col items-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => removeQuestion(qi)}
+                            className="text-red-500"
+                            disabled={saving}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </div>
 
+                      {/* MULTIPLE */}
                       {q.type === "MULTIPLE" && (
                         <div className="mt-3 space-y-2">
                           {q.choices.map((c, ci) => (
-                            <div key={c.choiceId ?? ci} className="flex items-center gap-2">
-                              <button type="button" onClick={() => toggleCorrect(qi, ci)} className={`px-2 py-1 rounded text-xs ${c.correct ? "bg-green-500 text-white" : "bg-gray-200 text-gray-700"}`}>
+                            <div key={c.choiceId ?? `q${qi}-c${ci}`} className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleChoiceCorrect(qi, ci)}
+                                className={`px-2 py-1 rounded text-xs ${
+                                  c.correct ? "bg-green-500 text-white" : "bg-gray-200 text-gray-700"
+                                }`}
+                                disabled={saving}
+                              >
                                 {c.correct ? "✓" : "○"}
                               </button>
-                              <input value={c.text} onChange={(e) => updateChoiceText(qi, ci, e.target.value)} className="flex-1 border rounded px-2 py-1 text-sm" placeholder={`Choice ${ci + 1}`} />
+                              <input
+                                value={c.text}
+                                onChange={(e) => updateChoiceText(qi, ci, e.target.value)}
+                                className="flex-1 border rounded px-2 py-1 text-sm"
+                                placeholder={`Choice ${ci + 1}`}
+                                disabled={saving}
+                              />
                               {q.choices.length > 2 && (
-                                <button type="button" onClick={() => removeChoice(qi, ci)} className="text-red-500"><Trash2 size={16} /></button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeChoice(qi, ci)}
+                                  className="text-red-500"
+                                  disabled={saving}
+                                >
+                                  <Trash2 size={16} />
+                                </button>
                               )}
                             </div>
                           ))}
-                          <button type="button" onClick={() => addChoice(qi)} className="mt-2 inline-flex items-center gap-2 px-2 py-1 bg-white border rounded text-xs">
-                            <Plus size={12} /> Add choice
-                          </button>
+
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => addChoice(qi)}
+                              className="mt-2 inline-flex items-center gap-2 px-2 py-1 bg-white border rounded text-xs"
+                              disabled={saving}
+                            >
+                              <Plus size={12} /> Add choice
+                            </button>
+                          </div>
                         </div>
                       )}
 
+                      {/* FILL IN THE BLANK */}
                       {q.type === "FILL_BLANK" && (
                         <div className="mt-3">
                           <label className="text-xs text-gray-500">Correct answer</label>
-                          <input value={q.correctAnswer ?? ""} onChange={(e) => updateFillAnswer(qi, e.target.value)} className="w-full border rounded px-2 py-1 text-sm mt-1" placeholder="Type the correct answer" />
+                          <input
+                            value={q.correctAnswer ?? ""}
+                            onChange={(e) => updateFillBlankAnswer(qi, e.target.value)}
+                            className="w-full border rounded px-2 py-1 text-sm mt-1"
+                            placeholder="Type the correct answer"
+                            disabled={saving}
+                          />
                         </div>
                       )}
                     </div>
@@ -365,17 +676,24 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
 
             {/* Actions */}
             <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border" disabled={saving}>Cancel</button>
-              <button type="submit" className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2 disabled:opacity-60" disabled={saving}>
+              <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border" disabled={saving}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2 disabled:opacity-60"
+                disabled={saving}
+              >
                 <Save size={16} /> {saving ? "Saving..." : "Save"}
               </button>
             </div>
           </form>
         )}
       </div>
-    </div>,
-    document.body
+    </div>
   );
+
+  return createPortal(modal, document.body);
 };
 
 export default EditLessonModal;
