@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Save, Plus, Trash2 } from "lucide-react";
 import { TARGET_OPTION } from "../AdminUtil";
@@ -8,6 +8,9 @@ import type { QuestionForm } from "../../../types/trainer/types";
 import { AuthContext } from "../../../Authentication/AuthContext";
 import { CATEGORY_GROUP } from "../../../types/base/types";
 
+/* ---------------------------------------------------------------------------
+ * Types
+ * -------------------------------------------------------------------------*/
 export interface Lesson {
   id: number | string;
   title: string;
@@ -17,7 +20,7 @@ export interface Lesson {
   contentType: "video" | "document";
   assignType: "all" | "team" | "specific";
   quizAvailable?: boolean;
-  maxAttempts:number;
+  maxAttempts: number;
 }
 
 interface EditLessonModalProps {
@@ -33,24 +36,26 @@ interface EditLessonModalProps {
     contentType: "video" | "document";
     assignType: "all" | "team" | "specific";
     quizAvailable: boolean;
-    maxAttempts:number
+    maxAttempts: number;
     questions?: QuestionForm[];
   }) => Promise<void> | void;
 }
 
 type Choice = { choiceId?: string; text: string; correct?: boolean };
-
 type QuestionTypeUI = "MULTIPLE" | "FILL_BLANK";
 
 type Q = {
   questionId?: string;
   questionText: string;
   type: QuestionTypeUI;
-  choices: Choice[]; // ใช้เมื่อ MULTIPLE
-  correctAnswer?: string; // ใช้เมื่อ FILL_BLANK
+  choices: Choice[];
+  correctAnswer?: string;
   points?: number;
 };
 
+/* ---------------------------------------------------------------------------
+ * Helpers
+ * -------------------------------------------------------------------------*/
 const emptyChoice = (): Choice => ({ text: "", correct: false });
 const emptyMultiple = (): Q => ({
   questionText: "",
@@ -58,14 +63,13 @@ const emptyMultiple = (): Q => ({
   choices: [emptyChoice(), emptyChoice()],
   points: 1,
 });
-// const emptyFillBlank = (): Q => ({
-//   questionText: "",
-//   type: "FILL_BLANK",
-//   choices: [],
-//   correctAnswer: "",
-//   points: 1,
-// });
 
+const normalizeContentType = (t: any): "video" | "document" =>
+  String(t || "video").toLowerCase() === "document" ? "document" : "video";
+
+/* ---------------------------------------------------------------------------
+ * Component
+ * -------------------------------------------------------------------------*/
 const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProps) => {
   const { token } = useContext(AuthContext);
 
@@ -81,41 +85,39 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
   const [quizAvailable, setQuizAvailable] = useState(initial.quizAvailable ?? false);
   const [questions, setQuestions] = useState<Q[]>([]);
   const [loading, setLoading] = useState(false);
-  const [categoryGroup,setCategoryGroup] = useState<string>("");
-  const [categorySub,setCategorySub] = useState<string>();
 
+  const [categoryGroup, setCategoryGroup] = useState<string>("");
+  const [categorySub, setCategorySub] = useState<string>();
   const categoryValue = categorySub ? `${categoryGroup} > ${categorySub}` : categoryGroup;
-  console.log(categoryValue)
 
-  // reset เมื่อ initial เปลี่ยน (เช่นเปลี่ยน lesson)
+  /* ---------------- Reset when `initial` changes ---------------- */
   useEffect(() => {
     setTitle(initial.title);
-    
-    let grp= "";
+
+    let grp = "";
     let sub: string | undefined = "";
     if (initial.category) {
       if (initial.category.includes(">")) {
-        const parts=  initial.category.split(">").map((s)=> s.trim());
+        const parts = initial.category.split(">").map((s) => s.trim());
         grp = parts[0] ?? "";
         sub = parts[1] ?? "";
-      }else{
-       for (const g of Object.keys(CATEGORY_GROUP)) {
-        if ((CATEGORY_GROUP[g] || []).includes(initial.category)) {
+      } else {
+        for (const g of Object.keys(CATEGORY_GROUP)) {
+          if ((CATEGORY_GROUP[g] || []).includes(initial.category)) {
             grp = g;
             sub = initial.category;
             break;
           }
+        }
+        if (!grp) {
+          grp = initial.category;
+          sub = "";
+        }
       }
-      if (!grp) {
-        grp = initial.category;
-        sub ="";
-      } 
-      }
-      
     }
     setCategory(initial.category);
     setCategoryGroup(grp);
-    setCategorySub(sub)
+    setCategorySub(sub);
     setDescription(initial.description);
     setThumbnailUrl(initial.thumbnailUrl ?? "");
     setContentType(initial.contentType ?? "video");
@@ -123,51 +125,44 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
     setQuizAvailable(initial.quizAvailable ?? false);
     setMaxAttempts(initial.maxAttempts);
 
+    // clear local questions; will be reloaded when modal opens
     setQuestions([]);
   }, [initial]);
 
-  // โหลดรายละเอียด lesson + quiz
+  /* ---------------- Load lesson detail (and questions) ---------------- */
   useEffect(() => {
     if (!open) return;
+    if (!initial?.id) return;
 
-    const fetchLessonDetails = async () => {
-      if (!initial?.id) return;
+    const ctrl = new AbortController();
+    const doFetch = async () => {
       setLoading(true);
       try {
         const url = `/api/learning/${encodeURIComponent(String(initial.id))}`;
-        console.log("EditLessonModal: requesting", url);
         const res = await fetch(url, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
           cache: "no-store",
+          signal: ctrl.signal,
         });
-        console.log("EditLessonModal: response status:", res.status);
         if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          console.error("EditLessonModal: fetch failed:", res.status, text);
-          setLoading(false);
+          // eslint-disable-next-line no-console
+          console.error("EditLessonModal: fetch failed", res.status, await res.text().catch(() => ""));
           return;
         }
-
         const data = await res.json();
-        console.log("EditLessonModal: fetched lesson details:", data);
 
         setTitle(data.title ?? "");
         setCategory(data.category ?? "");
         setDescription(data.description ?? "");
         setThumbnailUrl(data.thumbnailUrl ?? "");
-        setContentType(
-          (data.contentType ?? "video").toLowerCase() === "document" ? "document" : "video"
-        );
+        setContentType(normalizeContentType(data.contentType));
         setAssignType(data.assignType ?? "all");
         setQuizAvailable(Boolean(data.quizAvailable));
 
-        // normalize questions:
-        // backend คาดว่า question มี id/questionId, type(MULTIPLE/FILL_BLANK), choices, correctAnswer
         const qs: Q[] = Array.isArray(data.questions)
           ? data.questions.map((q: any): Q => {
               const backendType = (q.type || "").toString().toUpperCase();
               const isFill = backendType === "FILL_BLANK";
-              // const isMultiple = backendType === "MULTIPLE" || !isFill;
 
               if (isFill) {
                 return {
@@ -180,7 +175,6 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
                 };
               }
 
-              // MULTIPLE (default)
               const normalizedChoices: Choice[] = Array.isArray(q.choices)
                 ? q.choices.map((c: any) => ({
                     choiceId: c.choiceId ?? c.id,
@@ -193,38 +187,34 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
                 questionId: q.questionId ?? q.id,
                 questionText: q.questionText ?? q.text ?? "",
                 type: "MULTIPLE",
-                choices:
-                  normalizedChoices.length >= 2
-                    ? normalizedChoices
-                    : [emptyChoice(), emptyChoice()],
+                choices: normalizedChoices.length >= 2 ? normalizedChoices : [emptyChoice(), emptyChoice()],
                 points: q.points ?? 1,
               };
             })
           : [];
-// emptyMultiple()
-        setQuestions(qs.length ? qs : []);
-      } catch (error) {
-        console.error("Failed to fetch lesson details:", error);
+
+        setQuestions(qs);
+      } catch (e: any) {
+        if (e?.name !== "AbortError") {
+          // eslint-disable-next-line no-console
+          console.error("Failed to fetch lesson details:", e);
+        }
       } finally {
         setLoading(false);
       }
     };
+    doFetch();
 
-    fetchLessonDetails();
+    return () => ctrl.abort();
   }, [open, initial.id, token]);
 
-  /* ==================== Question helpers ==================== */
+  /* ---------------- Question editors ---------------- */
+  const addQuestion = () => setQuestions((s) => [...s, emptyMultiple()]);
 
-  const addQuestion = () =>
-    setQuestions((s) => [...s, emptyMultiple()]); // default เพิ่มเป็น MULTIPLE
-
-  const removeQuestion = (idx: number) =>
-    setQuestions((s) => s.filter((_, i) => i !== idx));
+  const removeQuestion = (idx: number) => setQuestions((s) => s.filter((_, i) => i !== idx));
 
   const updateQuestionText = (idx: number, text: string) =>
-    setQuestions((s) =>
-      s.map((q, i) => (i === idx ? { ...q, questionText: text } : q))
-    );
+    setQuestions((s) => s.map((q, i) => (i === idx ? { ...q, questionText: text } : q)));
 
   const updateQuestionType = (idx: number, type: QuestionTypeUI) =>
     setQuestions((s) =>
@@ -233,65 +223,29 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
         if (q.type === type) return q;
 
         if (type === "MULTIPLE") {
-          // แปลงเป็น multiple: เคลียร์ correctAnswer, สร้าง choices ถ้าไม่มี
-          const choices =
-            q.choices && q.choices.length >= 2
-              ? q.choices
-              : [emptyChoice(), emptyChoice()];
-          return {
-            ...q,
-            type: "MULTIPLE",
-            choices,
-            correctAnswer: undefined,
-          };
-        } else {
-          // แปลงเป็น fill blank: เคลียร์ choices
-          return {
-            ...q,
-            type: "FILL_BLANK",
-            correctAnswer: q.correctAnswer ?? "",
-            choices: [],
-          };
+          const choices = q.choices && q.choices.length >= 2 ? q.choices : [emptyChoice(), emptyChoice()];
+          return { ...q, type: "MULTIPLE", choices, correctAnswer: undefined };
         }
+        return { ...q, type: "FILL_BLANK", correctAnswer: q.correctAnswer ?? "", choices: [] };
       })
     );
 
   const updateQuestionPoints = (idx: number, points: number) =>
-    setQuestions((s) =>
-      s.map((q, i) => (i === idx ? { ...q, points } : q))
-    );
+    setQuestions((s) => s.map((q, i) => (i === idx ? { ...q, points } : q)));
 
   const addChoice = (qIdx: number) =>
-    setQuestions((s) =>
-      s.map((q, i) =>
-        i === qIdx
-          ? { ...q, choices: [...q.choices, emptyChoice()] }
-          : q
-      )
-    );
+    setQuestions((s) => s.map((q, i) => (i === qIdx ? { ...q, choices: [...q.choices, emptyChoice()] } : q)));
 
   const removeChoice = (qIdx: number, cIdx: number) =>
     setQuestions((s) =>
-      s.map((q, i) =>
-        i === qIdx
-          ? {
-              ...q,
-              choices: q.choices.filter((_, ci) => ci !== cIdx),
-            }
-          : q
-      )
+      s.map((q, i) => (i === qIdx ? { ...q, choices: q.choices.filter((_, ci) => ci !== cIdx) } : q))
     );
 
   const updateChoiceText = (qIdx: number, cIdx: number, text: string) =>
     setQuestions((s) =>
       s.map((q, i) =>
         i === qIdx
-          ? {
-              ...q,
-              choices: q.choices.map((c, ci) =>
-                ci === cIdx ? { ...c, text } : c
-              ),
-            }
+          ? { ...q, choices: q.choices.map((c, ci) => (ci === cIdx ? { ...c, text } : c)) }
           : q
       )
     );
@@ -302,65 +256,24 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
         if (i !== qIdx) return q;
         return {
           ...q,
-          choices: q.choices.map((c, ci) =>
-            ci === cIdx ? { ...c, correct: !c.correct } : c
-          ),
+          choices: q.choices.map((c, ci) => (ci === cIdx ? { ...c, correct: !c.correct } : c)),
         };
       })
     );
 
   const updateFillBlankAnswer = (qIdx: number, value: string) =>
-    setQuestions((s) =>
-      s.map((q, i) =>
-        i === qIdx ? { ...q, correctAnswer: value } : q
-      )
-    );
+    setQuestions((s) => s.map((q, i) => (i === qIdx ? { ...q, correctAnswer: value } : q)));
 
-  /* ==================== Submit ==================== */
-
+  /* ---------------- Submit ---------------- */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
-      // let payloadQuestions: QuestionForm[] | undefined = undefined;
-      // if (quizAvailable) {
-      //   payloadQuestions = questions
-      //     .filter((q) => q.questionText.trim())
-      //     .map((q) => {
-      //       const base = {
-      //         questionId: q.questionId, // ถ้าว่าง backend จะ gen ใหม่ให้
-      //         questionText: q.questionText.trim(),
-      //         points: q.points ?? 1,
-      //       } as any;
-
-      //       if (q.type === "FILL_BLANK") {
-      //         return {
-      //           ...base,
-      //           type: "FILL_BLANK",
-      //           correctAnswer: q.correctAnswer?.trim() || "",
-      //         } as QuestionForm;
-      //       }
-
-      //       // MULTIPLE
-      //       const choices = (q.choices || [])
-      //         .filter((c) => c.text.trim())
-      //         .map((c) => ({
-      //           choiceId: c.choiceId, // ใช้ของเดิมถ้ามี
-      //           text: c.text.trim(),
-      //           correct: !!c.correct,
-      //         }));
-
-      //       return {
-      //         ...base,
-      //         type: "MULTIPLE",
-      //         choices,
-      //       } as QuestionForm;
-      //     });
-      // }
-        // CLEAN + VALIDATE questions before building payload
+      // Build questions for backend (IMPORTANT: map questionId/choiceId -> id)
       let payloadQuestions: QuestionForm[] | undefined = undefined;
+
       if (quizAvailable) {
-        const cleaned: QuestionForm[] = [];
+        const cleaned: any[] = [];
         const removedIndices: number[] = [];
 
         for (let i = 0; i < questions.length; i++) {
@@ -378,12 +291,12 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
               continue;
             }
             cleaned.push({
-              questionId: q.questionId,
+              id: q.questionId || undefined, // <-- map
               questionText: qText,
               type: "FILL_BLANK",
               correctAnswer: answer,
               points: q.points ?? 1,
-            } as unknown as QuestionForm);
+            });
             continue;
           }
 
@@ -397,51 +310,55 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
             continue;
           }
           if (!cleanedChoices.some((c) => !!c.correct)) {
-            // ถ้าไม่มี choice ถูก ให้ถือว่าไม่สมบูรณ์และตัดออก
             removedIndices.push(i + 1);
             continue;
           }
 
           cleaned.push({
-            questionId: q.questionId,
+            id: q.questionId || undefined, // <-- map
             questionText: qText,
             type: "MULTIPLE",
-            choices: cleanedChoices.map((c) => ({ choiceId: c.choiceId, text: c.text, correct: !!c.correct })),
             points: q.points ?? 1,
-          } as unknown as QuestionForm);
+            choices: cleanedChoices.map((c) => ({
+              id: c.choiceId || undefined, // <-- map
+              text: c.text,
+              correct: !!c.correct,
+            })),
+          });
         }
 
-        // ถ้ามีการตัดคำถามที่ไม่สมบูรณ์ ให้แจ้งผู้ใช้
         if (removedIndices.length) {
           alert(`Removed invalid/empty questions: ${removedIndices.join(", ")}`);
         }
 
-        // update local UI state ให้สอดคล้อง (optional — ทำให้ modal อัพเดต)
+        // Reflect cleaned content back to UI (optional)
         setQuestions((prev) => {
-          // build a Q[] from cleaned to reflect trimmed/cleaned choices
-          const newQs: Q[] = cleaned.map((cq) => {
-            if ((cq as any).type === "FILL_BLANK") {
-              return {
-                questionId: (cq as any).questionId,
-                questionText: (cq as any).questionText,
-                type: "FILL_BLANK",
-                choices: [],
-                correctAnswer: (cq as any).correctAnswer,
-                points: (cq as any).points,
-              } as Q;
-            }
-            return {
-             questionId: (cq as any).questionId,
-              questionText: (cq as any).questionText,
-              type: "MULTIPLE",
-              choices: ((cq as any).choices || []).map((c: any) => ({ choiceId: c.choiceId, text: c.text, correct: !!c.correct })),
-              points: (cq as any).points,
-            } as Q;
-          });
+          const newQs: Q[] = cleaned.map((cq: any) =>
+            cq.type === "FILL_BLANK"
+              ? {
+                  questionId: cq.id,
+                  questionText: cq.questionText,
+                  type: "FILL_BLANK",
+                  choices: [],
+                  correctAnswer: cq.correctAnswer,
+                  points: cq.points,
+                }
+              : {
+                  questionId: cq.id,
+                  questionText: cq.questionText,
+                  type: "MULTIPLE",
+                  points: cq.points,
+                  choices: (cq.choices || []).map((c: any) => ({
+                    choiceId: c.id,
+                    text: c.text,
+                    correct: !!c.correct,
+                  })),
+                }
+          );
           return newQs.length ? newQs : prev;
         });
 
-        payloadQuestions = cleaned.length ? cleaned : undefined;
+        payloadQuestions = cleaned.length ? (cleaned as QuestionForm[]) : undefined;
       }
 
       const payload = {
@@ -457,25 +374,7 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
         questions: payloadQuestions,
       };
 
-      console.log("sending payload",payload)
-
-      const videoMeta = videoFile
-        ? { name: videoFile.name, size: videoFile.size, type: videoFile.type }
-        : null;
-      console.log("EditLessonModal: saving payload:", {
-        ...payload,
-        video: videoMeta,
-      });
-
       await onSave(payload);
-
-      console.log(
-        "EditLessonModal: save completed for lesson id:",
-        initial.id
-      );
-    } catch (err) {
-      console.error("EditLessonModal: save failed:", err);
-      throw err;
     } finally {
       setSaving(false);
     }
@@ -485,6 +384,7 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
+  /* ---------------- UI ---------------- */
   const modal = (
     <div
       className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4"
@@ -498,32 +398,22 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Edit Learning Content</h2>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-700"
-            type="button"
-            aria-label="Close"
-          >
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700" type="button" aria-label="Close">
             <X size={18} />
           </button>
         </div>
 
         {loading ? (
-          <div className="p-6 text-sm text-gray-500">
-            Loading lesson...
-          </div>
+          <div className="p-6 text-sm text-gray-500">Loading lesson...</div>
         ) : (
-          // maxAttempts
           <form className="space-y-4" onSubmit={handleSubmit}>
+            {/* Title & MaxAttempts */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Title
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  
                   className="w-full border rounded-lg px-3 py-2"
                   placeholder="Lesson title"
                   required
@@ -531,42 +421,54 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
                 />
               </div>
 
-               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  MaxAttempts:
-                </label>
-
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max Attempts</label>
                 <input
                   value={maxAttempts}
-                  onChange={(e) => setMaxAttempts(Number(e.target.value) || 0)}
+                  onChange={(e) => setMaxAttempts(Math.max(1, Math.min(3, Number(e.target.value) || 1)))}
                   min={1}
                   max={3}
                   className="w-full border rounded-lg px-3 py-2"
-                  placeholder="Lesson title"
+                  placeholder="1 - 3"
                   disabled={saving}
+                  type="number"
                 />
               </div>
 
+              {/* Category */}
               <div className="space y-4">
-                <div className="flex">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Category :
-                </label>
-                <select value={categoryGroup} onChange={(e)=> {setCategoryGroup(e.target.value);setCategorySub("")}}>
-                  <option value={categoryGroup}>{categoryGroup}</option>
-                  {Object.keys(CATEGORY_GROUP).map((g)=>(
-                    <option key={g} value={g}>{g}</option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-2">
+                  <label className="block text-sm font-medium text-gray-700">Category:</label>
+                  <select
+                    value={categoryGroup}
+                    onChange={(e) => {
+                      setCategoryGroup(e.target.value);
+                      setCategorySub("");
+                    }}
+                    className="border rounded px-2 py-1 text-sm"
+                  >
+                    <option value={categoryGroup}>{categoryGroup || "Select group"}</option>
+                    {Object.keys(CATEGORY_GROUP).map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                
-                {(CATEGORY_GROUP[categoryGroup] ?? []).length > 0 &&(
+
+                {(CATEGORY_GROUP[categoryGroup] ?? []).length > 0 && (
                   <>
-                    <label className="text-sm font-medium text-gray-700 mt-2">Subcategory :</label>
-                    <select value={categorySub} onChange={(e) => setCategorySub(e.target.value)}>
-                      {CATEGORY_GROUP[categoryGroup].map((sub =>(
-                        <option key={sub} value={sub}>{sub}</option>
-                      )))}
+                    <label className="block text-sm font-medium text-gray-700 mt-2">Subcategory:</label>
+                    <select
+                      value={categorySub}
+                      onChange={(e) => setCategorySub(e.target.value)}
+                      className="border rounded px-2 py-1 text-sm"
+                    >
+                      {(CATEGORY_GROUP[categoryGroup] || []).map((sub) => (
+                        <option key={sub} value={sub}>
+                          {sub}
+                        </option>
+                      ))}
                     </select>
                   </>
                 )}
@@ -575,9 +477,7 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
 
             {/* Description */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -591,31 +491,22 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
             {/* Content / Assign */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Content Type
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Content Type</label>
                 <div className="px-3 py-2 border rounded-lg bg-gray-100 text-gray-700">
                   {contentType === "video" ? "Video" : "Document"}
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Assign Type
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Assign Type</label>
                 <select
                   value={assignType}
-                  onChange={(e) =>
-                    setAssignType(e.target.value as any)
-                  }
+                  onChange={(e) => setAssignType(e.target.value as any)}
                   className="w-full border rounded-lg px-3 py-2"
                   disabled={saving}
                 >
                   {TARGET_OPTION["Option"].map((option) => (
-                    <option
-                      key={option.index}
-                      value={option.index}
-                    >
+                    <option key={option.index} value={option.index}>
                       {option.option}
                     </option>
                   ))}
@@ -626,15 +517,13 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
             {/* Video upload */}
             {contentType === "video" && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Upload Video
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Upload Video</label>
                 <input
                   type="file"
                   accept="video/*"
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) setVideoFile(file);
+                    const file = e.target.files?.[0] || null;
+                    setVideoFile(file);
                   }}
                   disabled={saving}
                   className="w-full border rounded-lg px-3 py-2"
@@ -648,9 +537,8 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
                 <input
                   type="checkbox"
                   checked={quizAvailable}
-                  onChange={(e) =>
-                    setQuizAvailable(e.target.checked)
-                  }
+                  onChange={(e) => setQuizAvailable(e.target.checked)}
+                  disabled={saving}
                 />
                 <span className="text-sm">Quiz available</span>
               </label>
@@ -660,13 +548,12 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
             {quizAvailable && (
               <div className="border rounded-lg p-4 bg-gray-50">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold">
-                    Questions
-                  </h3>
+                  <h3 className="text-sm font-semibold">Questions</h3>
                   <button
                     type="button"
                     onClick={addQuestion}
                     className="inline-flex items-center gap-2 px-3 py-1 bg-white border rounded text-sm"
+                    disabled={saving}
                   >
                     <Plus size={14} /> Add question
                   </button>
@@ -674,58 +561,37 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
 
                 <div className="space-y-4">
                   {questions.map((q, qi) => (
-                    <div
-                      key={q.questionId ?? qi}
-                      className="bg-white border rounded p-3"
-                    >
+                    <div key={q.questionId ?? `new-${qi}`} className="bg-white border rounded p-3">
                       {/* Header row */}
                       <div className="flex justify-between items-start gap-3">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
-                            <label className="text-xs text-gray-500">
-                              Question {qi + 1}
-                            </label>
+                            <label className="text-xs text-gray-500">Question {qi + 1}</label>
                             <select
                               value={q.type}
-                              onChange={(e) =>
-                                updateQuestionType(
-                                  qi,
-                                  e.target.value as QuestionTypeUI
-                                )
-                              }
+                              onChange={(e) => updateQuestionType(qi, e.target.value as QuestionTypeUI)}
                               className="text-xs border rounded px-1.5 py-0.5"
+                              disabled={saving}
                             >
-                              <option value="MULTIPLE">
-                                Multiple choice
-                              </option>
-                              <option value="FILL_BLANK">
-                                Fill in the blank
-                              </option>
+                              <option value="MULTIPLE">Multiple choice</option>
+                              <option value="FILL_BLANK">Fill in the blank</option>
                             </select>
                             <input
                               type="number"
                               min={1}
                               value={q.points ?? 1}
-                              onChange={(e) =>
-                                updateQuestionPoints(
-                                  qi,
-                                  Number(e.target.value) || 1
-                                )
-                              }
+                              onChange={(e) => updateQuestionPoints(qi, Number(e.target.value) || 1)}
                               className="w-14 text-xs border rounded px-1 py-0.5"
                               title="Points"
+                              disabled={saving}
                             />
                           </div>
                           <input
                             value={q.questionText}
-                            onChange={(e) =>
-                              updateQuestionText(
-                                qi,
-                                e.target.value
-                              )
-                            }
+                            onChange={(e) => updateQuestionText(qi, e.target.value)}
                             className="w-full mt-1 border rounded px-2 py-1 text-sm"
                             placeholder="Question text"
+                            disabled={saving}
                           />
                         </div>
 
@@ -734,6 +600,7 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
                             type="button"
                             onClick={() => removeQuestion(qi)}
                             className="text-red-500"
+                            disabled={saving}
                           >
                             <Trash2 size={16} />
                           </button>
@@ -744,48 +611,30 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
                       {q.type === "MULTIPLE" && (
                         <div className="mt-3 space-y-2">
                           {q.choices.map((c, ci) => (
-                            <div
-                              key={c.choiceId ?? ci}
-                              className="flex items-center gap-2"
-                            >
+                            <div key={c.choiceId ?? `q${qi}-c${ci}`} className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() =>
-                                  toggleChoiceCorrect(
-                                    qi,
-                                    ci
-                                  )
-                                }
+                                onClick={() => toggleChoiceCorrect(qi, ci)}
                                 className={`px-2 py-1 rounded text-xs ${
-                                  c.correct
-                                    ? "bg-green-500 text-white"
-                                    : "bg-gray-200 text-gray-700"
+                                  c.correct ? "bg-green-500 text-white" : "bg-gray-200 text-gray-700"
                                 }`}
+                                disabled={saving}
                               >
                                 {c.correct ? "✓" : "○"}
                               </button>
                               <input
                                 value={c.text}
-                                onChange={(e) =>
-                                  updateChoiceText(
-                                    qi,
-                                    ci,
-                                    e.target.value
-                                  )
-                                }
+                                onChange={(e) => updateChoiceText(qi, ci, e.target.value)}
                                 className="flex-1 border rounded px-2 py-1 text-sm"
                                 placeholder={`Choice ${ci + 1}`}
+                                disabled={saving}
                               />
                               {q.choices.length > 2 && (
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    removeChoice(
-                                      qi,
-                                      ci
-                                    )
-                                  }
+                                  onClick={() => removeChoice(qi, ci)}
                                   className="text-red-500"
+                                  disabled={saving}
                                 >
                                   <Trash2 size={16} />
                                 </button>
@@ -796,13 +645,11 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
                           <div>
                             <button
                               type="button"
-                              onClick={() =>
-                                addChoice(qi)
-                              }
+                              onClick={() => addChoice(qi)}
                               className="mt-2 inline-flex items-center gap-2 px-2 py-1 bg-white border rounded text-xs"
+                              disabled={saving}
                             >
-                              <Plus size={12} /> Add
-                              choice
+                              <Plus size={12} /> Add choice
                             </button>
                           </div>
                         </div>
@@ -811,19 +658,13 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
                       {/* FILL IN THE BLANK */}
                       {q.type === "FILL_BLANK" && (
                         <div className="mt-3">
-                          <label className="text-xs text-gray-500">
-                            Correct answer
-                          </label>
+                          <label className="text-xs text-gray-500">Correct answer</label>
                           <input
                             value={q.correctAnswer ?? ""}
-                            onChange={(e) =>
-                              updateFillBlankAnswer(
-                                qi,
-                                e.target.value
-                              )
-                            }
+                            onChange={(e) => updateFillBlankAnswer(qi, e.target.value)}
                             className="w-full border rounded px-2 py-1 text-sm mt-1"
                             placeholder="Type the correct answer"
+                            disabled={saving}
                           />
                         </div>
                       )}
@@ -835,12 +676,7 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
 
             {/* Actions */}
             <div className="flex justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 rounded-lg border"
-                disabled={saving}
-              >
+              <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border" disabled={saving}>
                 Cancel
               </button>
               <button
@@ -848,8 +684,7 @@ const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProp
                 className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2 disabled:opacity-60"
                 disabled={saving}
               >
-                <Save size={16} />{" "}
-                {saving ? "Saving..." : "Save"}
+                <Save size={16} /> {saving ? "Saving..." : "Save"}
               </button>
             </div>
           </form>
