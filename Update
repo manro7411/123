@@ -1,1203 +1,864 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useContext, useEffect, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useContext, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { X, Save, Plus, Trash2 } from "lucide-react";
+import { TARGET_OPTION } from "../AdminUtil";
+import type { QuestionForm } from "../../../types/trainer/types";
 import { AuthContext } from "../../../Authentication/AuthContext";
-import AdminSidebarWidget from "../Widgets/AdminSideBar";
-import AdminCalendar from "../Widgets/AdminCalendar";
-import AdminAvatarWidget from "../Widgets/AdminAvatarWidget";
-import ScoreboardChart from "../../../components/ScoreboardChart";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-} from "recharts";
-import axios from "axios";
-import RoleSwitcher from "../../../components/RoleSwitcher";
-import { EventSourcePolyfill } from "event-source-polyfill";
-import { useUserProfile } from "../../User/Lesson/hooks/useUserProfile";
-import {
-  COLORS,
-  type ContentPerfItem,
-  type ContentPerformanceResponse,
-  type OverviewResponse,
-} from "../../../types/trainer/types";
-import { ENDPOINTS } from "../../../config/endpoints";
+import { CATEGORY_GROUP } from "../../../types/base/types";
 
-/* ---------------------------------------------------------------------------
- * Utilities
- * -------------------------------------------------------------------------*/
-function toDateInput(d: Date) {
-  return d.toISOString().slice(0, 10);
+export interface Lesson {
+  id: number | string;
+  title: string;
+  thumbnailUrl?: string;
+  category: string;
+  description: string;
+  contentType: "video" | "document";
+  assignType: "all" | "team" | "specific";
+  quizAvailable?: boolean;
+  maxAttempts:number;
 }
-const isDocVisible = () =>
-  typeof document !== "undefined" ? document.visibilityState === "visible" : true;
 
-const getLearnersCount = (row: any) => {
-  if (!row) return 0;
-  if (Array.isArray(row.learners)) return row.learners.length;
-  if (typeof row.learnersCount === "number") return row.learnersCount;
-  if (typeof row.learners === "number") return row.learners;
-  return 0;
+interface EditLessonModalProps {
+  open: boolean;
+  initial: Lesson;
+  onClose: () => void;
+  onSave: (data: {
+    title: string;
+    category: string;
+    description: string;
+    thumbnailUrl?: string;
+    video?: File | null;
+    contentType: "video" | "document";
+    assignType: "all" | "team" | "specific";
+    quizAvailable: boolean;
+    maxAttempts:number
+    questions?: QuestionForm[];
+  }) => Promise<void> | void;
+}
+
+type Choice = { choiceId?: string; text: string; correct?: boolean };
+
+type QuestionTypeUI = "MULTIPLE" | "FILL_BLANK";
+
+type Q = {
+  questionId?: string;
+  questionText: string;
+  type: QuestionTypeUI;
+  choices: Choice[]; // ใช้เมื่อ MULTIPLE
+  correctAnswer?: string; // ใช้เมื่อ FILL_BLANK
+  points?: number;
 };
 
-// localStorage helpers (per trainer)
-const dismissedKey = (email: string) => `QA_DISMISSED_${email}`;
-const lastSeenKey = (email: string) => `QA_LAST_SEEN_${email}`;
-function loadDismissed(email: string): Set<string> {
-  try {
-    const raw = localStorage.getItem(dismissedKey(email));
-    if (!raw) return new Set();
-    const arr = JSON.parse(raw) as string[];
-    return new Set(arr);
-  } catch {
-    return new Set();
-  }
-}
-function saveDismissed(email: string, set: Set<string>) {
-  try {
-    localStorage.setItem(dismissedKey(email), JSON.stringify([...set]));
-  } catch {}
-}
-function loadLastSeen(email: string): string {
-  try {
-    return localStorage.getItem(lastSeenKey(email)) || "";
-  } catch {
-    return "";
-  }
-}
-function saveLastSeen(email: string, iso: string) {
-  try {
-    localStorage.setItem(lastSeenKey(email), iso);
-  } catch {}
-}
+const emptyChoice = (): Choice => ({ text: "", correct: false });
+const emptyMultiple = (): Q => ({
+  questionText: "",
+  type: "MULTIPLE",
+  choices: [emptyChoice(), emptyChoice()],
+  points: 1,
+});
+// const emptyFillBlank = (): Q => ({
+//   questionText: "",
+//   type: "FILL_BLANK",
+//   choices: [],
+//   correctAnswer: "",
+//   points: 1,
+// });
 
-/* ---------------------------------------------------------------------------
- * Toast (popup)
- * -------------------------------------------------------------------------*/
-export type QuestionAlert = {
-  id: string;
-  userEmail: string;
-  lessonId?: string | number;
-  lessonTitle?: string;
-  question: string;
-  createdAt?: string;
-};
-export type ToastItem = QuestionAlert & { _ts: number };
+const EditLessonModal = ({ open, initial, onClose, onSave }: EditLessonModalProps) => {
+  const { token } = useContext(AuthContext);
 
-function ToastCard({
-  toast,
-  onClose,
-  onClick,
-}: {
-  toast: ToastItem;
-  onClose: (id: string) => void;
-  onClick?: (toast: ToastItem) => void;
-}) {
-  const [hover, setHover] = useState(false);
-
-  useEffect(() => {
-    if (hover) return;
-    const t = setTimeout(() => onClose(toast.id), 8000);
-    return () => clearTimeout(t);
-  }, [hover, toast.id, onClose]);
-
-  return (
-    <div
-      className="w-80 max-w-[88vw] bg-white shadow-xl rounded-xl border p-3 cursor-pointer transition hover:shadow-2xl"
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onClick={() => onClick?.(toast)}
-      role="alert"
-      aria-live="polite"
-    >
-      <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-sm">
-          Q
-        </div>
-        <div className="flex-1">
-          <div className="text-xs text-gray-500 mb-0.5">
-            {toast.lessonTitle ? toast.lessonTitle : "New Question"} • {toast.userEmail}
-          </div>
-          <div className="text-sm text-gray-800 line-clamp-3 whitespace-pre-wrap">
-            {toast.question}
-          </div>
-          {toast.createdAt && (
-            <div className="text-[10px] text-gray-400 mt-1">
-              {new Date(toast.createdAt).toLocaleString()}
-            </div>
-          )}
-        </div>
-        <button
-          aria-label="Close notification"
-          className="text-gray-400 hover:text-gray-600 ml-1"
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose(toast.id);
-          }}
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ToastStack({
-  toasts,
-  onClose,
-  onItemClick,
-  onMarkAllRead,
-}: {
-  toasts: ToastItem[];
-  onClose: (id: string) => void;
-  onItemClick?: (toast: ToastItem) => void;
-  onMarkAllRead?: () => void;
-}) {
-  if (toasts.length === 0) return null;
-  return (
-    <div className="fixed bottom-4 right-4 z-[60] flex flex-col gap-3">
-      <div className="flex justify-end">
-        <button
-          className="text-xs px-2 py-1 rounded-full bg-gray-100 border hover:bg-gray-200"
-          onClick={onMarkAllRead}
-        >
-          Mark all as read
-        </button>
-      </div>
-      {toasts.map((t) => (
-        <ToastCard key={t.id} toast={t} onClose={onClose} onClick={onItemClick} />
-      ))}
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------------------
- * Hook: SSE → Poll with abort + strict-mode guard
- * -------------------------------------------------------------------------*/
-function useTrainerQuestionAlerts(token: string | null, trainerEmail: string | null) {
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const dismissedRef = useRef<Set<string>>(new Set());
-  const seenIds = useRef<Set<string>>(new Set());
-  const lastSeenAt = useRef<string>("");
-  const sseRef = useRef<EventSourcePolyfill | null>(null);
-  const pollTimer = useRef<number | null>(null);
-  const pollCtrlRef = useRef<AbortController | null>(null);
-  const startedRef = useRef(false);
-
-  const SSE_URL = "/api/user-question-answer/stream";
-  const POLL_URL = "/api/user-question-answer/pending";
-
-  useEffect(() => {
-    if (!trainerEmail) return;
-    dismissedRef.current = loadDismissed(trainerEmail);
-    lastSeenAt.current = loadLastSeen(trainerEmail);
-  }, [trainerEmail]);
-
-  const persistLastSeen = (iso: string | undefined) => {
-    if (!trainerEmail || !iso) return;
-    lastSeenAt.current = iso;
-    saveLastSeen(trainerEmail, iso);
-  };
-
-  const pushToasts = (items: QuestionAlert[]) => {
-    if (!items?.length) return;
-    const newOnes: ToastItem[] = [];
-    for (const it of items) {
-      if (!it?.id) continue;
-      if (trainerEmail && dismissedRef.current.has(it.id)) continue;
-      if (seenIds.current.has(it.id)) continue;
-      seenIds.current.add(it.id);
-      newOnes.push({ ...it, _ts: Date.now() });
-      if (it.createdAt && it.createdAt > (lastSeenAt.current || "")) {
-        persistLastSeen(it.createdAt);
-      }
-    }
-    if (newOnes.length) setToasts((prev) => [...prev, ...newOnes].slice(-6));
-  };
-
-  useEffect(() => {
-    if (!token || !trainerEmail) return;
-    if (startedRef.current) return;
-    startedRef.current = true;
-
-    // SSE
-    try {
-      const params = new URLSearchParams();
-      params.set("trainer", trainerEmail.trim().toLowerCase());
-      if (lastSeenAt.current) params.set("since", lastSeenAt.current);
-      const url = `${SSE_URL}?${params.toString()}`;
-      const es = new EventSourcePolyfill(url, {
-        headers: { Authorization: `Bearer ${token}` },
-        withCredentials: false,
-      });
-
-      const onQuestion = (ev: MessageEvent) => {
-        try {
-          const raw = typeof ev.data === "string" ? ev.data : String(ev.data);
-          const payload = JSON.parse(raw) as QuestionAlert | QuestionAlert[];
-          const arr = Array.isArray(payload) ? payload : [payload];
-          const sortedDates = arr.map((a) => a.createdAt).filter(Boolean).sort();
-          const latest =
-            sortedDates.length > 0 ? (sortedDates[sortedDates.length - 1] as string) : undefined;
-          if (latest) persistLastSeen(latest);
-          pushToasts(arr);
-        } catch {}
-      };
-
-      (es as any).addEventListener("question", onQuestion as any);
-      es.onerror = () => {
-        es.close();
-        sseRef.current = null;
-      };
-      sseRef.current = es;
-    } catch {}
-
-    // Poll
-    const schedule = (ms: number) => {
-      if (pollTimer.current) window.clearTimeout(pollTimer.current);
-      pollTimer.current = window.setTimeout(tick, ms) as unknown as number;
-    };
-    const tick = async () => {
-      if (!isDocVisible()) {
-        schedule(15000);
-        return;
-      }
-      try {
-        pollCtrlRef.current?.abort();
-        const ctrl = new AbortController();
-        pollCtrlRef.current = ctrl;
-        const res = await axios.get<QuestionAlert[]>(`/api/user-question-answer/pending`, {
-          params: {
-            trainer: trainerEmail.trim().toLowerCase(),
-            since: lastSeenAt.current || undefined,
-            limit: 20,
-          },
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-          signal: ctrl.signal as any,
-        });
-        pushToasts(Array.isArray(res.data) ? res.data : []);
-      } catch (e: any) {
-        if (e.name === "CanceledError" || e.code === "ERR_CANCELED") {
-          // ignore
-        }
-      } finally {
-        schedule(15000);
-      }
-    };
-    schedule(3000);
-
-    const onVisibility = () => {
-      if (isDocVisible()) {
-        if (pollTimer.current) window.clearTimeout(pollTimer.current);
-        pollTimer.current = window.setTimeout(() => tick(), 1000) as unknown as number;
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      startedRef.current = false;
-      document.removeEventListener("visibilitychange", onVisibility);
-      if (pollTimer.current) window.clearTimeout(pollTimer.current);
-      pollTimer.current = null;
-      pollCtrlRef.current?.abort();
-      pollCtrlRef.current = null;
-      try {
-        (sseRef.current as any)?.removeEventListener?.("question");
-      } catch {}
-      sseRef.current?.close?.();
-      sseRef.current = null;
-    };
-  }, [token, trainerEmail]);
-
-  const closeToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-    if (trainerEmail) {
-      dismissedRef.current.add(id);
-      saveDismissed(trainerEmail, dismissedRef.current);
-    }
-  };
-  const markAllRead = () => {
-    setToasts((prev) => {
-      if (trainerEmail) {
-        for (const t of prev) dismissedRef.current.add(t.id);
-        saveDismissed(trainerEmail, dismissedRef.current);
-      }
-      return [];
-    });
-  };
-
-  return { toasts, closeToast, markAllRead };
-}
-
-/* ---------------------------------------------------------------------------
- * Types
- * -------------------------------------------------------------------------*/
-export type MyProfile = {
-  id: string;
-  name?: string;
-  email: string;
-  avatarUrl?: string;
-};
-
-export type AssignmentTeam = {
-  supervisor: string;
-  teamName: string;
-  teamId: string;
-};
-export type AssignmentResponse = {
-  trainerId: string;
-  teams: AssignmentTeam[];
-  message?: string;
-};
-
-/* ---------------------------------------------------------------------------
- * Main
- * -------------------------------------------------------------------------*/
-const AdminDashboard = () => {
-  const { token: ctxToken } = useContext(AuthContext);
-  const token = ctxToken || localStorage.getItem("token") || sessionStorage.getItem("token");
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    if (!token) navigate("/");
-  }, [token, navigate]);
-
-  const { fullName, email: trainerEmail } = useUserProfile(token || null);
-  const displayName = fullName || "Administrator";
-
-  // Popups
-  const { toasts, closeToast, markAllRead } = useTrainerQuestionAlerts(
-    token || null,
-    trainerEmail || null
-  );
-
-  // Assignment & members
-  const [, setMyProfile] = useState<MyProfile | null>(null);
-  const [assignment, setAssignment] = useState<AssignmentResponse | null>(null);
-  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
-  const [teamMembers, setTeamMembers] = useState<any[]>([]);
-  const [teamMembersLoading, setTeamMembersLoading] = useState(false);
-  const [teamMembersError, setTeamMembersError] = useState<string | null>(null);
-
-  const hasTeams = useMemo(() => (assignment?.teams?.length || 0) > 0, [assignment?.teams]);
-
-  // Analysis mode & selected user
-  const [mode, setMode] = useState<"team" | "individual">("team");
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [selectedUserEmail, setSelectedUserEmail] = useState<string | null>(null);
-  const [selectedUserName, setSelectedUserName] = useState<string | null>(null);
-
-  // Strict init guard
-  const didInitRef = useRef(false);
-  const profileAbortRef = useRef<AbortController | null>(null);
-  const teamMembersAbortRef = useRef<AbortController | null>(null);
-
-  // load profile + assignment once
-  useEffect(() => {
-    if (!token) return;
-    if (didInitRef.current) return;
-    didInitRef.current = true;
-
-    const ctrl = new AbortController();
-    profileAbortRef.current?.abort();
-    profileAbortRef.current = ctrl;
-
-    const loadProfileAndAssignment = async () => {
-      setMyProfile(null);
-      setAssignment({ trainerId: "", teams: [] });
-      try {
-        const profileRes = await axios.get<MyProfile>("/api/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: ctrl.signal as any,
-        });
-        const profile = profileRes.data;
-        setMyProfile(profile);
-
-        if (profile?.id) {
-          const assignmentRes = await axios.get<AssignmentResponse>(
-            `/api/trainer-information/assignment/${encodeURIComponent(profile.id)}`,
-            { headers: { Authorization: `Bearer ${token}`, "Cache-Control": "no-cache" }, signal: ctrl.signal as any }
-          );
-          const payload = assignmentRes.data || { trainerId: profile.id, teams: [] };
-          payload.teams = Array.isArray(payload.teams) ? payload.teams : [];
-          setAssignment(payload);
-
-          if (payload.teams?.[0]?.teamId) setSelectedTeamId(payload.teams[0].teamId);
-        }
-      } catch (e: any) {
-        if (e.name === "CanceledError" || e.code === "ERR_CANCELED") return;
-        setAssignment({ trainerId: "", teams: [] });
-      }
-    };
-
-    loadProfileAndAssignment();
-
-    return () => {
-      profileAbortRef.current?.abort();
-      profileAbortRef.current = null;
-    };
-  }, [token]);
-
-  const fetchTeamMembers = async (teamId: string | null) => {
-    if (!teamId || !token) return;
-    setTeamMembersLoading(true);
-    setTeamMembersError(null);
-
-    teamMembersAbortRef.current?.abort();
-    const ctrl = new AbortController();
-    teamMembersAbortRef.current = ctrl;
-
-    try {
-      const res = await axios.get<any[]>(`/api/teams/${encodeURIComponent(teamId)}/members`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: ctrl.signal as any,
-      });
-      const members = Array.isArray(res.data) ? res.data : [];
-      setTeamMembers(members);
-      setSelectedTeamId(teamId);
-
-      if (selectedUserId && !members.some((m: any) => String(m.id) === String(selectedUserId))) {
-        setSelectedUserId(null);
-        setSelectedUserEmail(null);
-        setSelectedUserName(null);
-      }
-    } catch (e: any) {
-      if (e.name === "CanceledError" || e.code === "ERR_CANCELED") return;
-      setTeamMembers([]);
-      setTeamMembersError(e?.response?.data?.message || e?.message || "Failed to load members");
-    } finally {
-      setTeamMembersLoading(false);
-    }
-  };
-
-  // auto-load first team’s members when assignment changes
-  useEffect(() => {
-    if (hasTeams && selectedTeamId) {
-      fetchTeamMembers(selectedTeamId);
-    } else if (hasTeams && assignment?.teams?.[0]?.teamId) {
-      fetchTeamMembers(assignment.teams[0].teamId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignment?.teams]);
-
-  /* ---------------- Filters ---------------- */
-  const [showFilter] = useState(false);
-  const [filterText, setFilterText] = useState({ course: "" });
-  const today = useMemo(() => new Date(), []);
-  const weekAgo = useMemo(() => new Date(Date.now() - 6 * 24 * 3600 * 1000), []);
-  const [start, setStart] = useState(toDateInput(weekAgo));
-  const [end, setEnd] = useState(toDateInput(today));
-
-  /* ---------------- Data ---------------- */
+  const [title, setTitle] = useState(initial.title);
+  const [, setCategory] = useState(initial.category);
+  const [maxAttempts, setMaxAttempts] = useState<number>(initial.maxAttempts);
+  const [description, setDescription] = useState(initial.description);
+  const [thumbnailUrl, setThumbnailUrl] = useState(initial.thumbnailUrl ?? "");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [contentType, setContentType] = useState<"video" | "document">("video");
+  const [assignType, setAssignType] = useState<"all" | "specific" | "team">("all");
+  const [saving, setSaving] = useState(false);
+  const [quizAvailable, setQuizAvailable] = useState(initial.quizAvailable ?? false);
+  const [questions, setQuestions] = useState<Q[]>([]);
   const [loading, setLoading] = useState(false);
-  const [overview, setOverview] = useState<OverviewResponse | null>(null);
-  const [contentPerf, setContentPerf] = useState<ContentPerfItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [categoryGroup,setCategoryGroup] = useState<string>("");
+  const [categorySub,setCategorySub] = useState<string>();
 
-  // Build params (pure)
-  const buildQueryParams = () => {
-    const base: Record<string, any> = { start, end };
-    if (mode === "team") {
-      if (selectedTeamId) {
-        base.view = "team";
-        base.teamId = selectedTeamId;
-      } else {
-        base.view = "individual";
-      }
-    } else {
-      if (selectedTeamId) {
-        base.view = "team";
-        base.teamId = selectedTeamId;
-      } else {
-        base.view = "individual";
-      }
-      if (selectedUserId) base.userId = selectedUserId;
-    }
-    return base;
-  };
+  const categoryValue = categorySub ? `${categoryGroup} > ${categorySub}` : categoryGroup;
+  console.log(categoryValue)
 
-  const fetchAbortRef = useRef<AbortController | null>(null);
-  const lastKeyRef = useRef<string>("");
-
-  const fetchAllWithParams = async (params: Record<string, any>) => {
-    setLoading(true);
-    setError(null);
-
-    fetchAbortRef.current?.abort();
-    const ctrl = new AbortController();
-    fetchAbortRef.current = ctrl;
-
-    const auth = { headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal as any };
-    try {
-      const [ovRes, cpRes] = await Promise.all([
-        axios.get<OverviewResponse>(ENDPOINTS.TrainerOverview, { params, ...auth }),
-        axios.get<ContentPerformanceResponse>(ENDPOINTS.TrainerPerformance, {
-          params: { ...params, order: "learners:desc", limit: 50, offset: 0 },
-          ...auth,
-        }),
-      ]);
-      setOverview(ovRes.data);
-      setContentPerf(cpRes.data.items || []);
-    } catch (e: any) {
-      if (e.name === "CanceledError" || e.code === "ERR_CANCELED") return;
-      setContentPerf([]);
-      setError(e?.response?.data?.error || e?.message || "Failed to load analytics");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Single effect that fires when the *effective* params change
+  // reset เมื่อ initial เปลี่ยน (เช่นเปลี่ยน lesson)
   useEffect(() => {
-    if (!token) return;
-    if (assignment === null) return;
-
-    // ready check (prevents “empty first call”)
-    const ready = hasTeams ? (mode === "team" ? !!selectedTeamId : true) : true;
-    if (!ready) return;
-
-    const params = buildQueryParams();
-    const key = JSON.stringify(params);
-    if (key === lastKeyRef.current) return; // dedupe identical GETs
-    lastKeyRef.current = key;
-
-    fetchAllWithParams(params);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, assignment, hasTeams, mode, selectedTeamId, selectedUserId, start, end]);
-
-  /* ---------- Derived (Chart) Data ---------- */
-  const selectedUserEmailSet = useMemo(() => {
-    if (mode === "individual" && selectedUserEmail) {
-      return new Set([String(selectedUserEmail).toLowerCase()]);
-    }
-    return new Set<string>();
-  }, [mode, selectedUserEmail]);
-
-  const dailyActivityAll = useMemo(() => {
-    if (!overview?.trend || (overview.trend as any[]).length === 0) return [];
-    const rows = (overview.trend as any[]).map((t: any) => ({
-      date: t.date,
-      enroll: t.enrollCount ?? (Array.isArray(t.enroll) ? t.enroll.length : 0),
-      complete: t.completeCount ?? (Array.isArray(t.complete) ? t.complete.length : 0),
-      details: {
-        enroll: Array.isArray(t.enroll) ? t.enroll : [],
-        complete: Array.isArray(t.complete) ? t.complete : [],
-      },
-    }));
-    return rows;
-  }, [overview]);
-
-  const dailyActivity = useMemo(() => {
-    if (mode !== "individual" || selectedUserEmailSet.size === 0) return dailyActivityAll;
-    return dailyActivityAll.map((row) => {
-      const e = row.details.enroll.filter(
-        (x: any) => x?.email && selectedUserEmailSet.has(String(x.email).toLowerCase())
-      );
-      const c = row.details.complete.filter(
-        (x: any) => x?.email && selectedUserEmailSet.has(String(x.email).toLowerCase())
-      );
-      return { date: row.date, enroll: e.length, complete: c.length, details: { enroll: e, complete: c } };
-    });
-  }, [mode, dailyActivityAll, selectedUserEmailSet]);
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload || payload.length === 0) return null;
-    const data = payload[0]?.payload?.details || { enroll: [], complete: [] };
-    return (
-      <div className="bg-white border rounded-lg p-3 shadow text-xs max-w-xs">
-        <p className="font-semibold mb-1">{label}</p>
-        <p>Enroll: {payload[0]?.value ?? 0} | Complete: {payload[1]?.value ?? 0}</p>
-        {data.enroll?.length > 0 && (
-          <>
-            <p className="mt-2 font-medium">Enrollments:</p>
-            {data.enroll.map((e: any, i: number) => (
-              <div key={i}>• {e.name || e.email} ({e.course})</div>
-            ))}
-          </>
-        )}
-        {data.complete?.length > 0 && (
-          <>
-            <p className="mt-2 font-medium">Completions:</p>
-            {data.complete.map((c: any, i: number) => (
-              <div key={i}>• {c.name || c.email} - {c.course} {typeof c.score === "number" ? `(score ${c.score})` : ""}</div>
-            ))}
-          </>
-        )}
-      </div>
-    );
-  };
-
-  const filteredContentPerf = useMemo(() => {
-    const base = contentPerf.filter((it) =>
-      filterText.course ? it.title.toLowerCase().includes(filterText.course.toLowerCase()) : true
-    );
-    if (mode !== "individual" || selectedUserEmailSet.size === 0) return base;
-
-    return base.map((it: any) => {
-      const learnersArr = Array.isArray(it.learners) ? it.learners : [];
-      const filteredLearners = learnersArr.filter(
-        (x: any) => x?.email && selectedUserEmailSet.has(String(x.email).toLowerCase())
-      );
-      const learnersCount = filteredLearners.length;
-      const avgScore =
-        learnersCount > 0
-          ? Math.round(
-              (filteredLearners
-                .map((x: any) => (typeof x.score === "number" ? x.score : 0))
-                .reduce((a: number, b: number) => a + b, 0) /
-                learnersCount) * 10
-            ) / 10
-          : it.avgScore ?? null;
-
-      return { ...it, learners: filteredLearners, learnersCount, avgScore };
-    });
-  }, [mode, contentPerf, filterText.course, selectedUserEmailSet]);
-
-  const pieData = useMemo(() => {
-    const rows = filteredContentPerf.map((it: any) => ({ name: it.title, value: getLearnersCount(it) }));
-    const total = rows.reduce((acc, r) => acc + r.value, 0);
-    return total > 0 ? rows : [];
-  }, [filteredContentPerf]);
-
-  /* ---------- Individual snapshot ---------- */
-  type UserActivityRow = {
-    date: string;
-    type: "enroll" | "complete";
-    course: string;
-    score?: number | null;
-    totalQuestions?: number | null;
-    at?: string;
-  };
-
-  const selectedUserActivity = useMemo<UserActivityRow[]>(() => {
-    if (!selectedUserEmail || !overview?.trend?.length) return [];
-    const out: UserActivityRow[] = [];
-    for (const day of overview.trend as any[]) {
-      if (Array.isArray(day.enroll)) {
-        for (const e of day.enroll) {
-          if (e?.email?.toLowerCase?.() === selectedUserEmail.toLowerCase()) {
-            out.push({ date: day.date, type: "enroll", course: e.course, at: e.startedAt });
+    setTitle(initial.title);
+    
+    let grp= "";
+    let sub: string | undefined = "";
+    if (initial.category) {
+      if (initial.category.includes(">")) {
+        const parts=  initial.category.split(">").map((s)=> s.trim());
+        grp = parts[0] ?? "";
+        sub = parts[1] ?? "";
+      }else{
+       for (const g of Object.keys(CATEGORY_GROUP)) {
+        if ((CATEGORY_GROUP[g] || []).includes(initial.category)) {
+            grp = g;
+            sub = initial.category;
+            break;
           }
-        }
       }
-      if (Array.isArray(day.complete)) {
-        for (const c of day.complete) {
-          if (c?.email?.toLowerCase?.() === selectedUserEmail.toLowerCase()) {
-            out.push({
-              date: day.date,
-              type: "complete",
-              course: c.course,
-              score: typeof c.score === "number" ? c.score : null,
-              totalQuestions: typeof c.totalQuestions === "number" ? c.totalQuestions : null,
-              at: c.CompletedAt,
-            });
-          }
-        }
+      if (!grp) {
+        grp = initial.category;
+        sub ="";
+      } 
       }
+      
     }
-    out.sort((a, b) => String(b.at || b.date).localeCompare(String(a.at || a.date)));
-    return out;
-  }, [selectedUserEmail, overview?.trend]);
+    setCategory(initial.category);
+    setCategoryGroup(grp);
+    setCategorySub(sub)
+    setDescription(initial.description);
+    setThumbnailUrl(initial.thumbnailUrl ?? "");
+    setContentType(initial.contentType ?? "video");
+    setAssignType(initial.assignType ?? "all");
+    setQuizAvailable(initial.quizAvailable ?? false);
+    setMaxAttempts(initial.maxAttempts);
 
-  const userSnapshot = useMemo(() => {
-    if (!selectedUserEmail) return null;
-    const enrolls = selectedUserActivity.filter((r) => r.type === "enroll").length;
-    const completes = selectedUserActivity.filter((r) => r.type === "complete");
-    const completedCount = completes.length;
-    const avgScore =
-      completes.length > 0
-        ? Math.round(
-            (completes
-              .map((r) => (typeof r.score === "number" ? r.score : 0))
-              .reduce((a, b) => a + b, 0) /
-              completes.length) * 10
-          ) / 10
+    setQuestions([]);
+  }, [initial]);
+
+  // โหลดรายละเอียด lesson + quiz
+  useEffect(() => {
+    if (!open) return;
+
+    const fetchLessonDetails = async () => {
+      if (!initial?.id) return;
+      setLoading(true);
+      try {
+        const url = `/api/learning/${encodeURIComponent(String(initial.id))}`;
+        console.log("EditLessonModal: requesting", url);
+        const res = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          cache: "no-store",
+        });
+        console.log("EditLessonModal: response status:", res.status);
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          console.error("EditLessonModal: fetch failed:", res.status, text);
+          setLoading(false);
+          return;
+        }
+
+        const data = await res.json();
+        console.log("EditLessonModal: fetched lesson details:", data);
+
+        setTitle(data.title ?? "");
+        setCategory(data.category ?? "");
+        setDescription(data.description ?? "");
+        setThumbnailUrl(data.thumbnailUrl ?? "");
+        setContentType(
+          (data.contentType ?? "video").toLowerCase() === "document" ? "document" : "video"
+        );
+        setAssignType(data.assignType ?? "all");
+        setQuizAvailable(Boolean(data.quizAvailable));
+
+        // normalize questions:
+        // backend คาดว่า question มี id/questionId, type(MULTIPLE/FILL_BLANK), choices, correctAnswer
+        const qs: Q[] = Array.isArray(data.questions)
+          ? data.questions.map((q: any): Q => {
+              const backendType = (q.type || "").toString().toUpperCase();
+              const isFill = backendType === "FILL_BLANK";
+              // const isMultiple = backendType === "MULTIPLE" || !isFill;
+
+              if (isFill) {
+                return {
+                  questionId: q.questionId ?? q.id,
+                  questionText: q.questionText ?? q.text ?? "",
+                  type: "FILL_BLANK",
+                  choices: [],
+                  correctAnswer: q.correctAnswer ?? "",
+                  points: q.points ?? 1,
+                };
+              }
+
+              // MULTIPLE (default)
+              const normalizedChoices: Choice[] = Array.isArray(q.choices)
+                ? q.choices.map((c: any) => ({
+                    choiceId: c.choiceId ?? c.id,
+                    text: c.text ?? c.choiceText ?? "",
+                    correct: Boolean(c.correct ?? c.isCorrect ?? false),
+                  }))
+                : [];
+
+              return {
+                questionId: q.questionId ?? q.id,
+                questionText: q.questionText ?? q.text ?? "",
+                type: "MULTIPLE",
+                choices:
+                  normalizedChoices.length >= 2
+                    ? normalizedChoices
+                    : [emptyChoice(), emptyChoice()],
+                points: q.points ?? 1,
+              };
+            })
+          : [];
+// emptyMultiple()
+        setQuestions(qs.length ? qs : []);
+      } catch (error) {
+        console.error("Failed to fetch lesson details:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLessonDetails();
+  }, [open, initial.id, token]);
+
+  /* ==================== Question helpers ==================== */
+
+  const addQuestion = () =>
+    setQuestions((s) => [...s, emptyMultiple()]); // default เพิ่มเป็น MULTIPLE
+
+  const removeQuestion = (idx: number) =>
+    setQuestions((s) => s.filter((_, i) => i !== idx));
+
+  const updateQuestionText = (idx: number, text: string) =>
+    setQuestions((s) =>
+      s.map((q, i) => (i === idx ? { ...q, questionText: text } : q))
+    );
+
+  const updateQuestionType = (idx: number, type: QuestionTypeUI) =>
+    setQuestions((s) =>
+      s.map((q, i) => {
+        if (i !== idx) return q;
+        if (q.type === type) return q;
+
+        if (type === "MULTIPLE") {
+          // แปลงเป็น multiple: เคลียร์ correctAnswer, สร้าง choices ถ้าไม่มี
+          const choices =
+            q.choices && q.choices.length >= 2
+              ? q.choices
+              : [emptyChoice(), emptyChoice()];
+          return {
+            ...q,
+            type: "MULTIPLE",
+            choices,
+            correctAnswer: undefined,
+          };
+        } else {
+          // แปลงเป็น fill blank: เคลียร์ choices
+          return {
+            ...q,
+            type: "FILL_BLANK",
+            correctAnswer: q.correctAnswer ?? "",
+            choices: [],
+          };
+        }
+      })
+    );
+
+  const updateQuestionPoints = (idx: number, points: number) =>
+    setQuestions((s) =>
+      s.map((q, i) => (i === idx ? { ...q, points } : q))
+    );
+
+  const addChoice = (qIdx: number) =>
+    setQuestions((s) =>
+      s.map((q, i) =>
+        i === qIdx
+          ? { ...q, choices: [...q.choices, emptyChoice()] }
+          : q
+      )
+    );
+
+  const removeChoice = (qIdx: number, cIdx: number) =>
+    setQuestions((s) =>
+      s.map((q, i) =>
+        i === qIdx
+          ? {
+              ...q,
+              choices: q.choices.filter((_, ci) => ci !== cIdx),
+            }
+          : q
+      )
+    );
+
+  const updateChoiceText = (qIdx: number, cIdx: number, text: string) =>
+    setQuestions((s) =>
+      s.map((q, i) =>
+        i === qIdx
+          ? {
+              ...q,
+              choices: q.choices.map((c, ci) =>
+                ci === cIdx ? { ...c, text } : c
+              ),
+            }
+          : q
+      )
+    );
+
+  const toggleChoiceCorrect = (qIdx: number, cIdx: number) =>
+    setQuestions((s) =>
+      s.map((q, i) => {
+        if (i !== qIdx) return q;
+        return {
+          ...q,
+          choices: q.choices.map((c, ci) =>
+            ci === cIdx ? { ...c, correct: !c.correct } : c
+          ),
+        };
+      })
+    );
+
+  const updateFillBlankAnswer = (qIdx: number, value: string) =>
+    setQuestions((s) =>
+      s.map((q, i) =>
+        i === qIdx ? { ...q, correctAnswer: value } : q
+      )
+    );
+
+  /* ==================== Submit ==================== */
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      // let payloadQuestions: QuestionForm[] | undefined = undefined;
+      // if (quizAvailable) {
+      //   payloadQuestions = questions
+      //     .filter((q) => q.questionText.trim())
+      //     .map((q) => {
+      //       const base = {
+      //         questionId: q.questionId, // ถ้าว่าง backend จะ gen ใหม่ให้
+      //         questionText: q.questionText.trim(),
+      //         points: q.points ?? 1,
+      //       } as any;
+
+      //       if (q.type === "FILL_BLANK") {
+      //         return {
+      //           ...base,
+      //           type: "FILL_BLANK",
+      //           correctAnswer: q.correctAnswer?.trim() || "",
+      //         } as QuestionForm;
+      //       }
+
+      //       // MULTIPLE
+      //       const choices = (q.choices || [])
+      //         .filter((c) => c.text.trim())
+      //         .map((c) => ({
+      //           choiceId: c.choiceId, // ใช้ของเดิมถ้ามี
+      //           text: c.text.trim(),
+      //           correct: !!c.correct,
+      //         }));
+
+      //       return {
+      //         ...base,
+      //         type: "MULTIPLE",
+      //         choices,
+      //       } as QuestionForm;
+      //     });
+      // }
+        // CLEAN + VALIDATE questions before building payload
+      let payloadQuestions: QuestionForm[] | undefined = undefined;
+      if (quizAvailable) {
+        const cleaned: QuestionForm[] = [];
+        const removedIndices: number[] = [];
+
+        for (let i = 0; i < questions.length; i++) {
+          const q = questions[i];
+          const qText = (q.questionText || "").trim();
+          if (!qText) {
+            removedIndices.push(i + 1);
+            continue;
+          }
+
+          if (q.type === "FILL_BLANK") {
+            const answer = (q.correctAnswer || "").trim();
+            if (!answer) {
+              removedIndices.push(i + 1);
+              continue;
+            }
+            cleaned.push({
+              questionId: q.questionId,
+              questionText: qText,
+              type: "FILL_BLANK",
+              correctAnswer: answer,
+              points: q.points ?? 1,
+            } as unknown as QuestionForm);
+            continue;
+          }
+
+          // MULTIPLE
+          const cleanedChoices = (q.choices || [])
+            .map((c) => ({ ...c, text: String(c.text || "").trim() }))
+            .filter((c) => c.text.length > 0);
+
+          if (cleanedChoices.length < 2) {
+            removedIndices.push(i + 1);
+            continue;
+          }
+          if (!cleanedChoices.some((c) => !!c.correct)) {
+            // ถ้าไม่มี choice ถูก ให้ถือว่าไม่สมบูรณ์และตัดออก
+            removedIndices.push(i + 1);
+            continue;
+          }
+
+          cleaned.push({
+            questionId: q.questionId,
+            questionText: qText,
+            type: "MULTIPLE",
+            choices: cleanedChoices.map((c) => ({ choiceId: c.choiceId, text: c.text, correct: !!c.correct })),
+            points: q.points ?? 1,
+          } as unknown as QuestionForm);
+        }
+
+        // ถ้ามีการตัดคำถามที่ไม่สมบูรณ์ ให้แจ้งผู้ใช้
+        if (removedIndices.length) {
+          alert(`Removed invalid/empty questions: ${removedIndices.join(", ")}`);
+        }
+
+        // update local UI state ให้สอดคล้อง (optional — ทำให้ modal อัพเดต)
+        setQuestions((prev) => {
+          // build a Q[] from cleaned to reflect trimmed/cleaned choices
+          const newQs: Q[] = cleaned.map((cq) => {
+            if ((cq as any).type === "FILL_BLANK") {
+              return {
+                questionId: (cq as any).questionId,
+                questionText: (cq as any).questionText,
+                type: "FILL_BLANK",
+                choices: [],
+                correctAnswer: (cq as any).correctAnswer,
+                points: (cq as any).points,
+              } as Q;
+            }
+            return {
+             questionId: (cq as any).questionId,
+              questionText: (cq as any).questionText,
+              type: "MULTIPLE",
+              choices: ((cq as any).choices || []).map((c: any) => ({ choiceId: c.choiceId, text: c.text, correct: !!c.correct })),
+              points: (cq as any).points,
+            } as Q;
+          });
+          return newQs.length ? newQs : prev;
+        });
+
+        payloadQuestions = cleaned.length ? cleaned : undefined;
+      }
+
+      const payload = {
+        title: title.trim(),
+        category: categoryValue,
+        description: description.trim(),
+        thumbnailUrl: thumbnailUrl.trim() || undefined,
+        video: videoFile,
+        contentType,
+        assignType: assignType as "all" | "team" | "specific",
+        quizAvailable,
+        maxAttempts,
+        questions: payloadQuestions,
+      };
+
+      console.log("sending payload",payload)
+
+      const videoMeta = videoFile
+        ? { name: videoFile.name, size: videoFile.size, type: videoFile.type }
         : null;
+      console.log("EditLessonModal: saving payload:", {
+        ...payload,
+        video: videoMeta,
+      });
 
-    const courses = Array.from(new Set(selectedUserActivity.map((r) => r.course).filter(Boolean)));
+      await onSave(payload);
 
-    return { enrolls, completedCount, avgScore, courses, recent: selectedUserActivity.slice(0, 8) };
-  }, [selectedUserActivity, selectedUserEmail]);
-
-  const handleToastClick = (t: ToastItem) => {
-    closeToast(t.id);
-    navigate("/administrator/administrator/task-management", {
-      state: { focusUserEmail: t.userEmail, focusLessonId: t.lessonId },
-    });
+      console.log(
+        "EditLessonModal: save completed for lesson id:",
+        initial.id
+      );
+    } catch (err) {
+      console.error("EditLessonModal: save failed:", err);
+      throw err;
+    } finally {
+      setSaving(false);
+    }
   };
 
-  /* -----------------------------------------------------------------------
-   * Render
-   * ---------------------------------------------------------------------*/
-  return (
-    <div className="min-h-screen bg-gray-50 flex overflow-x-hidden">
-      {/* sidebar */}
-      <AdminSidebarWidget />
+  if (!open) return null;
 
-      {/* main */}
-      <main className="flex-1 p-6 flex flex-col min-w-0">
-        {/* header */}
-        <div className="flex justify-between items-start">
-          {/* --- Assignment + Analysis Mode --- */}
-          <div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-1">👋 Welcome, {displayName}</h1>
-            <p className="text-gray-600 mb-2 ml-10">Have a good day!</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full mb-6">
-              <div className="bg-white border rounded-xl shadow-sm px-4 py-3 max-w-4xl">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-sm font-semibold text-gray-700">Assignment</div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500 mr-2">Mode:</span>
-                    <div className="inline-flex rounded-full border overflow-hidden">
-                      <button
-                        onClick={() => setMode("team")}
-                        className={`px-3 py-1 text-xs ${mode === "team" ? "bg-blue-600 text-white" : "bg-white"}`}
-                      >
-                        Team
-                      </button>
-                      <button
-                        onClick={() => setMode("individual")}
-                        className={`px-3 py-1 text-xs ${mode === "individual" ? "bg-blue-600 text-white" : "bg-white"}`}
-                      >
-                        Individual
-                      </button>
-                    </div>
-                  </div>
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+
+  const modal = (
+    <div
+      className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4"
+      onClick={onClose}
+      aria-modal="true"
+      role="dialog"
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-6 overflow-auto max-h-[90vh]"
+        onClick={stop}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">Edit Learning Content</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700"
+            type="button"
+            aria-label="Close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="p-6 text-sm text-gray-500">
+            Loading lesson...
+          </div>
+        ) : (
+          // maxAttempts
+          <form className="space-y-4" onSubmit={handleSubmit}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Title
+                </label>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  
+                  className="w-full border rounded-lg px-3 py-2"
+                  placeholder="Lesson title"
+                  required
+                  disabled={saving}
+                />
+              </div>
+
+               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  MaxAttempts:
+                </label>
+
+                <input
+                  value={maxAttempts}
+                  onChange={(e) => setMaxAttempts(Number(e.target.value) || 0)}
+                  min={1}
+                  max={3}
+                  className="w-full border rounded-lg px-3 py-2"
+                  placeholder="Lesson title"
+                  disabled={saving}
+                />
+              </div>
+
+              <div className="space y-4">
+                <div className="flex">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Category :
+                </label>
+                <select value={categoryGroup} onChange={(e)=> {setCategoryGroup(e.target.value);setCategorySub("")}}>
+                  <option value={categoryGroup}>{categoryGroup}</option>
+                  {Object.keys(CATEGORY_GROUP).map((g)=>(
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
                 </div>
-
-                {!assignment ? (
-                  <div className="text-sm text-gray-500">Loading assignment...</div>
-                ) : !hasTeams ? (
-                  <div className="text-sm text-gray-500">{assignment.message || "Not Assigned"}</div>
-                ) : (
+                
+                {(CATEGORY_GROUP[categoryGroup] ?? []).length > 0 &&(
                   <>
-                    {/* Teams list */}
-                    <div className="flex flex-wrap gap-3 mb-3">
-                      {assignment.teams.map((t) => (
-                        <button
-                          key={t.teamId}
-                          onClick={() => fetchTeamMembers(t.teamId)}
-                          className={`px-3 py-2 rounded-lg border text-sm ${
-                            selectedTeamId === t.teamId
-                              ? "bg-blue-600 text-white border-blue-600"
-                              : "bg-gray-50 text-gray-800 hover:bg-gray-100"
-                          }`}
-                          title={`Supervisor: ${t.supervisor || "N/A"}`}
-                        >
-                          {t.teamName || "N/A"}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Members SELECT */}
-                    <div className="mt-2">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="text-xs text-gray-500">
-                          Members {selectedTeamId ? `(Team: ${selectedTeamId})` : ""}
-                        </div>
-                        {mode === "individual" && (selectedUserId || selectedUserEmail) && (
-                          <button
-                            className="text-xs text-red-600 hover:underline"
-                            onClick={() => {
-                              setSelectedUserId(null);
-                              setSelectedUserEmail(null);
-                              setSelectedUserName(null);
-                            }}
-                          >
-                            Clear selection
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="flex gap-2 items-center">
-                        {teamMembersLoading ? (
-                          <div className="text-sm text-gray-500">Loading members...</div>
-                        ) : teamMembersError ? (
-                          <div className="text-sm text-red-600">{teamMembersError}</div>
-                        ) : mode === "individual" ? (
-                          <select
-                            className="px-3 py-2 border rounded-md text-sm bg-white min-w-[280px]"
-                            value={selectedUserId || ""}
-                            onChange={(e) => {
-                              const id = e.target.value || null;
-                              setSelectedUserId(id);
-                              const u = teamMembers.find((m: any) => String(m.id) === id);
-                              setSelectedUserEmail(u?.email || null);
-                              setSelectedUserName(u?.name || u?.email || null);
-                            }}
-                          >
-                            <option value="">Select a member</option>
-                            {teamMembers.map((m: any) => (
-                              <option key={m.id} value={m.id}>
-                                {(m.name || m.email) + (m.role ? ` (${m.role})` : "")}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <div className="text-xs text-gray-600">
-                            Team size: <span className="font-medium">{teamMembers.length}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                    <label className="text-sm font-medium text-gray-700 mt-2">Subcategory :</label>
+                    <select value={categorySub} onChange={(e) => setCategorySub(e.target.value)}>
+                      {CATEGORY_GROUP[categoryGroup].map((sub =>(
+                        <option key={sub} value={sub}>{sub}</option>
+                      )))}
+                    </select>
                   </>
                 )}
               </div>
-              {/* --- Selected User --- */}
-              <div className="bg-white rounded-xl shadow p-4 border-t-8 border-emerald-500">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-lg font-semibold text-gray-700">Selected User</h2>
-                  {(selectedUserId || selectedUserEmail) && (
-                    <button
-                      className="text-xs text-red-600 hover:underline"
-                      onClick={() => {
-                        setSelectedUserId(null);
-                        setSelectedUserEmail(null);
-                        setSelectedUserName(null);
-                      }}
+            </div>
+
+            {/* Description */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Description
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full h-28 border rounded-lg px-3 py-2"
+                placeholder="Description"
+                required
+                disabled={saving}
+              />
+            </div>
+
+            {/* Content / Assign */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Content Type
+                </label>
+                <div className="px-3 py-2 border rounded-lg bg-gray-100 text-gray-700">
+                  {contentType === "video" ? "Video" : "Document"}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Assign Type
+                </label>
+                <select
+                  value={assignType}
+                  onChange={(e) =>
+                    setAssignType(e.target.value as any)
+                  }
+                  className="w-full border rounded-lg px-3 py-2"
+                  disabled={saving}
+                >
+                  {TARGET_OPTION["Option"].map((option) => (
+                    <option
+                      key={option.index}
+                      value={option.index}
                     >
-                      Clear
-                    </button>
-                  )}
+                      {option.option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Video upload */}
+            {contentType === "video" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Upload Video
+                </label>
+                <input
+                  type="file"
+                  accept="video/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setVideoFile(file);
+                  }}
+                  disabled={saving}
+                  className="w-full border rounded-lg px-3 py-2"
+                />
+              </div>
+            )}
+
+            {/* Quiz toggle */}
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={quizAvailable}
+                  onChange={(e) =>
+                    setQuizAvailable(e.target.checked)
+                  }
+                />
+                <span className="text-sm">Quiz available</span>
+              </label>
+            </div>
+
+            {/* Quiz editor */}
+            {quizAvailable && (
+              <div className="border rounded-lg p-4 bg-gray-50">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold">
+                    Questions
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={addQuestion}
+                    className="inline-flex items-center gap-2 px-3 py-1 bg-white border rounded text-sm"
+                  >
+                    <Plus size={14} /> Add question
+                  </button>
                 </div>
 
-                {mode !== "individual" ? (
-                  <div className="text-sm text-gray-500">Switch to “Individual” to see user details.</div>
-                ) : !(selectedUserId || selectedUserEmail) ? (
-                  <div className="text-sm text-gray-500">Select a member to analyze their activity.</div>
-                ) : (
-                  <>
-                    <div className="mb-3">
-                      <div className="text-sm font-medium text-gray-800">
-                        {selectedUserName || selectedUserEmail || selectedUserId}
-                      </div>
-                      {selectedUserEmail && <div className="text-xs text-gray-500">{selectedUserEmail}</div>}
-                    </div>
+                <div className="space-y-4">
+                  {questions.map((q, qi) => (
+                    <div
+                      key={q.questionId ?? qi}
+                      className="bg-white border rounded p-3"
+                    >
+                      {/* Header row */}
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <label className="text-xs text-gray-500">
+                              Question {qi + 1}
+                            </label>
+                            <select
+                              value={q.type}
+                              onChange={(e) =>
+                                updateQuestionType(
+                                  qi,
+                                  e.target.value as QuestionTypeUI
+                                )
+                              }
+                              className="text-xs border rounded px-1.5 py-0.5"
+                            >
+                              <option value="MULTIPLE">
+                                Multiple choice
+                              </option>
+                              <option value="FILL_BLANK">
+                                Fill in the blank
+                              </option>
+                            </select>
+                            <input
+                              type="number"
+                              min={1}
+                              value={q.points ?? 1}
+                              onChange={(e) =>
+                                updateQuestionPoints(
+                                  qi,
+                                  Number(e.target.value) || 1
+                                )
+                              }
+                              className="w-14 text-xs border rounded px-1 py-0.5"
+                              title="Points"
+                            />
+                          </div>
+                          <input
+                            value={q.questionText}
+                            onChange={(e) =>
+                              updateQuestionText(
+                                qi,
+                                e.target.value
+                              )
+                            }
+                            className="w-full mt-1 border rounded px-2 py-1 text-sm"
+                            placeholder="Question text"
+                          />
+                        </div>
 
-                    <div className="grid grid-cols-3 gap-3 mb-3">
-                      <div className="bg-emerald-50 border rounded-lg p-3">
-                        <div className="text-[11px] text-gray-500">Enrolls</div>
-                        <div className="text-xl font-semibold">{userSnapshot?.enrolls ?? 0}</div>
-                      </div>
-                      <div className="bg-emerald-50 border rounded-lg p-3">
-                        <div className="text-[11px] text-gray-500">Completed</div>
-                        <div className="text-xl font-semibold">{userSnapshot?.completedCount ?? 0}</div>
-                      </div>
-                      <div className="bg-emerald-50 border rounded-lg p-3">
-                        <div className="text-[11px] text-gray-500">Avg Score</div>
-                        <div className="text-xl font-semibold">
-                          {userSnapshot?.avgScore != null ? userSnapshot?.avgScore : "-"}
+                        <div className="flex flex-col items-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => removeQuestion(qi)}
+                            className="text-red-500"
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="mb-3">
-                      <div className="text-xs text-gray-500 mb-1">Courses engaged</div>
-                      {userSnapshot?.courses?.length ? (
-                        <div className="flex flex-wrap gap-2">
-                          {userSnapshot!.courses.map((c) => (
-                            <span key={c} className="px-2 py-1 text-xs bg-gray-100 border rounded-full" title={c}>
-                              {c}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-gray-500">-</div>
-                      )}
-                    </div>
-
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">Recent activity</div>
-                      {userSnapshot?.recent?.length ? (
-                        <ul className="space-y-2 max-h-64 overflow-auto pr-1">
-                          {userSnapshot!.recent.map((r, idx) => (
-                            <li key={idx} className="text-sm">
-                              <span
-                                className={`inline-block px-1.5 py-0.5 text-[10px] rounded border mr-2 ${
-                                  r.type === "complete"
-                                    ? "bg-green-50 text-green-700 border-green-200"
-                                    : "bg-blue-50 text-blue-700 border-blue-200"
+                      {/* MULTIPLE */}
+                      {q.type === "MULTIPLE" && (
+                        <div className="mt-3 space-y-2">
+                          {q.choices.map((c, ci) => (
+                            <div
+                              key={c.choiceId ?? ci}
+                              className="flex items-center gap-2"
+                            >
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  toggleChoiceCorrect(
+                                    qi,
+                                    ci
+                                  )
+                                }
+                                className={`px-2 py-1 rounded text-xs ${
+                                  c.correct
+                                    ? "bg-green-500 text-white"
+                                    : "bg-gray-200 text-gray-700"
                                 }`}
                               >
-                                {r.type}
-                              </span>
-                              <span className="font-medium">{r.course}</span>{" "}
-                              <span className="text-xs text-gray-500">
-                                {r.at ? new Date(r.at).toLocaleString() : r.date}
-                              </span>
-                              {r.type === "complete" && typeof r.score === "number" && (
-                                <span className="text-xs text-gray-600 ml-2">
-                                  score: {Math.round(r.score)}
-                                  {typeof r.totalQuestions === "number" ? ` / ${r.totalQuestions}` : ""}
-                                </span>
+                                {c.correct ? "✓" : "○"}
+                              </button>
+                              <input
+                                value={c.text}
+                                onChange={(e) =>
+                                  updateChoiceText(
+                                    qi,
+                                    ci,
+                                    e.target.value
+                                  )
+                                }
+                                className="flex-1 border rounded px-2 py-1 text-sm"
+                                placeholder={`Choice ${ci + 1}`}
+                              />
+                              {q.choices.length > 2 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    removeChoice(
+                                      qi,
+                                      ci
+                                    )
+                                  }
+                                  className="text-red-500"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
                               )}
-                            </li>
+                            </div>
                           ))}
-                        </ul>
-                      ) : (
-                        <div className="text-sm text-gray-500">No activity in range.</div>
+
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                addChoice(qi)
+                              }
+                              className="mt-2 inline-flex items-center gap-2 px-2 py-1 bg-white border rounded text-xs"
+                            >
+                              <Plus size={12} /> Add
+                              choice
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* FILL IN THE BLANK */}
+                      {q.type === "FILL_BLANK" && (
+                        <div className="mt-3">
+                          <label className="text-xs text-gray-500">
+                            Correct answer
+                          </label>
+                          <input
+                            value={q.correctAnswer ?? ""}
+                            onChange={(e) =>
+                              updateFillBlankAnswer(
+                                qi,
+                                e.target.value
+                              )
+                            }
+                            className="w-full border rounded px-2 py-1 text-sm mt-1"
+                            placeholder="Type the correct answer"
+                          />
+                        </div>
                       )}
                     </div>
-                  </>
-                )}
-              </div>
-            </div>
-            {/* --- /Assignment & Mode --- */}
-          </div>
-
-          <div className="flex items-center justify-end space-x-4">
-            <RoleSwitcher />
-            <div className="relative flex items-center space-x-3">
-              <AdminAvatarWidget />
-
-              {showFilter && (
-                <div className="absolute right-0 mt-2 w-72 bg-white border shadow-lg rounded-xl z-10 p-4 space-y-3">
-                  <p className="font-semibold text-gray-700">Filter & Range</p>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">Start</div>
-                      <input
-                        type="date"
-                        className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
-                        value={start}
-                        onChange={(e) => setStart(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">End</div>
-                      <input
-                        type="date"
-                        className="w-full px-3 py-2 bg-gray-100 rounded text-sm"
-                        value={end}
-                        onChange={(e) => setEnd(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-between pt-1">
-                    <button onClick={() => setFilterText({ course: "" })} className="text-sm text-red-500 hover:underline">
-                      Clear
-                    </button>
-                    <button
-                      onClick={() => {
-                        // force new key by nudging params (or just call fetch with current params)
-                        lastKeyRef.current = "";
-                        const p = buildQueryParams();
-                        fetchAllWithParams(p);
-                      }}
-                      className="px-3 py-1 text-sm bg-blue-600 text-white rounded-full hover:bg-blue-700"
-                    >
-                      Apply
-                    </button>
-                  </div>
+                  ))}
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
+              </div>
+            )}
 
-        {/* KPI */}
-        {overview && (
-          <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
-              <div className="text-xs text-gray-500">Total Contents</div>
-              <div className="text-2xl font-bold">{overview.kpi.totalContents}</div>
+            {/* Actions */}
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-lg border"
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2 disabled:opacity-60"
+                disabled={saving}
+              >
+                <Save size={16} />{" "}
+                {saving ? "Saving..." : "Save"}
+              </button>
             </div>
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-indigo-500">
-              <div className="text-xs text-gray-500">New Enrollments</div>
-              <div className="text-2xl font-bold">{overview.kpi.newEnrollments}</div>
-            </div>
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-fuchsia-500">
-              <div className="text-xs text-gray-500">Completion Rate</div>
-              <div className="text-2xl font-bold">
-                {Math.round((overview.kpi.completionRate || 0) * 100)}%
-              </div>
-            </div>
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-rose-500">
-              <div className="text-xs text-gray-500">Avg Score</div>
-              <div className="text-2xl font-bold">
-                {overview.kpi.avgScore == null ? "-" : Math.round(overview.kpi.avgScore)}
-              </div>
-            </div>
-          </div>
+          </form>
         )}
-
-        {/* Error */}
-        {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700">
-            {String(error)}
-          </div>
-        )}
-
-        {/* Summary */}
-        <h2 className="text-xl font-semibold text-gray-700 mb-2 ml-2">
-          Summary {mode === "team" ? "(Team View)" : "(Individual View)"}
-        </h2>
-
-        <div className="flex flex-col xl:flex-row gap-6">
-          {/* Left column */}
-          <div className="flex-1 space-y-6">
-            {/* Bar chart */}
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-gray-700">
-                  Daily Activity (Enroll / Complete)
-                </h2>
-                <div className="text-xs text-gray-500">Range {start} → {end}</div>
-              </div>
-
-              <div className="w-full max-w-full overflow-hidden">
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={dailyActivity}>
-                    <XAxis dataKey="date" />
-                    <YAxis allowDecimals={false} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend />
-                    <Bar dataKey="enroll" name="Enroll" radius={[4, 4, 0, 0]} fill="#0575E6" />
-                    <Bar dataKey="complete" name="Complete" radius={[4, 4, 0, 0]} fill="#22C55E" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              {dailyActivity.length > 0 && dailyActivity.every((d) => (d.enroll || 0) + (d.complete || 0) === 0) && (
-                <div className="text-[12px] text-gray-500 mt-2">
-                  No activity matches current filters. Try switching to Team/Individual or clearing selection.
-                </div>
-              )}
-            </div>
-
-            {/* Donut charts */}
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-700 mb-4">Learners by Content</h2>
-                <div className="text-xs text-gray-500">
-                  {mode === "team"
-                    ? `Team members: ${teamMembers.length}`
-                    : selectedUserEmail
-                    ? `User: ${selectedUserName || selectedUserEmail}`
-                    : "No user selected"}
-                </div>
-              </div>
-
-              {pieData.length === 0 ? (
-                <div className="text-sm text-gray-500">No data in range.</div>
-              ) : (
-                <div className="flex flex-wrap justify-center gap-6">
-                  <div className="flex flex-col items-center w-full max-w-[420px] overflow-hidden">
-                    <h3 className="text-sm font-semibold mb-2 text-center">
-                      {filterText.course ? `Filtered: ${filterText.course}` : "All Contents"}
-                    </h3>
-                    <ResponsiveContainer width="100%" height={240}>
-                      <PieChart>
-                        <Pie
-                          data={pieData}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={90}
-                          label
-                          isAnimationActive
-                        >
-                          {pieData.map((_, i) => (
-                            <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip content={<ContentTooltip />} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Content Performance Table */}
-            <div className="bg-white rounded-xl shadow p-4 border-t-8 border-blue-500">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-gray-700">Content Performance</h2>
-                <button
-                  onClick={() => {
-                    lastKeyRef.current = "";
-                    const p = buildQueryParams();
-                    fetchAllWithParams(p);
-                  }}
-                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded-full hover:bg-blue-700"
-                >
-                  Refresh
-                </button>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="min-w-[720px] w-full max-w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-gray-600">
-                      <th className="py-2 px-3">Title</th>
-                      <th className="py-2 px-3">Learners</th>
-                      <th className="py-2 px-3">Completion</th>
-                      <th className="py-2 px-3">Avg Score</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredContentPerf.length === 0 ? (
-                      <tr>
-                        <td className="py-3 px-3 text-gray-500" colSpan={4}>
-                          No content in range.
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredContentPerf.map((it: any) => (
-                        <tr key={it.contentId || it.id || it.title} className="border-t">
-                          <td className="py-2 px-3 break-words">{it.title}</td>
-                          <td className="py-2 px-3">{getLearnersCount(it)}</td>
-                          <td className="py-2 px-3">
-                            {Math.round(((it.completionRate || 0) as number) * 100)}%
-                          </td>
-                          <td className="py-2 px-3">
-                            {typeof it.avgScore === "number" ? Math.round(it.avgScore) : "-"}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          {/* Right column */}
-          <div className="flex flex-col xl:flex-row justify-end gap-6 mb-6 w-full xl:w-[440px] flex-shrink-0">
-            <div className="space-y-6">
-              <AdminCalendar />
-              <ScoreboardChart token={token || ""} />
-            </div>
-          </div>
-        </div>
-
-        {loading && (
-          <div className="fixed inset-0 flex items-center justify-center bg-black/20">
-            <div className="animate-spin rounded-full h-10 w-10 border-t-4 border-blue-500" />
-          </div>
-        )}
-      </main>
-
-      {/* Toasts */}
-      <ToastStack
-        toasts={toasts}
-        onClose={closeToast}
-        onItemClick={handleToastClick}
-        onMarkAllRead={markAllRead}
-      />
+      </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 };
 
-export default AdminDashboard;
+export default EditLessonModal;
